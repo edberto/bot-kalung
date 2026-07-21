@@ -43,9 +43,11 @@ check("filename follows {doc} - {exporter}{seq}.pdf",
 check("sequence is not zero-padded in the filename",
       pdf_export.pdf_filename("VGM", "TSI", 1) == "VGM - TSI1.pdf")
 
-check("all five documents are exported",
+check("four documents are exported (buyer invoice excluded)",
       [d for d, _ in pdf_export.DOCUMENTS]
-      == ["SI", "VGM", "Inv Buyer", "Inv BC", "PL"])
+      == ["SI", "VGM", "Inv BC", "PL"])
+check("the buyer invoice is not exported",
+      "Inv Buyer" not in [d for d, _ in pdf_export.DOCUMENTS])
 
 e4 = next(s for s in WORKFLOW_STEPS if s[0] == "E4")
 check("E4 is no longer a phase 2 step", e4[5] is False)
@@ -86,12 +88,13 @@ else:
 
             pdf_dir = folder / "PDF"
             names = sorted(p.name for p in pdf_dir.glob("*.pdf"))
-            check(f"{code} five PDFs written {names}", len(names) == 5)
+            check(f"{code} four PDFs written {names}", len(names) == 4)
             check(f"{code} named as asked",
                   f"SI - {code}7.pdf" in names and f"PL - {code}7.pdf" in names)
-            check(f"{code} both invoice sheets exported",
-                  f"Inv Buyer - {code}7.pdf" in names
-                  and f"Inv BC - {code}7.pdf" in names)
+            check(f"{code} the customs invoice is exported",
+                  f"Inv BC - {code}7.pdf" in names)
+            check(f"{code} the buyer invoice is NOT exported",
+                  f"Inv Buyer - {code}7.pdf" not in names)
             check(f"{code} PDFs are not empty",
                   all(p.stat().st_size > 1000 for p in pdf_dir.glob("*.pdf")))
             check(f"{code} files really are PDFs",
@@ -102,7 +105,7 @@ else:
             again = pdf_export.export_shipment(
                 book, exporter_code=code, sequence=7, folder=folder)
             check(f"{code} re-export overwrites",
-                  again.ok and len(list(pdf_dir.glob("*.pdf"))) == 5)
+                  again.ok and len(list(pdf_dir.glob("*.pdf"))) == 4)
 
             # The workbook itself must come back untouched.
             check(f"{code} workbook is not modified by exporting",

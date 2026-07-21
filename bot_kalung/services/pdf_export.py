@@ -18,13 +18,12 @@ from pathlib import Path
 from . import excel
 
 # (document name used in the filename, sheet-name prefix to look for).
-# Order is deliberate: "Inv BC" must be tried before the broader "Inv", and
-# these prefixes are matched after whitespace is collapsed, so they cover
-# 'Inv Buyer ', 'Inv  BC', 'P.List Buyer' and 'P.List buyer' alike.
+# Prefixes are matched after whitespace is collapsed, so they cover 'Inv  BC',
+# 'P.List Buyer' and 'P.List buyer' alike. The buyer's invoice ("Inv Buyer") is
+# deliberately NOT exported (user, 2026-07-21) — only the customs copy is.
 DOCUMENTS = [
     ("SI", "SI"),
     ("VGM", "VGM"),
-    ("Inv Buyer", "Inv Buyer"),
     ("Inv BC", "Inv BC"),
     ("PL", "P.List"),
 ]

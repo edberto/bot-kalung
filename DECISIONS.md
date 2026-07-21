@@ -222,11 +222,10 @@ so it is now a normal step with an "Ekspor PDF" button.
 label the team already uses in folder names and email subjects, not the padded
 document number from section 15.
 
-**Five files, not four.** The PRD names four documents ("SI, VGM, Invoice, PL")
-but every live workbook carries two invoice sheets — `Inv Buyer` and `Inv BC`
-(Bea Cukai). Both are exported, since dropping one would silently lose a
-document. AMJ's third invoice-like sheet, `PI`, is not exported; it is a
-proforma and the PRD does not list it.
+**Four files: SI, VGM, Inv BC, PL.** Every live workbook carries two invoice
+sheets — `Inv Buyer` and `Inv BC` (Bea Cukai). Only the customs copy (`Inv BC`)
+is exported; the buyer's invoice is deliberately left out (user, 2026-07-21).
+AMJ's third invoice-like sheet, `PI`, is a proforma and is not exported either.
 
 The export never writes to the workbook: `ExportAsFixedFormat` uses whatever
 page setup and print area the sheet already has, so the SI print area is
