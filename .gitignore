@@ -1,0 +1,22 @@
+.venv/
+__pycache__/
+*.py[cod]
+
+# Build output (bot_kalung.spec is checked in — it is the build definition)
+build/
+dist/
+selftest.log
+botkalung-error.log
+
+# Local scratch
+_demo/
+_sandbox/
+
+# Repowise local index and session state (regenerated per machine)
+.repowise/
+
+# Data and Excel lock files
+*.db
+*.db-wal
+*.db-shm
+~$*.xls*

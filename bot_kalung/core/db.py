@@ -1,0 +1,262 @@
+"""SQLite access layer (PRD Section 13).
+
+The database file lives inside the shared Google Drive folder so all three
+workers hit the same file. Every connection is opened with WAL + a 3s busy
+timeout as mandated by Section 13.0.
+"""
+
+from __future__ import annotations
+
+import re
+import sqlite3
+import uuid
+from contextlib import contextmanager
+from pathlib import Path
+
+from .constants import DB_FILE_NAME, DB_FOLDER_NAME
+from .templates import DEFAULT_TEMPLATES
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS shipments (
+    id                    TEXT PRIMARY KEY,
+    exporter_code         TEXT NOT NULL,
+    sequence_number       INTEGER NOT NULL,
+    booking_number        TEXT,
+    vessel_name           TEXT,
+    voyage                TEXT,
+    etd_belawan           TEXT,
+    destination_port      TEXT,
+    destination_country   TEXT,
+    container_quantity    INTEGER,
+    container_size_short  TEXT,
+    empty_pickup_location TEXT,
+    quarantine_required   INTEGER NOT NULL DEFAULT 0,
+    folder_path           TEXT,
+    do_pdf_filename       TEXT,
+    shipping_company      TEXT,
+    status                TEXT NOT NULL DEFAULT 'active',
+    created_at            TEXT NOT NULL,
+    completed_at          TEXT
+);
+
+CREATE TABLE IF NOT EXISTS workflow_steps (
+    id                TEXT PRIMARY KEY,
+    shipment_id       TEXT NOT NULL REFERENCES shipments(id) ON DELETE CASCADE,
+    step_code         TEXT NOT NULL,
+    status            TEXT NOT NULL DEFAULT 'pending',
+    completed_at      TEXT,
+    completion_source TEXT,
+    UNIQUE (shipment_id, step_code)
+);
+
+CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT
+);
+
+CREATE TABLE IF NOT EXISTS message_templates (
+    id               TEXT PRIMARY KEY,
+    step_code        TEXT NOT NULL,
+    channel          TEXT NOT NULL,
+    recipient_role   TEXT,
+    subject_template TEXT,
+    body_template    TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_shipments_status ON shipments(status);
+CREATE INDEX IF NOT EXISTS idx_steps_shipment ON workflow_steps(shipment_id);
+"""
+
+
+class DatabaseBusy(Exception):
+    """Raised when SQLite stays locked past the busy timeout (PRD 13.0)."""
+
+
+def _expected_columns() -> dict[str, dict[str, str]]:
+    """Column name -> declaration, per table, parsed from SCHEMA.
+
+    Parsed rather than hand-listed so the migration can never drift from the
+    schema it is meant to enforce.
+    """
+    tables: dict[str, dict[str, str]] = {}
+    for match in re.finditer(
+            r"CREATE TABLE IF NOT EXISTS (\w+) \((.*?)\n\);", SCHEMA, re.S):
+        name, body = match.group(1), match.group(2)
+        columns: dict[str, str] = {}
+        for line in body.split("\n"):
+            line = line.strip().rstrip(",")
+            if not line or line.upper().startswith(("UNIQUE", "PRIMARY KEY",
+                                                    "FOREIGN KEY", "CHECK")):
+                continue
+            parts = line.split(None, 1)
+            if len(parts) == 2:
+                columns[parts[0]] = parts[1]
+        tables[name] = columns
+    return tables
+
+
+def db_path_for(drive_root: str | Path) -> Path:
+    """Resolve the shared DB path under the Google Drive root."""
+    return Path(drive_root) / DB_FOLDER_NAME / DB_FILE_NAME
+
+
+def hide_folder(folder: str | Path) -> bool:
+    """Mark a folder hidden on Windows. Best effort — never raises.
+
+    Keeps the database out of sight in Explorer without preventing the app, or
+    Google Drive's sync, from reading it.
+    """
+    try:
+        import ctypes
+
+        FILE_ATTRIBUTE_HIDDEN = 0x02
+        result = ctypes.windll.kernel32.SetFileAttributesW(
+            str(folder), FILE_ATTRIBUTE_HIDDEN)
+        return bool(result)
+    except (AttributeError, OSError):
+        return False  # not Windows, or the call is unavailable
+
+
+def new_id() -> str:
+    return str(uuid.uuid4())
+
+
+class Database:
+    """Thin wrapper that guarantees the PRD-mandated pragmas on every connect."""
+
+    def __init__(self, path: Path):
+        self.path = Path(path)
+
+    # -- connection -----------------------------------------------------
+
+    def connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(str(self.path), timeout=3.0)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=3000")
+        conn.execute("PRAGMA foreign_keys=ON")
+        return conn
+
+    @contextmanager
+    def cursor(self, write: bool = False):
+        """Yield a cursor; commits on clean exit when `write` is True."""
+        conn = self.connect()
+        try:
+            yield conn.cursor()
+            if write:
+                conn.commit()
+        except sqlite3.OperationalError as exc:
+            conn.rollback()
+            if "locked" in str(exc).lower() or "busy" in str(exc).lower():
+                raise DatabaseBusy(str(exc)) from exc
+            raise
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    # -- lifecycle ------------------------------------------------------
+
+    def initialize(self) -> None:
+        """Create the folder, file, schema, and seed rows. Idempotent."""
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        hide_folder(self.path.parent)
+        conn = self.connect()
+        try:
+            conn.executescript(SCHEMA)
+            conn.commit()
+            self._add_missing_columns(conn)
+        finally:
+            conn.close()
+        self.seed_templates()
+
+    def _add_missing_columns(self, conn: sqlite3.Connection) -> list[str]:
+        """Bring an existing database up to the current schema.
+
+        `CREATE TABLE IF NOT EXISTS` leaves an existing table exactly as it was,
+        so a database made by an older build keeps its old columns forever. A
+        write naming a new column then fails at runtime — and because three
+        workers share one file over Drive, one of them running an older build is
+        enough to create that situation.
+
+        Only additive changes are applied, which is all SQLite's ALTER supports
+        and all that has been needed so far. Columns no longer used are left in
+        place rather than dropped: they cost nothing and dropping them would
+        destroy data.
+        """
+        added: list[str] = []
+        for table, columns in _expected_columns().items():
+            existing = {row[1] for row in
+                        conn.execute(f"PRAGMA table_info({table})")}
+            if not existing:
+                continue  # table absent entirely; the schema script made it
+            for name, declaration in columns.items():
+                if name in existing:
+                    continue
+                # NOT NULL/DEFAULT clauses are dropped: SQLite cannot add a
+                # NOT NULL column without a default, and existing rows have no
+                # value for it.
+                kind = declaration.split()[0]
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {kind}")
+                added.append(f"{table}.{name}")
+        if added:
+            conn.commit()
+        return added
+
+    def seed_templates(self) -> None:
+        """Insert missing templates and keep their step wiring current.
+
+        `step_code`, `channel` and `recipient_role` describe how a template is
+        wired into the workflow, so they are refreshed on every launch —
+        otherwise a database made before the steps were reordered keeps pointing
+        at the old ones. `subject_template` is only filled in when it is empty,
+        so a subject edited in Settings survives.
+        """
+        with self.cursor(write=True) as cur:
+            for tid, step, channel, role, subject, body in DEFAULT_TEMPLATES:
+                cur.execute(
+                    "INSERT OR IGNORE INTO message_templates "
+                    "(id, step_code, channel, recipient_role, subject_template, body_template) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (tid, step, channel, role, subject, body),
+                )
+                cur.execute(
+                    "UPDATE message_templates SET step_code=?, channel=?, "
+                    "recipient_role=? WHERE id=?",
+                    (step, channel, role, tid),
+                )
+                cur.execute(
+                    "UPDATE message_templates SET subject_template=? "
+                    "WHERE id=? AND (subject_template IS NULL "
+                    "                OR TRIM(subject_template)='')",
+                    (subject, tid),
+                )
+
+    def is_configured(self) -> bool:
+        """First-launch detection (PRD Section 3): setup_complete flag present."""
+        if not self.path.exists():
+            return False
+        try:
+            with self.cursor() as cur:
+                cur.execute("SELECT value FROM settings WHERE key='setup_complete'")
+                row = cur.fetchone()
+                return bool(row and row["value"] == "1")
+        except sqlite3.DatabaseError:
+            return False
+
+    # -- queries used from Phase 2 onward -------------------------------
+
+    def query(self, sql: str, params: tuple = ()) -> list[sqlite3.Row]:
+        with self.cursor() as cur:
+            cur.execute(sql, params)
+            return cur.fetchall()
+
+    def query_one(self, sql: str, params: tuple = ()) -> sqlite3.Row | None:
+        with self.cursor() as cur:
+            cur.execute(sql, params)
+            return cur.fetchone()
+
+    def execute(self, sql: str, params: tuple = ()) -> None:
+        with self.cursor(write=True) as cur:
+            cur.execute(sql, params)
