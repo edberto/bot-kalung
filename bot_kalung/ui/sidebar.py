@@ -19,6 +19,7 @@ class ShipmentEntry(Panel):
 
     def __init__(self, shipment, done: int, total: int):
         super().__init__()
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 8, 10, 8)
         layout.setSpacing(3)

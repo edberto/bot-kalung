@@ -126,11 +126,15 @@ class MainWindow(QMainWindow):
         # Clicking a tray toast can only tell us *a* message was clicked, not
         # which one, so remember the shipment behind the most recent toast.
         self._notified_shipment: str | None = None
+        self._bnct_manual_check = False    # true between a "Periksa" click and its result
+        self._bnct_error: str | None = None
         self.notification_store = NotificationStore(ctx.db)
         self.tray = self._build_tray()
         self.bnct = BnctController(ctx.db, ctx.settings)
         self.bnct.notified.connect(self._on_bnct_notification)
         self.bnct.checked.connect(self.detail.refresh_bnct)
+        self.bnct.error.connect(self._on_bnct_error)
+        self.bnct.polled.connect(self._on_bnct_polled)
         self.settings.saved.connect(self.bnct.apply_interval)
 
         self.refresh()
@@ -158,8 +162,26 @@ class MainWindow(QMainWindow):
             self.notification_store.unread_count())
 
     def _bnct_poll_now(self):
-        self.bnct.poll_now()
+        self._bnct_manual_check = True
+        self._bnct_error = None
         self.detail.message.show_info("Memeriksa BNCT...")
+        self.bnct.poll_now()
+
+    def _on_bnct_error(self, message: str):
+        # Remember it; the banner is resolved when the poll cycle completes.
+        self._bnct_error = message
+
+    def _on_bnct_polled(self):
+        """A poll cycle finished. Only touch the banner for a manual check, so
+        the 5-minute background polls never clear an unrelated message.
+        """
+        if not self._bnct_manual_check:
+            return
+        self._bnct_manual_check = False
+        if self._bnct_error:
+            self.detail.message.show_error(self._bnct_error)
+        else:
+            self.detail.message.show_success("Pemeriksaan BNCT selesai.")
 
     def _on_bnct_notification(self, note):
         """A monitoring transition — notify natively, and via a dialog for the

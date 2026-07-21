@@ -265,6 +265,38 @@ with tempfile.TemporaryDirectory() as tmp:
 
     controller.stop()
 
+    # ---- the "Memeriksa BNCT..." banner resolves after a manual check -------
+    from bot_kalung.ui.main_window import MainWindow
+
+    ctx.settings.set("setup_complete", "1")
+    window = MainWindow(ctx)
+    window.bnct.client = FakeClient(allv)
+    window.open_shipment(sid)
+
+    window._bnct_poll_now()
+    check("the checking banner shows immediately",
+          "Memeriksa BNCT" in window.detail.message.text())
+    pump(window.bnct)
+    check("the banner resolves once the check completes",
+          "Memeriksa BNCT" not in window.detail.message.text()
+          and "selesai" in window.detail.message.text())
+
+    # A background (non-manual) poll must not touch the detail banner.
+    window.detail.message.show_info("pesan lain")
+    pump(window.bnct)
+    check("an automatic poll leaves an unrelated banner alone",
+          window.detail.message.text() == "pesan lain")
+
+    # On a fetch error, the banner reports it instead of hanging on "checking".
+    window.bnct.client = BoomClient()
+    window._bnct_poll_now()
+    pump(window.bnct)
+    check("a failed manual check surfaces the error in the banner",
+          "simulated outage" in window.detail.message.text())
+
+    window.bnct.stop()
+    window.wizard.shutdown()
+
 print()
 if failures:
     print(f"{len(failures)} FAILED: {failures}")

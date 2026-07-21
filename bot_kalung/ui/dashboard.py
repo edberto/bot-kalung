@@ -42,8 +42,15 @@ class ShipmentCard(Panel):
     def __init__(self, shipment, done: int, total: int):
         super().__init__()
         self.shipment_id = shipment["id"]
+        # The whole card is clickable — the "Buka" button is a secondary
+        # affordance. Object-name scoped so the hover styles the card, not its
+        # child labels.
+        self.setObjectName("shipmentCard")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setStyleSheet(theme.style(
-            "background: white; border: 1px solid #e5e7eb; border-radius: 8px;"))
+            "#shipmentCard { background: white; border: 1px solid #e5e7eb;"
+            " border-radius: 8px; }"
+            "#shipmentCard:hover { background: #f8fafc; border: 1px solid #93c5fd; }"))
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 14, 16, 14)
@@ -99,6 +106,11 @@ class ShipmentCard(Panel):
         open_button.clicked.connect(lambda: self.open_requested.emit(self.shipment_id))
         footer.addWidget(open_button)
         layout.addLayout(footer)
+
+    def mousePressEvent(self, event):
+        # Clicking anywhere on the card opens it; the "Buka" button consumes
+        # its own clicks, so this never double-fires.
+        self.open_requested.emit(self.shipment_id)
 
 
 class DashboardView(QWidget):

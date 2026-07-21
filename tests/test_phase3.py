@@ -119,6 +119,22 @@ with tempfile.TemporaryDirectory() as tmp:
     check("dashboard stats row has three cards",
           window.dashboard.stats_row.count() == 3)
 
+    # A dashboard card is clickable anywhere, not just the "Buka" button.
+    from PyQt6.QtCore import Qt as _Qt
+    from PyQt6.QtGui import QMouseEvent
+
+    card = window.dashboard.grid.itemAt(0).widget()
+    check("card advertises itself as clickable",
+          card.cursor().shape() == _Qt.CursorShape.PointingHandCursor)
+    opened = []
+    card.open_requested.connect(opened.append)
+    card.mousePressEvent(QMouseEvent(
+        QMouseEvent.Type.MouseButtonPress, card.rect().center().toPointF(),
+        _Qt.MouseButton.LeftButton, _Qt.MouseButton.LeftButton,
+        _Qt.KeyboardModifier.NoModifier))
+    check("clicking the card body opens its shipment",
+          opened == [card.shipment_id])
+
     # ---- navigation ----------------------------------------------------------
     window.open_shipment(first)
     check("opening a shipment switches to detail",
