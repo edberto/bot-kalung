@@ -21,7 +21,9 @@ from ..services.shipments import Shipments
 from .bnct_controller import BnctController
 from .dashboard import DashboardView
 from .history import HistoryView
+from ..services.notifications import NotificationStore
 from .new_shipment import NewShipmentWizard
+from .notifications_view import NotificationsView
 from .settings_view import SettingsView
 from .shipment_detail import ShipmentDetailView
 from .sidebar import Sidebar
@@ -48,6 +50,7 @@ VIEW_WIZARD = 1
 VIEW_DETAIL = 2
 VIEW_HISTORY = 3
 VIEW_SETTINGS = 4
+VIEW_NOTIFICATIONS = 5
 
 
 class MainWindow(QMainWindow):
@@ -109,13 +112,21 @@ class MainWindow(QMainWindow):
         self.settings.theme_changed.connect(self.theme_changed)
         self.stack.addWidget(self.settings)
 
+        self.notifications = NotificationsView(ctx.db)
+        self.notifications.open_shipment_requested.connect(self.open_shipment)
+        self.notifications.changed.connect(self._refresh_notification_badge)
+        self.stack.addWidget(self.notifications)
+
         layout.addWidget(self.stack, 1)
         self.setCentralWidget(root)
+
+        self.sidebar.notifications_clicked.connect(self.open_notifications)
 
         # -- BNCT monitoring (PRD 15) --------------------------------------
         # Clicking a tray toast can only tell us *a* message was clicked, not
         # which one, so remember the shipment behind the most recent toast.
         self._notified_shipment: str | None = None
+        self.notification_store = NotificationStore(ctx.db)
         self.tray = self._build_tray()
         self.bnct = BnctController(ctx.db, ctx.settings)
         self.bnct.notified.connect(self._on_bnct_notification)
@@ -123,6 +134,7 @@ class MainWindow(QMainWindow):
         self.settings.saved.connect(self.bnct.apply_interval)
 
         self.refresh()
+        self._refresh_notification_badge()
         # Don't reach out to the live BNCT portal under the offscreen platform
         # (tests / headless); real runs start polling normally.
         if os.environ.get("QT_QPA_PLATFORM") != "offscreen":
@@ -141,6 +153,10 @@ class MainWindow(QMainWindow):
         tray.show()
         return tray
 
+    def _refresh_notification_badge(self):
+        self.sidebar.set_notification_count(
+            self.notification_store.unread_count())
+
     def _bnct_poll_now(self):
         self.bnct.poll_now()
         self.detail.message.show_info("Memeriksa BNCT...")
@@ -151,6 +167,11 @@ class MainWindow(QMainWindow):
         deep-link to the shipment the notification is about.
         """
         self._notified_shipment = note.shipment_id
+        # The notification was already persisted by the monitor; reflect it in
+        # the sidebar counter and the list if it is on screen.
+        self._refresh_notification_badge()
+        if self.stack.currentIndex() == VIEW_NOTIFICATIONS:
+            self.notifications.refresh()
         if self.tray is not None:
             icon = (QSystemTrayIcon.MessageIcon.Critical
                     if note.kind == "departing"
@@ -255,6 +276,13 @@ class MainWindow(QMainWindow):
         self.history.refresh()
         self._go(VIEW_HISTORY)
 
+    def open_notifications(self):
+        if not self._leave_wizard_ok():
+            return
+        self.sidebar.select_shipment(None)
+        self.notifications.refresh()
+        self._go(VIEW_NOTIFICATIONS)
+
     def open_settings(self):
         if not self._leave_wizard_ok():
             return
@@ -284,3 +312,7 @@ class MainWindow(QMainWindow):
             active, self.shipments.progress,
             overdue=self.shipments.count_overdue_steps(),
             this_month=self.shipments.count_completed_this_month())
+        # A deleted shipment cascades its notifications away, so keep the badge
+        # in sync with any change to the shipment set.
+        if hasattr(self, "notification_store"):
+            self._refresh_notification_badge()

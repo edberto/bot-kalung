@@ -88,9 +88,20 @@ CREATE TABLE IF NOT EXISTS bnct_checks (
     note             TEXT
 );
 
+CREATE TABLE IF NOT EXISTS notifications (
+    id          TEXT PRIMARY KEY,
+    shipment_id TEXT REFERENCES shipments(id) ON DELETE CASCADE,
+    kind        TEXT NOT NULL,
+    title       TEXT NOT NULL,
+    body        TEXT,
+    created_at  TEXT NOT NULL,
+    read        INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE INDEX IF NOT EXISTS idx_shipments_status ON shipments(status);
 CREATE INDEX IF NOT EXISTS idx_steps_shipment ON workflow_steps(shipment_id);
 CREATE INDEX IF NOT EXISTS idx_bnct_shipment ON bnct_checks(shipment_id);
+CREATE INDEX IF NOT EXISTS idx_notifications_read ON notifications(read);
 """
 
 

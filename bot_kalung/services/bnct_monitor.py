@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from ..core.db import Database, new_id
 from . import bnct
 from .bnct import BnctReading
+from .notifications import NotificationStore
 
 
 @dataclass
@@ -33,6 +34,7 @@ class Notification:
 class BnctMonitor:
     def __init__(self, db: Database):
         self.db = db
+        self.notifications = NotificationStore(db)
 
     # -- which shipments to poll ------------------------------------------
 
@@ -116,6 +118,12 @@ class BnctMonitor:
                 "penuh ke Indra."))
 
         self.record(shipment_id, reading)
+        # Persist each transition so it survives the tray toast and drives the
+        # in-app notification centre. Done here, with the check, so only the
+        # app instance that actually detects the transition writes it.
+        for note in notes:
+            self.notifications.add(note.kind, shipment_id, note.title,
+                                   note.body, created_at=reading.checked_at)
         return notes
 
 

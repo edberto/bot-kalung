@@ -361,6 +361,23 @@ regression is covered through the real `AppContext.load()` path in
 `test_migration`, not just `Database.initialize()` directly — testing the
 lower level is exactly why the bug shipped unnoticed.
 
+## 24. In-app notification centre (2026-07-21)
+
+Windows ignores the duration an app requests for a tray toast (it uses the
+system timeout, ~5s, then the Action Center), so `QSystemTrayIcon.showMessage`'s
+15s hint does nothing. To make notifications persist, each BNCT transition is
+also stored in a `notifications` table and surfaced in-app: a "Notifikasi"
+sidebar item with an unread counter, and a list where clicking a notification
+marks it read and opens its shipment. The tray toast still fires for the live
+nudge; the centre is the durable record.
+
+Notifications are written inside `BnctMonitor.process()` alongside the check,
+so only the app instance that actually detects a transition creates the row
+(no cross-instance duplicates). They live in the shared database, so the log
+and read/unread state are team-wide — reasonable for a team coordinating the
+same shipments; per-user state would be the change point if ever wanted. Rows
+cascade with their shipment on delete.
+
 ## Still open
 
 - BNCT portal monitoring with the result recorded in the app (Phase 2, to be

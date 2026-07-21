@@ -56,6 +56,7 @@ class Sidebar(Panel):
     new_shipment_clicked = pyqtSignal()
     shipment_selected = pyqtSignal(str)
     history_clicked = pyqtSignal()
+    notifications_clicked = pyqtSignal()
     settings_clicked = pyqtSignal()
     home_clicked = pyqtSignal()
 
@@ -104,6 +105,10 @@ class Sidebar(Panel):
         self.history_button = self._nav_button("Riwayat")
         self.history_button.clicked.connect(self.history_clicked)
         layout.addWidget(self.history_button)
+
+        self.notifications_button = self._nav_button("Notifikasi")
+        self.notifications_button.clicked.connect(self.notifications_clicked)
+        layout.addWidget(self.notifications_button)
 
         self.settings_button = self._nav_button("Pengaturan")
         self.settings_button.clicked.connect(self.settings_clicked)
@@ -161,6 +166,25 @@ class Sidebar(Panel):
             if item.data(Qt.ItemDataRole.UserRole) == shipment_id:
                 self.shipment_list.setCurrentItem(item)
                 return
+
+    def set_notification_count(self, count: int):
+        """Show the unread count as a badge on the Notifikasi nav item."""
+        if count > 0:
+            label = f"Notifikasi  ({count})" if count < 100 else "Notifikasi  (99+)"
+            self.notifications_button.setText(label)
+            self.notifications_button.setStyleSheet(theme.style("""
+                QPushButton { border: none; text-align: left; padding: 7px 8px;
+                              border-radius: 6px; color: #b91c1c; font-size: 13px;
+                              font-weight: 700; }
+                QPushButton:hover { background: #eef2ff; }
+            """))
+        else:
+            self.notifications_button.setText("Notifikasi")
+            self.notifications_button.setStyleSheet(theme.style("""
+                QPushButton { border: none; text-align: left; padding: 7px 8px;
+                              border-radius: 6px; color: #374151; font-size: 13px; }
+                QPushButton:hover { background: #eef2ff; }
+            """))
 
     def _on_item_clicked(self, item: QListWidgetItem):
         self.shipment_selected.emit(item.data(Qt.ItemDataRole.UserRole))
