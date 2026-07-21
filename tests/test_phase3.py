@@ -12,7 +12,7 @@ import sandbox  # noqa: F401 - keeps the real bootstrap pointer untouched
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QApplication, QLabel
+from PyQt6.QtWidgets import QApplication
 
 from bot_kalung.core.constants import WORKFLOW_STEPS
 from bot_kalung.core.context import AppContext
@@ -119,18 +119,14 @@ with tempfile.TemporaryDirectory() as tmp:
 
     entry = window.sidebar.shipment_list.itemWidget(
         window.sidebar.shipment_list.item(0))
-    check("the list shows a clickable cursor",
-          window.sidebar.shipment_list.cursor().shape()
-          == Qt.CursorShape.PointingHandCursor)
-    check("the list draws a full-row hover highlight",
-          "::item:hover" in window.sidebar.shipment_list.styleSheet())
-    # The entry passes the mouse through so the item's full-row hover shows,
-    # instead of the widget painting a chopped rectangle over the item.
-    check("the entry is transparent to the mouse",
-          entry.testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents))
-    check("its labels pass the mouse through too",
-          all(c.testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-              for c in entry.findChildren(QLabel)))
+    check("sidebar entry shows a clickable cursor",
+          entry.cursor().shape() == Qt.CursorShape.PointingHandCursor)
+    # The entry paints its own hover edge-to-edge, and its background is
+    # transparent so the item's selection colour still shows through.
+    check("sidebar entry highlights the whole row on hover",
+          ":hover" in entry.styleSheet())
+    check("sidebar entry is transparent so selection still shows",
+          "background: transparent" in entry.styleSheet())
     check("dashboard grid holds both cards", window.dashboard.grid.count() == 2)
     check("dashboard stats row has three cards",
           window.dashboard.stats_row.count() == 3)
