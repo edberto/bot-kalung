@@ -281,6 +281,14 @@ with tempfile.TemporaryDirectory() as tmp:
           "Memeriksa BNCT" not in window.detail.message.text()
           and "selesai" in window.detail.message.text())
 
+    # The banner is dismissable via its ✕ button.
+    check("the banner offers a dismiss button",
+          not window.detail.message._close.isHidden())
+    window.detail.message._close.click()
+    check("dismissing hides the banner",
+          window.detail.message.isHidden()
+          and window.detail.message._close.isHidden())
+
     # A background (non-manual) poll must not touch the detail banner.
     window.detail.message.show_info("pesan lain")
     pump(window.bnct)

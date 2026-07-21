@@ -128,12 +128,24 @@ class DateEdit(_NoWheelMixin, QDateEdit):
 
 
 class InlineMessage(QLabel):
-    """Banner for inline validation feedback (PRD Sections 3, 5, 14)."""
+    """Dismissable banner for inline feedback (PRD Sections 3, 5, 14).
+
+    A "✕" in the top-right clears it; the banner also still clears whenever a
+    view calls clear() or shows a new message.
+    """
 
     def __init__(self):
         super().__init__()
         self.setWordWrap(True)
         self.setVisible(False)
+
+        self._close = QPushButton("✕", self)
+        self._close.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._close.setFixedSize(18, 18)
+        self._close.setFlat(True)
+        self._close.setToolTip("Tutup")
+        self._close.clicked.connect(self.clear)
+        self._close.hide()
 
     def _show(self, kind: str, text: str):
         # Banner colours come from the theme, not the generic hex translation:
@@ -141,9 +153,23 @@ class InlineMessage(QLabel):
         fg, bg, border = theme.banner(kind)
         self.setStyleSheet(
             f"color: {fg}; background: {bg}; border: 1px solid {border};"
-            "border-radius: 6px; padding: 10px 12px;")
+            # Leave room on the right so the text never runs under the ✕.
+            "border-radius: 6px; padding: 10px 30px 10px 12px;")
+        self._close.setStyleSheet(
+            f"QPushButton {{ border: none; background: transparent; color: {fg};"
+            " font-size: 13px; font-weight: 700; }"
+            f"QPushButton:hover {{ color: {border}; }}")
         self.setText(text)
         self.setVisible(True)
+        self._close.show()
+        self._position_close()
+
+    def _position_close(self):
+        self._close.move(self.width() - self._close.width() - 6, 6)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._position_close()
 
     def show_success(self, text: str):
         self._show("success", text)
@@ -158,5 +184,6 @@ class InlineMessage(QLabel):
         self._show("info", text)
 
     def clear(self):
+        self._close.hide()
         self.setText("")
         self.setVisible(False)
