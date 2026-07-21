@@ -380,8 +380,9 @@ cascade with their shipment on delete.
 
 ## Still open
 
-- BNCT portal monitoring with the result recorded in the app (Phase 2, to be
-  built last — the portal is behind SSO and "result" is not yet defined).
+- ~~BNCT portal monitoring with the result recorded in the app~~ — closed
+  2026-07-21 (section 21): the login page's unauthenticated endpoints are
+  scraped, results recorded, notifications on transitions.
 - ~~Excel sheet layouts for the other exporters are unverified~~ — closed
   2026-07-20: all four templates opened and covered by tests (section 14).
 - ~~Message template bodies T01–T16 (PRD Open Item 1)~~ — closed 2026-07-20:
