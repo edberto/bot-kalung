@@ -51,6 +51,17 @@ check("open stacking parsed", mtt.open_stacking == "21/07/2026 09:00")
 check("a scheduled vessel has no loading numbers", mtt.loading_remain is None)
 check("phase is schedule", mtt.phase == "schedule")
 
+# Voyage numbers can contain a hyphen (EVER CONCERT: "0798-087S - 0798-087N").
+# The in/out separator is " - ", not the first hyphen, so the outbound must be
+# the whole "0798-087N", not "087S - 0798-087N".
+vin, vout = bnct._split_voyage("Voyage 0798-087S - 0798-087N")
+check("hyphenated voyage splits on the spaced separator",
+      vin == "0798-087S" and vout == "0798-087N")
+_ever = bnct.BnctVessel("ptp", "schedule", "MV. EVER CONCERT",
+                        "0798-087S", "0798-087N")
+check("an edited DO (EVER CONCERT / 0798-087N) matches the schedule entry",
+      bnct.match_vessel([_ever], "EVER CONCERT", "0798-087N") is _ever)
+
 # ---- alongside parsing -----------------------------------------------------
 along = bnct.parse_alongside(load("alongside_tpkb.html"), "tpkb")
 check("alongside card parsed", len(along) == 1)

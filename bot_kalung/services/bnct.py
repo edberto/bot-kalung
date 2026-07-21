@@ -136,11 +136,20 @@ def _tokens(html: str) -> list[str]:
 
 
 def _split_voyage(token: str) -> tuple[str, str]:
-    """'Voyage 26RY123S - 26RY123N' -> ('26RY123S', '26RY123N')."""
+    """Split the inbound and outbound voyage.
+
+    'Voyage 26RY123S - 26RY123N' -> ('26RY123S', '26RY123N').
+
+    The two are separated by ' - ' (spaces around the hyphen), but a voyage
+    number can itself contain a hyphen — e.g. 'Voyage 0798-087S - 0798-087N' is
+    inbound '0798-087S' and outbound '0798-087N'. So split on the *spaced*
+    separator, not the first hyphen, or the outbound comes out as
+    '087S - 0798-087N'.
+    """
     value = re.sub(r"^voyage\s*", "", token, flags=re.IGNORECASE).strip()
-    parts = [p.strip() for p in value.split("-", 1)]
+    parts = re.split(r"\s+-\s+", value, maxsplit=1)
     if len(parts) == 2:
-        return parts[0], parts[1]
+        return parts[0].strip(), parts[1].strip()
     return value, value
 
 
