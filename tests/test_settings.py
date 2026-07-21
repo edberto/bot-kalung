@@ -57,8 +57,8 @@ with tempfile.TemporaryDirectory() as tmp:
           and view.country_list.item(0).text() == "PAKISTAN")
     check("email subject fields built",
           len(view.subject_fields) == 8 and "T10" in view.subject_fields)
-    check("subject prefilled as exporter+seq only",
-          view.subject_fields["T10"].text() == "{exporter}{seq}")
+    check("subject prefilled as exporter+seq plus a separator",
+          view.subject_fields["T10"].text() == "{exporter}{seq} - ")
 
     # ---- drive validation --------------------------------------------------
     check("valid drive root passes", view._validate_drive())

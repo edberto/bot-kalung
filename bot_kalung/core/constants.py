@@ -155,25 +155,29 @@ STEP_CODES = [s[0] for s in WORKFLOW_STEPS]
 # Decided 2026-07-20: WhatsApp steps no longer compose a pre-filled message.
 # Their button just brings WhatsApp Web to the front (or opens it), and the
 # worker writes and sends the message themselves, then ticks the box.
+# Communication buttons are labelled just "Email" / "WhatsApp" — not by
+# recipient (user, 2026-07-21). Each step keeps the channel(s) it needs. B5
+# used to have two email buttons (Gucimas, Pestcindo); since both now compose
+# the same draft (subject "{exporter}{seq}", empty body, the two teammates),
+# they collapse into one "Email" button and the worker adds recipients.
 STEP_ACTIONS: dict[str, list[tuple[str, str, str]]] = {
-    "A2": [("Buka WhatsApp", "whatsapp", "")],
-    "A3": [("Buka WhatsApp", "whatsapp", "")],
-    "A4": [("Buka WhatsApp", "whatsapp", "")],
+    "A2": [("WhatsApp", "whatsapp", "")],
+    "A3": [("WhatsApp", "whatsapp", "")],
+    "A4": [("WhatsApp", "whatsapp", "")],
     "B2": [("Cetak Ulang SI", "reprint", "")],
-    "B3": [("Buka WhatsApp", "whatsapp", "")],
-    "B4": [("Buka WhatsApp", "whatsapp", "")],
-    "B5": [("Email Gucimas", "template", "T08"),
-           ("Email Pestcindo", "template", "T09")],
-    "B6": [("Email Nanda", "template", "T10")],
-    "C2": [("Email Pelayaran", "template", "T11")],
-    "C3": [("Email Pelayaran", "template", "T12")],
+    "B3": [("WhatsApp", "whatsapp", "")],
+    "B4": [("WhatsApp", "whatsapp", "")],
+    "B5": [("Email", "template", "T08")],
+    "B6": [("Email", "template", "T10")],
+    "C2": [("Email", "template", "T11")],
+    "C3": [("Email", "template", "T12")],
     "D2": [("Buka Portal BNCT", "url", "https://portal.bnct-id.com/sso/")],
-    "D3": [("Buka WhatsApp", "whatsapp", "")],
-    "E1": [("Email Pelayaran", "template", "T14"),
-           ("Buka WhatsApp", "whatsapp", "")],
+    "D3": [("WhatsApp", "whatsapp", "")],
+    "E1": [("Email", "template", "T14"),
+           ("WhatsApp", "whatsapp", "")],
     "E3": [("Buka Excel", "excel", "")],
     "E4": [("Ekspor PDF", "pdf", "")],
-    "E6": [("Buka WhatsApp", "whatsapp", "")],
+    "E6": [("WhatsApp", "whatsapp", "")],
 }
 
 # Steps whose action button marks the step complete when clicked (PRD 6.3

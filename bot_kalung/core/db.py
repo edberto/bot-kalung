@@ -247,9 +247,13 @@ class Database:
         `step_code`, `channel` and `recipient_role` describe how a template is
         wired into the workflow, so they are refreshed on every launch —
         otherwise a database made before the steps were reordered keeps pointing
-        at the old ones. `subject_template` is only filled in when it is empty,
-        so a subject edited in Settings survives.
+        at the old ones. `subject_template` is filled in when it is empty or when
+        it still holds a superseded default (so a changed default reaches
+        existing installs), but a subject genuinely edited in Settings survives.
         """
+        from .templates import SUPERSEDED_SUBJECTS
+
+        placeholders = ",".join("?" for _ in SUPERSEDED_SUBJECTS)
         with self.cursor(write=True) as cur:
             for tid, step, channel, role, subject, body in DEFAULT_TEMPLATES:
                 cur.execute(
@@ -266,8 +270,9 @@ class Database:
                 cur.execute(
                     "UPDATE message_templates SET subject_template=? "
                     "WHERE id=? AND (subject_template IS NULL "
-                    "                OR TRIM(subject_template)='')",
-                    (subject, tid),
+                    f"                OR TRIM(subject_template)=''"
+                    f"                OR subject_template IN ({placeholders}))",
+                    (subject, tid, *SUPERSEDED_SUBJECTS),
                 )
 
     def is_configured(self) -> bool:

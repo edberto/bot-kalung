@@ -160,6 +160,18 @@ with tempfile.TemporaryDirectory() as tmp:
           [a[1] for a in STEP_ACTIONS["E4"]] == ["pdf"])
 
     check("steps with actions have buttons", len(checklist.rows["B6"].buttons) == 1)
+
+    # Communication buttons are labelled generically — "Email" / "WhatsApp",
+    # never by recipient (user, 2026-07-21).
+    comm_labels = {label for actions in STEP_ACTIONS.values()
+                   for label, kind, _ in actions if kind in ("template", "whatsapp")}
+    check(f"communication buttons are just Email/WhatsApp {comm_labels}",
+          comm_labels <= {"Email", "WhatsApp"})
+    check("B5 has a single Email button now",
+          STEP_ACTIONS["B5"] == [("Email", "template", "T08")])
+    check("E1 keeps both an Email and a WhatsApp button",
+          [k for _, k, _ in STEP_ACTIONS["E1"]] == ["template", "whatsapp"])
+
     check("B3 is WhatsApp only",
           [a[1] for a in STEP_ACTIONS["B3"]] == ["whatsapp"])
     check("A3 and A4 are WhatsApp only now",
@@ -254,13 +266,13 @@ with tempfile.TemporaryDirectory() as tmp:
     check("C phase reduced to three steps",
           [c for c, ph, *_ in WORKFLOW_STEPS if ph == "C"] == ["C1", "C2", "C3"])
 
-    # Subjects lead with {exporter}{seq} on the steps that were asked for.
+    # Subject is exactly "{exporter}{seq} - " on the steps that were asked for.
     for code, template_id in (("B5", "T08"), ("B5", "T09"), ("B6", "T10"),
                               ("C2", "T11"), ("C3", "T12")):
         draft = builder.build(template_id, row)
-        if draft.subject != "AMJ24":
+        if draft.subject != "AMJ24 - ":
             failures.append(f"{code}/{template_id} subject: {draft.subject}")
-    check("email subject is exactly exporter+seq, nothing else",
+    check("email subject is exactly exporter+seq plus a separator",
           not [f for f in failures if "subject:" in f])
 
     # E4 ticks itself only when files were actually written; a failed export
