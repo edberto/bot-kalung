@@ -121,10 +121,10 @@ with tempfile.TemporaryDirectory() as tmp:
         window.sidebar.shipment_list.item(0))
     check("sidebar entry shows a clickable cursor",
           entry.cursor().shape() == Qt.CursorShape.PointingHandCursor)
-    # The entry paints its own hover edge-to-edge, and its background is
-    # transparent so the item's selection colour still shows through.
-    check("sidebar entry highlights the whole row on hover",
-          ":hover" in entry.styleSheet())
+    # Hover draws an outline (like the dashboard cards); the entry stays
+    # transparent otherwise so the item's selection colour shows through.
+    check("sidebar entry outlines on hover",
+          ":hover" in entry.styleSheet() and "border" in entry.styleSheet())
     check("sidebar entry is transparent so selection still shows",
           "background: transparent" in entry.styleSheet())
     check("dashboard grid holds both cards", window.dashboard.grid.count() == 2)

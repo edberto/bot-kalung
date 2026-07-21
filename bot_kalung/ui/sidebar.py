@@ -20,13 +20,16 @@ class ShipmentEntry(Panel):
     def __init__(self, shipment, done: int, total: int):
         super().__init__()
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        # Highlight the whole row on hover. Painting the widget's own background
-        # (rather than the list item's ::item:hover, which does not fire over a
-        # child widget) and filling edge-to-edge, so nothing looks chopped.
+        # Hover shows an outline, matching the dashboard cards. A transparent
+        # 1px border in the normal state reserves the space so hovering does
+        # not shift the layout. Background stays transparent so the item's
+        # selection colour still shows through.
         self.setObjectName("shipmentEntry")
         self.setStyleSheet(theme.style(
-            "#shipmentEntry { background: transparent; }"
-            "#shipmentEntry:hover { background: #eef2ff; }"))
+            "#shipmentEntry { background: transparent;"
+            " border: 1px solid transparent; border-radius: 6px; }"
+            "#shipmentEntry:hover { background: #f8fafc;"
+            " border: 1px solid #93c5fd; }"))
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 8, 10, 8)
         layout.setSpacing(3)
@@ -102,8 +105,8 @@ class Sidebar(Panel):
         # shows through the entry's transparent background.
         self.shipment_list.setStyleSheet(theme.style("""
             QListWidget { background: transparent; border: none; }
-            QListWidget::item { margin-bottom: 2px; }
-            QListWidget::item:selected { background: #e0e7ff; }
+            QListWidget::item { margin-bottom: 4px; }
+            QListWidget::item:selected { background: #e0e7ff; border-radius: 6px; }
         """))
         self.shipment_list.setHorizontalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
