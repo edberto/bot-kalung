@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import sandbox  # noqa: F401 - keeps the real bootstrap pointer untouched
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication
 
 from bot_kalung.core.constants import WORKFLOW_STEPS
@@ -115,23 +116,29 @@ with tempfile.TemporaryDirectory() as tmp:
     window.refresh()
     check("sidebar lists both shipments", window.sidebar.shipment_list.count() == 2)
     check("sidebar hides the empty note", window.sidebar.empty_note.isHidden())
+
+    entry = window.sidebar.shipment_list.itemWidget(
+        window.sidebar.shipment_list.item(0))
+    check("sidebar entry shows a clickable cursor",
+          entry.cursor().shape() == Qt.CursorShape.PointingHandCursor)
+    check("sidebar entry highlights on hover",
+          ":hover" in entry.styleSheet())
     check("dashboard grid holds both cards", window.dashboard.grid.count() == 2)
     check("dashboard stats row has three cards",
           window.dashboard.stats_row.count() == 3)
 
     # A dashboard card is clickable anywhere, not just the "Buka" button.
-    from PyQt6.QtCore import Qt as _Qt
     from PyQt6.QtGui import QMouseEvent
 
     card = window.dashboard.grid.itemAt(0).widget()
     check("card advertises itself as clickable",
-          card.cursor().shape() == _Qt.CursorShape.PointingHandCursor)
+          card.cursor().shape() == Qt.CursorShape.PointingHandCursor)
     opened = []
     card.open_requested.connect(opened.append)
     card.mousePressEvent(QMouseEvent(
         QMouseEvent.Type.MouseButtonPress, card.rect().center().toPointF(),
-        _Qt.MouseButton.LeftButton, _Qt.MouseButton.LeftButton,
-        _Qt.KeyboardModifier.NoModifier))
+        Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier))
     check("clicking the card body opens its shipment",
           opened == [card.shipment_id])
 

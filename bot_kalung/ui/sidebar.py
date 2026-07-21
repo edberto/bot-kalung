@@ -20,6 +20,13 @@ class ShipmentEntry(Panel):
     def __init__(self, shipment, done: int, total: int):
         super().__init__()
         self.setCursor(Qt.CursorShape.PointingHandCursor)
+        # The entry widget sits on top of the list item, so the list's own
+        # ::item:hover never shows. Highlight the widget itself instead.
+        # Object-name scoped so only the card, not its child labels, is styled.
+        self.setObjectName("shipmentEntry")
+        self.setStyleSheet(theme.style(
+            "#shipmentEntry { border-radius: 6px; background: transparent; }"
+            "#shipmentEntry:hover { background: #eef2ff; }"))
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 8, 10, 8)
         layout.setSpacing(3)
