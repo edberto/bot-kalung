@@ -34,6 +34,7 @@ def selftest() -> int:
     probe("pywin32 shell", lambda: __import__("win32com.shell",
                                               fromlist=["shell"]).__name__)
     probe("anthropic", lambda: __import__("anthropic").__version__)
+    probe("requests", lambda: __import__("requests").__version__)
     probe("certifi CA bundle", lambda: _certifi_bundle())
     probe("app modules", lambda: _app_modules())
 

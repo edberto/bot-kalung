@@ -5,8 +5,10 @@ from __future__ import annotations
 from . import theme
 
 from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
-    QHBoxLayout, QMainWindow, QMessageBox, QStackedWidget, QWidget,
+    QHBoxLayout, QMainWindow, QMessageBox, QStackedWidget, QSystemTrayIcon,
+    QWidget,
 )
 
 import os
@@ -16,6 +18,7 @@ from pathlib import Path
 from ..core.constants import APP_NAME
 from ..core.context import AppContext
 from ..services.shipments import Shipments
+from .bnct_controller import BnctController
 from .dashboard import DashboardView
 from .history import HistoryView
 from .new_shipment import NewShipmentWizard
@@ -92,6 +95,7 @@ class MainWindow(QMainWindow):
         self.detail.changed.connect(self.refresh)
         self.detail.completed.connect(self._on_shipment_completed)
         self.detail.deleted.connect(self._on_shipment_deleted)
+        self.detail.bnct_refresh_requested.connect(self._bnct_poll_now)
         self.stack.addWidget(self.detail)
 
         self.history = HistoryView(ctx.db)
@@ -108,7 +112,46 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.stack, 1)
         self.setCentralWidget(root)
 
+        # -- BNCT monitoring (PRD 15) --------------------------------------
+        self.tray = self._build_tray()
+        self.bnct = BnctController(ctx.db, ctx.settings)
+        self.bnct.notified.connect(self._on_bnct_notification)
+        self.bnct.checked.connect(self.detail.refresh_bnct)
+        self.settings.saved.connect(self.bnct.apply_interval)
+
         self.refresh()
+        # Don't reach out to the live BNCT portal under the offscreen platform
+        # (tests / headless); real runs start polling normally.
+        if os.environ.get("QT_QPA_PLATFORM") != "offscreen":
+            self.bnct.start()
+
+    # -- BNCT ------------------------------------------------------------
+
+    def _build_tray(self) -> QSystemTrayIcon | None:
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            return None
+        tray = QSystemTrayIcon(self)
+        icon = self.windowIcon()
+        tray.setIcon(icon if not icon.isNull() else QIcon())
+        tray.setToolTip(APP_NAME)
+        tray.show()
+        return tray
+
+    def _bnct_poll_now(self):
+        self.bnct.poll_now()
+        self.detail.message.show_info("Memeriksa BNCT...")
+
+    def _on_bnct_notification(self, note):
+        """A monitoring transition — notify natively, and via a dialog for the
+        departure alert since that one demands action (pay LOLO).
+        """
+        if self.tray is not None:
+            icon = (QSystemTrayIcon.MessageIcon.Critical
+                    if note.kind == "departing"
+                    else QSystemTrayIcon.MessageIcon.Information)
+            self.tray.showMessage(note.title, note.body, icon, 15_000)
+        if note.kind == "departing":
+            QMessageBox.warning(self, note.title, note.body)
 
     # -- navigation ------------------------------------------------------
 
@@ -203,6 +246,8 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         # Let in-flight extraction / permit / connection checks finish so no
         # file stays locked and no worker outlives its receiver.
+        self.bnct.stop()
+        self.detail.shutdown()
         self.wizard.shutdown()
         self.settings.shutdown()
         super().closeEvent(event)

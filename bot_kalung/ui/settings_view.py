@@ -27,7 +27,7 @@ from ..core.constants import (
 from ..services import drive
 from ..services.llm import LLMClient
 from .widgets import (
-    ComboBox, InlineMessage, PrimaryButton, SecondaryButton,
+    ComboBox, InlineMessage, PrimaryButton, SecondaryButton, SpinBox,
 )
 
 
@@ -154,6 +154,20 @@ class SettingsView(QWidget):
         hint.setStyleSheet(theme.style("color: #6b7280; font-size: 11px;"))
         identity_layout.addRow("", hint)
         layout.addWidget(identity_box)
+
+        monitor_box = QGroupBox("Pemantauan BNCT")
+        monitor_layout = QFormLayout(monitor_box)
+        self.bnct_interval_field = SpinBox()
+        self.bnct_interval_field.setRange(1, 120)
+        self.bnct_interval_field.setSuffix(" menit")
+        monitor_layout.addRow("Interval pemeriksaan", self.bnct_interval_field)
+        monitor_note = QLabel(
+            "Aplikasi memeriksa jadwal & status kapal di BNCT selama aplikasi "
+            "terbuka. Pemeriksaan berhenti setelah langkah D2 ditandai selesai.")
+        monitor_note.setWordWrap(True)
+        monitor_note.setStyleSheet(theme.style("color: #6b7280; font-size: 11px;"))
+        monitor_layout.addRow("", monitor_note)
+        layout.addWidget(monitor_box)
 
         layout.addStretch(1)
         return page
@@ -362,6 +376,12 @@ class SettingsView(QWidget):
         for country in settings.quarantine_countries:
             self.country_list.addItem(QListWidgetItem(country))
 
+        try:
+            interval = int(settings.get("bnct_interval_minutes", 5))
+        except (TypeError, ValueError):
+            interval = 5
+        self.bnct_interval_field.setValue(max(1, interval))
+
     def save(self):
         settings = self.ctx.settings
 
@@ -383,6 +403,7 @@ class SettingsView(QWidget):
             "theme": self.theme_combo.currentData() or "light",
             "google_drive_root": self.drive_field.text().strip(),
             "exporter_folders": mapping,
+            "bnct_interval_minutes": str(self.bnct_interval_field.value()),
             "my_email": self.email_combo.currentData() or "",
             "llm_provider": "anthropic" if self.radio_anthropic.isChecked()
                             else "ollama",

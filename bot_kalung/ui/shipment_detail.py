@@ -26,6 +26,7 @@ from ..core.constants import (
 from ..services import fileops, messaging, pdf_export, printing, whatsapp
 from ..services.messaging import DraftBuilder, MessagingError
 from ..services.shipments import Shipments
+from .bnct_panel import BnctPanel
 from .checklist import ChecklistView
 from .widgets import (
     DangerButton, InlineMessage, Panel, SecondaryButton, days_until,
@@ -84,6 +85,7 @@ class ShipmentDetailView(QWidget):
     changed = pyqtSignal()          # a step changed; sidebar/dashboard reload
     completed = pyqtSignal(str)     # shipment marked complete, carries its label
     deleted = pyqtSignal(str)       # shipment removed; carries a note to show
+    bnct_refresh_requested = pyqtSignal()   # "Periksa Sekarang" pressed
 
     def __init__(self, db, settings=None):
         super().__init__()
@@ -171,6 +173,10 @@ class ShipmentDetailView(QWidget):
         self.quarantine_banner = InlineMessage()
         outer.addWidget(self.quarantine_banner)
 
+        # -- BNCT monitoring status (PRD 15) -------------------------------
+        self.bnct_panel = BnctPanel(db, on_refresh=self.bnct_refresh_requested.emit)
+        outer.addWidget(self.bnct_panel)
+
         self.message = InlineMessage()
         outer.addWidget(self.message)
 
@@ -240,7 +246,15 @@ class ShipmentDetailView(QWidget):
         else:
             self.quarantine_banner.clear()
 
+        self.bnct_panel.load(shipment_id)
         self._refresh_checklist()
+
+    def refresh_bnct(self, shipment_id: str):
+        """The controller recorded a new check; update the panel if it is the
+        shipment currently on screen.
+        """
+        if shipment_id == self.shipment_id:
+            self.bnct_panel.load(shipment_id)
 
     @staticmethod
     def _find_workbook(folder: Path | None) -> Path | None:

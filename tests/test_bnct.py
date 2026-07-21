@@ -1,0 +1,272 @@
+"""BNCT scraping, matching, and monitoring (PRD Section 15).
+
+Parser runs against saved copies of REAL monitoring fragments captured from
+portal.bnct-id.com on 2026-07-21 (tests/fixtures/bnct), so it is deterministic
+and needs no network. The monitor half uses a temp database.
+"""
+
+import sys
+import tempfile
+from datetime import datetime
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+import sandbox  # noqa: F401 - keeps the real bootstrap pointer untouched
+
+from bot_kalung.core.context import AppContext
+from bot_kalung.services import bnct
+from bot_kalung.services.bnct import BnctReading, BnctVessel
+from bot_kalung.services.bnct_monitor import BnctMonitor
+from bot_kalung.services.shipments import Shipments
+
+FX = Path(__file__).resolve().parent / "fixtures" / "bnct"
+failures = []
+
+
+def check(label, cond):
+    print(f"{'PASS' if cond else 'FAIL'}  {label}")
+    if not cond:
+        failures.append(label)
+
+
+def load(name):
+    return (FX / name).read_text(encoding="utf-8")
+
+
+NOW = datetime(2026, 7, 21, 9, 0, 0)
+
+
+# ---- schedule parsing ------------------------------------------------------
+sched = bnct.parse_schedule(load("schedule_ptp.html"), "ptp")
+check("schedule cards parsed", len(sched) == 5)
+
+mtt = next((v for v in sched if "MTT REYA" in v.name), None)
+check("a scheduled vessel is found by name", mtt is not None)
+check("voyage split into in/out",
+      mtt.voyage_in == "26RY123S" and mtt.voyage_out == "26RY123N")
+check("schedule ETD parsed", mtt.etd == "25/07/2026 12:00")
+check("open billing parsed", mtt.open_billing == "21/07/2026 07:00")
+check("open stacking parsed", mtt.open_stacking == "21/07/2026 09:00")
+check("a scheduled vessel has no loading numbers", mtt.loading_remain is None)
+check("phase is schedule", mtt.phase == "schedule")
+
+# ---- alongside parsing -----------------------------------------------------
+along = bnct.parse_alongside(load("alongside_tpkb.html"), "tpkb")
+check("alongside card parsed", len(along) == 1)
+hua = along[0]
+check("alongside ATB parsed", hua.atb == "20/07/2026 07:11")
+check("loading totals are the last matrix column",
+      hua.loading_plan == 834 and hua.loading_actual == 203
+      and hua.loading_remain == 631)
+check("discharge totals parsed",
+      hua.discharge_plan == 763 and hua.discharge_actual == 746
+      and hua.discharge_remain == 17)
+check("restow totals parsed",
+      hua.restow_plan == 0 and hua.restow_remain == 0)
+check("loading percentage computed", hua.loading_pct == 24)  # 203/834
+check("not departing while remain is high", not hua.departing)
+
+# an empty site returns nothing rather than raising
+check("DATA NOT AVAILABLE yields no vessels",
+      bnct.parse_alongside(load("alongside_ptp.html"), "ptp") == [])
+
+# ---- matching --------------------------------------------------------------
+allv = (sched + along
+        + bnct.parse_schedule(load("schedule_tpkb.html"), "tpkb"))
+check("app 'MTT REYA'/'123N' matches 'MV. MTT REYA'/'26RY123N'",
+      bnct.match_vessel(allv, "MTT REYA", "123N") is mtt)
+check("wrong voyage does not match",
+      bnct.match_vessel(allv, "MTT REYA", "999X") is None)
+check("unknown vessel does not match",
+      bnct.match_vessel(allv, "GHOST SHIP", "123N") is None)
+check("name prefix MV. is ignored",
+      bnct.normalize_name("MV. MTT REYA") == bnct.normalize_name("MTT REYA"))
+
+# alongside beats schedule when a vessel is in both phases
+both = [BnctVessel("tpkb", "schedule", "TEST", "001S", "001N"),
+        BnctVessel("tpkb", "alongside", "TEST", "001S", "001N")]
+check("alongside phase wins over schedule",
+      bnct.match_vessel(both, "TEST", "001N").phase == "alongside")
+check("a 2-char voyage is too short to match (avoids false hits)",
+      bnct.match_vessel(both, "TEST", "1N") is None)
+
+# ---- reading ----------------------------------------------------------------
+r = bnct.read_for_shipment(allv, "MTT REYA", "123N", now=NOW)
+check("reading found and scheduled", r.found and r.phase == "schedule")
+check("reading carries the timestamp", r.checked_at == NOW.isoformat())
+missing = bnct.read_for_shipment(allv, "NO SUCH", "000", now=NOW)
+check("missing vessel reads as not found", not missing.found
+      and missing.phase is None and "belum terjadwal" in missing.note)
+
+# departing threshold
+low = BnctVessel("tpkb", "alongside", "X", "1S", "1N", loading_remain=3,
+                 loading_plan=800)
+check("remain below 5 is departing", low.departing)
+
+# ---- monitor: persistence and transitions ----------------------------------
+with tempfile.TemporaryDirectory() as tmp:
+    root = Path(tmp) / "Drive"
+    (root / "AMJ").mkdir(parents=True)
+    ctx = AppContext()
+    ctx.create(root)
+    shipments = Shipments(ctx.db)
+    monitor = BnctMonitor(ctx.db)
+
+    sid = shipments.create({
+        "exporter_code": "NIT", "sequence_number": 15,
+        "vessel_name": "MTT REYA", "voyage": "123N",
+        "booking_number": "T22854", "etd_belawan": "2026-07-25",
+        "destination_port": "CHENNAI", "destination_country": "INDIA",
+        "container_quantity": 2, "container_size_short": "40'",
+    })
+    other = shipments.create({
+        "exporter_code": "AMJ", "sequence_number": 24, "vessel_name": "INTEGRA",
+        "voyage": "181E", "booking_number": "1", "etd_belawan": "2026-08-01",
+        "destination_port": "KARACHI", "destination_country": "PAKISTAN",
+        "container_quantity": 1, "container_size_short": "40'",
+    })
+
+    monitored = {row["id"] for row in monitor.monitored()}
+    check("active shipments with a vessel are monitored",
+          sid in monitored and other in monitored)
+
+    shipments.set_step(sid, "D2", True)
+    check("a departed shipment (D2 done) is no longer monitored",
+          sid not in {row["id"] for row in monitor.monitored()})
+    shipments.set_step(sid, "D2", False)
+
+    # First poll: vessel is in the schedule -> one 'schedule' notification.
+    reading = bnct.read_for_shipment(allv, "MTT REYA", "123N", now=NOW)
+    notes = monitor.process(sid, "NIT15", reading)
+    check("first schedule sighting notifies once", len(notes) == 1
+          and notes[0].kind == "schedule")
+    check("schedule notification carries the ETD", "25/07/2026" in notes[0].body)
+    check("check was recorded", monitor.latest(sid)["found"] == 1)
+
+    # Second poll, still scheduled: no repeat notification.
+    notes = monitor.process(sid, "NIT15", reading)
+    check("no repeat notification while nothing changes", notes == [])
+    check("but the check is still recorded (every check kept)",
+          len(monitor.history(sid)) == 2)
+
+    # Vessel moves alongside.
+    alongside_reading = BnctReading(
+        found=True, phase="alongside", checked_at=NOW.isoformat(),
+        vessel=BnctVessel("tpkb", "alongside", "MV. MTT REYA", "26RY123S",
+                          "26RY123N", loading_plan=800, loading_actual=250,
+                          loading_remain=550, discharge_remain=10))
+    notes = monitor.process(sid, "NIT15", alongside_reading)
+    check("moving alongside notifies", any(n.kind == "alongside" for n in notes))
+    check("alongside totals persisted",
+          monitor.latest(sid)["loading_remain"] == 550)
+
+    # Loading nearly done -> departing alert, once.
+    departing_reading = BnctReading(
+        found=True, phase="alongside", checked_at=NOW.isoformat(),
+        vessel=BnctVessel("tpkb", "alongside", "MV. MTT REYA", "26RY123S",
+                          "26RY123N", loading_plan=800, loading_actual=798,
+                          loading_remain=2))
+    notes = monitor.process(sid, "NIT15", departing_reading)
+    check("crossing the threshold fires the departing alert",
+          any(n.kind == "departing" for n in notes))
+    check("departing message tells them to pay LOLO",
+          any("LOLO" in n.body for n in notes if n.kind == "departing"))
+    notes = monitor.process(sid, "NIT15", departing_reading)
+    check("departing alert does not repeat", notes == [])
+
+    # A not-found reading is recorded too, so the UI can show "not found yet".
+    nf = bnct.read_for_shipment(allv, "GHOST", "000", now=NOW)
+    monitor.process(other, "AMJ24", nf)
+    check("not-found reading recorded for the other shipment",
+          monitor.latest(other)["found"] == 0)
+
+    # Deleting the shipment cascades its checks away.
+    ctx.db.execute("DELETE FROM shipments WHERE id=?", (sid,))
+    check("checks cascade on shipment delete",
+          ctx.db.query_one("SELECT COUNT(*) c FROM bnct_checks "
+                           "WHERE shipment_id=?", (sid,))["c"] == 0)
+
+# ---- controller: polling without touching the network ----------------------
+import os
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+from PyQt6.QtCore import QEventLoop, QTimer
+from PyQt6.QtWidgets import QApplication
+
+from bot_kalung.ui.bnct_controller import BnctController, interval_minutes
+
+app = QApplication.instance() or QApplication([])
+
+
+class FakeClient:
+    def __init__(self, vessels):
+        self.vessels = vessels
+        self.calls = 0
+
+    def fetch_vessels(self):
+        self.calls += 1
+        return list(self.vessels)
+
+
+def pump(controller):
+    """Run the event loop until one poll cycle finishes."""
+    loop = QEventLoop()
+    controller.polled.connect(loop.quit)
+    QTimer.singleShot(10_000, loop.quit)   # safety net
+    controller.poll_now()
+    loop.exec()
+
+
+with tempfile.TemporaryDirectory() as tmp:
+    root = Path(tmp) / "Drive"
+    (root / "AMJ").mkdir(parents=True)
+    ctx = AppContext()
+    ctx.create(root)
+    shipments = Shipments(ctx.db)
+    sid = shipments.create({
+        "exporter_code": "NIT", "sequence_number": 15, "vessel_name": "MTT REYA",
+        "voyage": "123N", "booking_number": "T22854", "etd_belawan": "2026-07-25",
+        "destination_port": "CHENNAI", "destination_country": "INDIA",
+        "container_quantity": 2, "container_size_short": "40'",
+    })
+
+    ctx.settings.set("bnct_interval_minutes", "5")
+    check("interval read from settings", interval_minutes(ctx.settings) == 5)
+    ctx.settings.set("bnct_interval_minutes", "0")
+    check("interval clamped to a floor of 1", interval_minutes(ctx.settings) == 1)
+
+    client = FakeClient(allv)
+    controller = BnctController(ctx.db, ctx.settings, client=client)
+    notes = []
+    checked = []
+    controller.notified.connect(notes.append)
+    controller.checked.connect(checked.append)
+
+    pump(controller)
+    check("controller fetched once", client.calls == 1)
+    check("controller recorded a check for the shipment", checked == [sid])
+    check("controller emitted the schedule notification",
+          any(n.kind == "schedule" for n in notes))
+    check("check landed in the database",
+          BnctMonitor(ctx.db).latest(sid)["found"] == 1)
+
+    # A fetch error must not crash the controller.
+    class BoomClient:
+        def fetch_vessels(self):
+            raise bnct.BnctError("simulated outage")
+
+    controller.client = BoomClient()
+    errors = []
+    controller.error.connect(errors.append)
+    pump(controller)
+    check("a fetch error is surfaced, not raised",
+          errors and "simulated outage" in errors[0])
+
+    controller.stop()
+
+print()
+if failures:
+    print(f"{len(failures)} FAILED: {failures}")
+    sys.exit(1)
+print("BNCT OK - all checks passed.")

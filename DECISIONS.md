@@ -285,6 +285,48 @@ active flow — can be cleared without reopening them. Both entry points share
 `fileops.delete_shipment_folder` and the same confirmation and folder-first
 rule.
 
+## 21. BNCT vessel monitoring (Phase 2, built 2026-07-21)
+
+Brought forward at the user's request. The PRD (Section 15) said "three
+unauthenticated endpoints, parse the HTML"; investigating the live portal
+(`portal.bnct-id.com/sso/`) turned that into concrete calls. The login page's
+own JavaScript polls, unauthenticated:
+
+    POST /sso/monitoring?do=getVesselScheduleDetails&key={ptp|tpkb}
+    POST /sso/monitoring?do=getVesselAlongsideDetails&key={ptp|tpkb}
+
+each with an `X-CSRF-TOKEN` header (the `csrfTokenForm` hidden field from the
+login page) and that page's session cookie. `services/bnct.py` does the
+GET-token-then-POST dance and parses the returned HTML cards with the stdlib
+`html.parser` (no bs4/lxml dependency). Fragments captured on 2026-07-21 are
+saved under `tests/fixtures/bnct/` so the parser is tested offline against real
+data — including one of the team's own vessels, MV. MTT REYA.
+
+A vessel has two phases, and the app records different fields for each:
+* **Schedule** — ETD, Open Billing, Open Stacking. A notification fires the
+  first time a vessel is seen.
+* **Alongside** — the Loading/Discharge/Restow x Plan/Actual/Remain matrix
+  (the Total column of each row), plus a done-percentage. Moving to this phase
+  notifies; when Loading Remain Total < 5 (PRD threshold) a departure alert
+  fires telling the crew to pay LOLO in full to Indra.
+
+Design decisions:
+* **In-app only** — a `QTimer` in `BnctController` polls every 5 minutes
+  (configurable in Settings) while the app is open; no OS scheduler. The
+  network fetch runs on a worker thread, DB work stays on the main thread.
+* **Which shipments** — active shipments that carry a vessel name and have not
+  ticked step D2 (departed). Polling stops for a shipment once D2 is done.
+* **Every check is stored** in `bnct_checks` (cascade-deleted with the
+  shipment); notifications fire only on transitions, so a vessel sitting
+  alongside does not re-alert every cycle. The detail view shows the latest
+  check with a "Periksa Sekarang" button.
+* **Matching** requires BOTH a normalized vessel-name match (ignoring "MV."
+  etc.) AND a voyage match (>= 3 chars, suffix/substring), to avoid a wrong
+  "pay LOLO" alert on a similarly-named ship.
+
+Live network calls are skipped under the offscreen Qt platform, so the test
+suite never hits the portal.
+
 ## Still open
 
 - BNCT portal monitoring with the result recorded in the app (Phase 2, to be

@@ -63,8 +63,34 @@ CREATE TABLE IF NOT EXISTS message_templates (
     body_template    TEXT
 );
 
+CREATE TABLE IF NOT EXISTS bnct_checks (
+    id               TEXT PRIMARY KEY,
+    shipment_id      TEXT NOT NULL REFERENCES shipments(id) ON DELETE CASCADE,
+    checked_at       TEXT NOT NULL,
+    found            INTEGER NOT NULL DEFAULT 0,
+    phase            TEXT,
+    site             TEXT,
+    etd              TEXT,
+    open_billing     TEXT,
+    open_stacking    TEXT,
+    atb              TEXT,
+    berth            TEXT,
+    loading_plan     INTEGER,
+    loading_actual   INTEGER,
+    loading_remain   INTEGER,
+    discharge_plan   INTEGER,
+    discharge_actual INTEGER,
+    discharge_remain INTEGER,
+    restow_plan      INTEGER,
+    restow_actual    INTEGER,
+    restow_remain    INTEGER,
+    departing        INTEGER NOT NULL DEFAULT 0,
+    note             TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_shipments_status ON shipments(status);
 CREATE INDEX IF NOT EXISTS idx_steps_shipment ON workflow_steps(shipment_id);
+CREATE INDEX IF NOT EXISTS idx_bnct_shipment ON bnct_checks(shipment_id);
 """
 
 

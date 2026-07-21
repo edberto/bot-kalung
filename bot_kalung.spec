@@ -31,6 +31,12 @@ hiddenimports += [
     "win32api",
     "pythoncom",
     "pywintypes",
+    # requests is imported lazily inside bnct.py (BNCT monitoring), which
+    # PyInstaller's static scan can miss; pull it and its deps in explicitly.
+    "requests",
+    "urllib3",
+    "charset_normalizer",
+    "idna",
 ]
 
 # Qt modules the app never touches, plus science/plotting stacks that some
