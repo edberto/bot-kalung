@@ -45,12 +45,18 @@ class AppContext:
     def attach(self, root: str | Path, db: Database | None = None) -> None:
         self.drive_root = str(root)
         self.db = db or Database(db_path_for(root))
+        # Migrate on every open, not only at first-time setup: an install
+        # configured by an older build must still gain new tables/columns when
+        # the app is launched. initialize() is idempotent (CREATE TABLE IF NOT
+        # EXISTS + additive ALTER), so re-running it on each launch is safe.
+        # Without this, an existing database never receives schema changes
+        # (e.g. the bnct_checks table), and the first query against the new
+        # schema fails with "no such table".
+        self.db.initialize()
         self.settings = Settings(self.db)
 
     def create(self, root: str | Path) -> None:
         """Initialize a fresh install at the given Drive root."""
-        db = Database(db_path_for(root))
-        db.initialize()
+        self.attach(root)          # attach() runs initialize()
         bootstrap.write_drive_root(root)
-        self.attach(root, db)
         self.settings.set("google_drive_root", str(root))

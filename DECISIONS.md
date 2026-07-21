@@ -346,6 +346,21 @@ Choosing "schema" as its own stage was the user's call: the app migrates by
 `CREATE TABLE IF NOT EXISTS` + `ALTER TABLE ADD COLUMN` on launch, so the stage
 guards against a SCHEMA change the migration path does not actually apply.
 
+## 23. Migrate on every open, not only at setup (2026-07-21)
+
+Bug: `AppContext.create()` ran `db.initialize()` (the migration), but
+`attach()`/`load()` did not. So an install configured by an older build never
+received new tables or columns — the first query against the new schema failed
+with "no such table: bnct_checks" (reported after the BNCT feature shipped).
+The same latent gap would have hit any earlier column add too.
+
+Fix: `attach()` now calls `initialize()` on every open. It is idempotent
+(`CREATE TABLE IF NOT EXISTS` + additive `ALTER`), so re-running it each launch
+is safe and brings any existing shared database up to the current schema. The
+regression is covered through the real `AppContext.load()` path in
+`test_migration`, not just `Database.initialize()` directly — testing the
+lower level is exactly why the bug shipped unnoticed.
+
 ## Still open
 
 - BNCT portal monitoring with the result recorded in the app (Phase 2, to be

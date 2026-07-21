@@ -172,6 +172,42 @@ with tempfile.TemporaryDirectory() as tmp:
     conn.close()
     check("a current database reports nothing to add", added == [])
 
+    # ---- the real regression: opening (not creating) an old install --------
+    # The migration only ever ran in create(); attach()/load() did not call
+    # initialize(), so an install configured by an older build never gained
+    # new tables and the first query hit "no such table: bnct_checks". Opening
+    # such an install through AppContext must now migrate it.
+    import os
+
+    from bot_kalung.core import bootstrap
+    from bot_kalung.core.context import AppContext
+
+    legacy_root = Path(tmp) / "Legacy"
+    legacy_path = db_path_for(legacy_root)
+    legacy_path.parent.mkdir(parents=True)
+    lc = sqlite3.connect(str(legacy_path))
+    lc.executescript(OLD_SCHEMA)   # has shipments/settings/... but no bnct_checks
+    lc.execute("INSERT INTO settings (key, value) VALUES ('setup_complete','1')")
+    lc.commit()
+    lc.close()
+    check("legacy install lacks bnct_checks before opening",
+          "bnct_checks" not in table_names(legacy_path))
+
+    os.environ["BOTKALUNG_HOME"] = str(Path(tmp) / "home")
+    bootstrap.write_drive_root(str(legacy_root))
+
+    ctx = AppContext()
+    check("an existing configured install loads", ctx.load())
+    check("opening the install created the missing table",
+          "bnct_checks" in table_names(legacy_path))
+    # The exact query that used to crash the app (monitor.latest / monitored)
+    # now works instead of raising "no such table".
+    from bot_kalung.services.bnct_monitor import BnctMonitor
+
+    monitor = BnctMonitor(ctx.db)
+    check("the BNCT query that crashed now runs",
+          monitor.latest("nobody") is None and monitor.monitored() == [])
+
 print()
 if failures:
     print(f"{len(failures)} FAILED: {failures}")
