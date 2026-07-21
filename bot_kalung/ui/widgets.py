@@ -139,10 +139,12 @@ class InlineMessage(QLabel):
         self.setWordWrap(True)
         self.setVisible(False)
 
-        self._close = QPushButton("✕", self)
+        # A plain "×"; NOT a flat button — a flat QPushButton on Windows draws
+        # through the native style and ignores the stylesheet text colour, so
+        # the glyph rendered invisibly.
+        self._close = QPushButton("×", self)
         self._close.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._close.setFixedSize(18, 18)
-        self._close.setFlat(True)
+        self._close.setFixedSize(20, 20)
         self._close.setToolTip("Tutup")
         self._close.clicked.connect(self.clear)
         self._close.hide()
@@ -157,8 +159,9 @@ class InlineMessage(QLabel):
             "border-radius: 6px; padding: 10px 30px 10px 12px;")
         self._close.setStyleSheet(
             f"QPushButton {{ border: none; background: transparent; color: {fg};"
-            " font-size: 13px; font-weight: 700; }"
-            f"QPushButton:hover {{ color: {border}; }}")
+            " font-size: 17px; font-weight: 700; padding: 0; }"
+            f"QPushButton:hover {{ color: {fg}; background: {border};"
+            " border-radius: 4px; }}")
         self.setText(text)
         self.setVisible(True)
         self._close.show()
