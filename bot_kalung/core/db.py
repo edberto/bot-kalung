@@ -46,6 +46,14 @@ CREATE TABLE IF NOT EXISTS workflow_steps (
     status            TEXT NOT NULL DEFAULT 'pending',
     completed_at      TEXT,
     completion_source TEXT,
+    position          REAL,
+    is_custom         INTEGER NOT NULL DEFAULT 0,
+    title             TEXT,
+    remark            TEXT,
+    remark_author     TEXT,
+    remark_at         TEXT,
+    added_by          TEXT,
+    added_at          TEXT,
     UNIQUE (shipment_id, step_code)
 );
 
@@ -97,9 +105,15 @@ CREATE TABLE IF NOT EXISTS notifications (
     created_at  TEXT NOT NULL,
     read        INTEGER NOT NULL DEFAULT 0
 );
+"""
 
+# Indexes are created AFTER _add_missing_columns, because one references a
+# column (workflow_steps.position) that an older database gains only during
+# migration — creating it inside SCHEMA would fail on that not-yet-added column.
+INDEXES = """
 CREATE INDEX IF NOT EXISTS idx_shipments_status ON shipments(status);
 CREATE INDEX IF NOT EXISTS idx_steps_shipment ON workflow_steps(shipment_id);
+CREATE INDEX IF NOT EXISTS idx_steps_position ON workflow_steps(shipment_id, position);
 CREATE INDEX IF NOT EXISTS idx_bnct_shipment ON bnct_checks(shipment_id);
 CREATE INDEX IF NOT EXISTS idx_notifications_read ON notifications(read);
 """
@@ -204,6 +218,10 @@ class Database:
             conn.executescript(SCHEMA)
             conn.commit()
             self._add_missing_columns(conn)
+            # Indexes last: idx_steps_position references a column older
+            # databases only gain in the migration above.
+            conn.executescript(INDEXES)
+            conn.commit()
         finally:
             conn.close()
         self.seed_templates()

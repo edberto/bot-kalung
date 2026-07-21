@@ -377,6 +377,37 @@ and read/unread state are team-wide — reasonable for a team coordinating the
 same shipments; per-user state would be the change point if ever wanted. Rows
 cascade with their shipment on delete.
 
+## 25. Flat checklist, ad-hoc steps, per-step remarks (2026-07-21)
+
+The workflow checklist was a fixed list of 22 steps grouped into phases A-E,
+completable at "phase E done". At the user's request it became a flexible list:
+
+- **Flattened** — no phase sections; one continuous list numbered 1..N. The
+  built-in 22 keep their canonical order. `WORKFLOW_PHASES` is now unused.
+- **Ad-hoc custom steps** — a worker can add a plain-checkbox TODO to a shipment,
+  inserted before/after any step (only custom steps reorder; built-ins are
+  fixed). Custom steps store their own title and are tagged with who added them.
+- **Complete when every step is ticked** — built-in *and* custom (was phase-E
+  only). Existing active shipments may therefore show as not-yet-completable
+  until every box is ticked.
+- **One editable remark per step** (built-in or custom), tagged with author/time.
+
+Data model: eight columns added to `workflow_steps` (`position`, `is_custom`,
+`title`, `remark`/`remark_author`/`remark_at`, `added_by`/`added_at`) rather than
+child tables — a remark is 1:1 with a step and custom steps *are* step rows.
+Ordering is REAL positions with gaps (built-ins at 1000..22000; custom steps at
+the midpoint of their neighbours), so inserts never renumber. Custom codes are
+`custom:<uuid>` — no collision with `A1..E6`, and `STEP_ACTIONS.get()` gives them
+no buttons.
+
+`steps()` is now DB-row-driven (union of built-in + custom, sorted, numbered)
+but still synthesises built-in steps a shipment predates, and `set_step` became
+an UPSERT so ticking such a step persists (it previously silently no-op'd). The
+migration is additive; `_add_missing_columns` leaves existing rows NULL, so reads
+treat NULL `is_custom` as built-in and NULL `position` as the built-in ordinal.
+Indexes moved out of `SCHEMA` into a separate `INDEXES` block created *after* the
+column migration, because `idx_steps_position` references the newly-added column.
+
 ## Still open
 
 - ~~BNCT portal monitoring with the result recorded in the app~~ — closed

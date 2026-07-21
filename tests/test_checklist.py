@@ -144,7 +144,12 @@ with tempfile.TemporaryDirectory() as tmp:
     checklist = window.detail.checklist
 
     check("every step has a row", len(checklist.rows) == len(WORKFLOW_STEPS))
-    check("five phase sections", len(checklist.sections) == 5)
+    check("no phase sections — one flat list",
+          not hasattr(checklist, "sections"))
+    steps_now = shipments.steps(shipment_id)
+    check("steps are numbered 1..N in order",
+          [s.display_number for s in steps_now]
+          == list(range(1, len(steps_now) + 1)))
 
     check("A1 auto-completed at creation", checklist.rows["A1"].complete)
     check("B1 auto-completed at creation", checklist.rows["B1"].complete)
@@ -236,25 +241,18 @@ with tempfile.TemporaryDirectory() as tmp:
     check("D3 is not auto-completed by its button",
           "D3" not in STEPS_COMPLETED_BY_ACTION)
 
-    # phase headers count only phase-1 steps
-    phase_a = next(s for s in checklist.sections if s.key == "A")
-    check("phase header shows a count", "/" in phase_a.header.text())
-    phase_a.toggle()
-    check("phase collapses", not phase_a.body.isVisible() or not phase_a.expanded)
-    phase_a.toggle()
-    check("phase expands again", phase_a.expanded)
-
-    # completion banner
+    # completion banner — now gates on EVERY step being done, not just phase E
+    # (offscreen Qt reports isVisible()==False, so assert on isHidden()).
     check("complete banner hidden while steps remain",
-          not checklist.complete_banner.isVisible())
-    # tuple layout: (code, phase, title, description, auto_complete, phase2_only)
-    for code, phase, _title, _desc, _auto, phase2_only in WORKFLOW_STEPS:
-        if phase == "E" and not phase2_only:
-            shipments.set_step(shipment_id, code, True)
+          checklist.complete_banner.isHidden())
+    for s in shipments.steps(shipment_id):
+        shipments.set_step(shipment_id, s.code, True)
     window.detail.load(shipment_id)
-    check("complete banner appears once phase E is done",
-          checklist.complete_banner.isVisible()
-          or not checklist.complete_banner.isHidden())
+    check("complete banner appears once every step is done",
+          not checklist.complete_banner.isHidden())
+    window.detail._on_step_toggled("D2", False)
+    check("banner hides again when a step is unticked",
+          checklist.complete_banner.isHidden())
 
     # ---- reordered workflow (user request 2026-07-20) --------------------
     order = [c for c, ph, *_ in WORKFLOW_STEPS if ph == "B"]

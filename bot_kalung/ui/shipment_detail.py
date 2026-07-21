@@ -15,8 +15,9 @@ from pathlib import Path
 
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtWidgets import (
-    QFrame, QHBoxLayout, QLabel, QMessageBox, QProgressBar, QScrollArea,
-    QVBoxLayout, QWidget,
+    QComboBox, QDialog, QDialogButtonBox, QFormLayout, QFrame, QHBoxLayout,
+    QLabel, QLineEdit, QMessageBox, QProgressBar, QScrollArea, QVBoxLayout,
+    QWidget,
 )
 
 from ..core.constants import (
@@ -75,6 +76,42 @@ def open_path(path: str | Path) -> bool:
             return True
         except OSError:
             return False
+
+
+class _AddStepDialog(QDialog):
+    """Collects a custom step's title and where to insert it."""
+
+    def __init__(self, steps, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Tambah Langkah")
+        self.setMinimumWidth(360)
+        form = QFormLayout(self)
+
+        self.title_field = QLineEdit()
+        self.title_field.setPlaceholderText("Judul langkah baru")
+        form.addRow("Judul", self.title_field)
+
+        self.position_combo = QComboBox()
+        self.position_combo.addItem("Di akhir daftar", (None, "after"))
+        if steps:
+            self.position_combo.addItem("Di awal daftar", (steps[0].code, "before"))
+        for step in steps:
+            self.position_combo.addItem(
+                f"Setelah {step.display_number}. {step.title}",
+                (step.code, "after"))
+        form.addRow("Posisi", self.position_combo)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        form.addRow(buttons)
+        self.title_field.setFocus()
+
+    def result_values(self) -> tuple[str, str | None, str]:
+        anchor, side = self.position_combo.currentData()
+        return self.title_field.text().strip(), anchor, side
 
 
 class ShipmentDetailView(QWidget):
@@ -192,6 +229,10 @@ class ShipmentDetailView(QWidget):
         self.checklist.step_toggled.connect(self._on_step_toggled)
         self.checklist.action_requested.connect(self._on_action)
         self.checklist.mark_complete_requested.connect(self._on_mark_complete)
+        self.checklist.remark_edited.connect(self._on_remark_edited)
+        self.checklist.add_requested.connect(self._on_add_custom)
+        self.checklist.delete_requested.connect(self._on_delete_custom)
+        self.checklist.move_requested.connect(self._on_move_custom)
         scroll.setWidget(self.checklist)
         outer.addWidget(scroll, 1)
 
@@ -304,6 +345,59 @@ class ShipmentDetailView(QWidget):
 
         self.shipments.set_step(self.shipment_id, code, complete)
         self.load(self.shipment_id)   # reloads the checklist and the header
+        self.changed.emit()
+
+    # -- custom steps and remarks ------------------------------------------
+
+    def _current_author(self) -> str | None:
+        return self.settings.get("my_email") if self.settings else None
+
+    def _on_remark_edited(self, code: str, text: str):
+        self.shipments.set_step_remark(
+            self.shipment_id, code, text, author=self._current_author())
+        self.load(self.shipment_id)
+        self.changed.emit()
+
+    def _on_add_custom(self):
+        steps = self.shipments.steps(self.shipment_id)
+        dialog = _AddStepDialog(steps, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        title, anchor, side = dialog.result_values()
+        if not title:
+            return
+        self.shipments.add_custom_step(
+            self.shipment_id, title, author=self._current_author(),
+            anchor_code=anchor, side=side)
+        self.load(self.shipment_id)
+        self.changed.emit()
+
+    def _on_delete_custom(self, code: str):
+        answer = QMessageBox.question(
+            self, "Hapus langkah?",
+            "Hapus langkah tambahan ini beserta catatannya?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self.shipments.delete_step(self.shipment_id, code)
+        self.load(self.shipment_id)
+        self.changed.emit()
+
+    def _on_move_custom(self, code: str, direction: str):
+        ordered = self.shipments.steps(self.shipment_id)
+        index = next((i for i, s in enumerate(ordered) if s.code == code), None)
+        if index is None:
+            return
+        if direction == "up" and index > 0:
+            anchor, side = ordered[index - 1].code, "before"
+        elif direction == "down" and index < len(ordered) - 1:
+            anchor, side = ordered[index + 1].code, "after"
+        else:
+            return
+        self.shipments.move_step(
+            self.shipment_id, code, anchor_code=anchor, side=side)
+        self.load(self.shipment_id)
         self.changed.emit()
 
     def _on_action(self, code: str, kind: str, payload: str):

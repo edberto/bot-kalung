@@ -9,6 +9,30 @@ from typing import Any
 from ..core.constants import WORKFLOW_STEPS
 from ..core.db import Database, new_id
 
+# Built-in steps keyed by code -> (ordinal, title, description, phase2_only).
+# Ordinal drives the default sort position so the fixed 22 keep their order.
+_BUILTIN = {
+    code: (i, title, description, phase2_only)
+    for i, (code, _phase, title, description, _auto, phase2_only)
+    in enumerate(WORKFLOW_STEPS)
+}
+
+# Custom steps carry a "custom:" prefix so their code can never collide with a
+# built-in code (A1..E6) and STEP_ACTIONS.get() naturally returns no buttons.
+CUSTOM_PREFIX = "custom:"
+
+# Gap between built-in positions leaves room to insert custom steps between them.
+_POSITION_GAP = 1000.0
+
+
+def _builtin_position(code: str) -> float:
+    """Default sort position for a built-in step (A1=1000 .. E6=22000)."""
+    return (_BUILTIN[code][0] + 1) * _POSITION_GAP
+
+
+def _now() -> str:
+    return datetime.now().isoformat(timespec="seconds")
+
 
 @dataclass
 class StepState:
@@ -16,10 +40,26 @@ class StepState:
     status: str
     completed_at: str | None
     completion_source: str | None
+    position: float = 0.0
+    is_custom: bool = False
+    title: str = ""
+    description: str = ""
+    remark: str | None = None
+    remark_author: str | None = None
+    remark_at: str | None = None
+    added_by: str | None = None
+    added_at: str | None = None
+    display_number: int = 0
+    phase2_only: bool = False
 
     @property
     def is_complete(self) -> bool:
         return self.status == "complete"
+
+    @property
+    def countable(self) -> bool:
+        """Counts toward progress and the completion gate."""
+        return self.is_custom or not self.phase2_only
 
 
 class Shipments:
@@ -42,30 +82,67 @@ class Shipments:
         return self.db.query_one("SELECT * FROM shipments WHERE id=?", (shipment_id,))
 
     def steps(self, shipment_id: str) -> list[StepState]:
+        """Ordered steps for a shipment: the built-in workflow plus any custom
+        steps, numbered 1..N. Pure read — no writes (it is called per active
+        shipment by count_overdue_steps).
+        """
         rows = self.db.query(
-            "SELECT step_code, status, completed_at, completion_source "
-            "FROM workflow_steps WHERE shipment_id=?", (shipment_id,))
+            "SELECT * FROM workflow_steps WHERE shipment_id=?", (shipment_id,))
         by_code = {r["step_code"]: r for r in rows}
-        # Return every defined step, so a shipment created before a step was
-        # added to the workflow still renders the full checklist.
-        result = []
-        for code, *_ in WORKFLOW_STEPS:
+
+        result: list[StepState] = []
+
+        # Built-in steps: use the stored row if present, else synthesize a
+        # pending one so a shipment created before a step existed still shows
+        # the full checklist. Title/description come from the constants.
+        for code, (_ordinal, title, description, phase2_only) in _BUILTIN.items():
             row = by_code.get(code)
+            position = (row["position"] if row and row["position"] is not None
+                        else _builtin_position(code))
             result.append(StepState(
                 code=code,
                 status=row["status"] if row else "pending",
                 completed_at=row["completed_at"] if row else None,
                 completion_source=row["completion_source"] if row else None,
+                position=position, is_custom=False,
+                title=title, description=description, phase2_only=phase2_only,
+                remark=row["remark"] if row else None,
+                remark_author=row["remark_author"] if row else None,
+                remark_at=row["remark_at"] if row else None,
             ))
+
+        # Custom steps: any stored row flagged custom whose code is not built-in.
+        for code, row in by_code.items():
+            if code in _BUILTIN or not row["is_custom"]:
+                continue
+            result.append(StepState(
+                code=code, status=row["status"],
+                completed_at=row["completed_at"],
+                completion_source=row["completion_source"],
+                position=(row["position"] if row["position"] is not None
+                          else 99_000.0),
+                is_custom=True,
+                title=row["title"] or "(tanpa judul)", description="",
+                remark=row["remark"], remark_author=row["remark_author"],
+                remark_at=row["remark_at"],
+                added_by=row["added_by"], added_at=row["added_at"],
+            ))
+
+        result.sort(key=lambda s: (s.position, s.added_at or "", s.code))
+        for i, step in enumerate(result, start=1):
+            step.display_number = i
         return result
 
     def progress(self, shipment_id: str) -> tuple[int, int]:
-        """(completed, total) counting only steps available in phase 1."""
-        available = [s for s in WORKFLOW_STEPS if not s[5]]
-        codes = {s[0] for s in available}
-        done = sum(1 for s in self.steps(shipment_id)
-                   if s.code in codes and s.is_complete)
-        return done, len(available)
+        """(completed, total) over every countable step — built-in and custom."""
+        countable = [s for s in self.steps(shipment_id) if s.countable]
+        done = sum(1 for s in countable if s.is_complete)
+        return done, len(countable)
+
+    def all_steps_complete(self, shipment_id: str) -> bool:
+        """True when every countable step is done — the completion gate."""
+        countable = [s for s in self.steps(shipment_id) if s.countable]
+        return bool(countable) and all(s.is_complete for s in countable)
 
     def count_completed_this_month(self) -> int:
         prefix = datetime.now().strftime("%Y-%m")
@@ -123,26 +200,117 @@ class Shipments:
 
     def _seed_steps(self, shipment_id: str) -> None:
         with self.db.cursor(write=True) as cur:
-            for code, *_ in WORKFLOW_STEPS:
+            for code in _BUILTIN:
                 cur.execute(
                     "INSERT OR IGNORE INTO workflow_steps "
-                    "(id, shipment_id, step_code, status) VALUES (?,?,?,'pending')",
-                    (new_id(), shipment_id, code),
+                    "(id, shipment_id, step_code, status, position, is_custom) "
+                    "VALUES (?,?,?,'pending',?,0)",
+                    (new_id(), shipment_id, code, _builtin_position(code)),
                 )
+
+    def _ensure_builtin_row(self, shipment_id: str, step_code: str) -> None:
+        """A shipment created before a step existed has no row for it, and
+        set_step is UPDATE-only — insert the built-in row first so ticking it
+        persists instead of silently no-op'ing.
+        """
+        if step_code in _BUILTIN:
+            self.db.execute(
+                "INSERT OR IGNORE INTO workflow_steps "
+                "(id, shipment_id, step_code, status, position, is_custom) "
+                "VALUES (?,?,?,'pending',?,0)",
+                (new_id(), shipment_id, step_code, _builtin_position(step_code)))
 
     def set_step(self, shipment_id: str, step_code: str, complete: bool,
                  source: str = "manual") -> None:
+        self._ensure_builtin_row(shipment_id, step_code)
         if complete:
             self.db.execute(
                 "UPDATE workflow_steps SET status='complete', completed_at=?, "
                 "completion_source=? WHERE shipment_id=? AND step_code=?",
-                (datetime.now().isoformat(timespec="seconds"), source,
-                 shipment_id, step_code))
+                (_now(), source, shipment_id, step_code))
         else:
             # PRD 6.2 — unchecking is always silent and has no side effects.
             self.db.execute(
                 "UPDATE workflow_steps SET status='pending', completed_at=NULL, "
                 "completion_source=NULL WHERE shipment_id=? AND step_code=?",
+                (shipment_id, step_code))
+
+    # -- custom steps and remarks --------------------------------------
+
+    @staticmethod
+    def _position_for(ordered: list[StepState], anchor_code: str,
+                      side: str) -> float:
+        """Midpoint position to place a step before/after the anchor step."""
+        index = next((i for i, s in enumerate(ordered)
+                      if s.code == anchor_code), None)
+        if index is None:                       # anchor gone — append at the end
+            last = ordered[-1].position if ordered else 0.0
+            return last + _POSITION_GAP
+        anchor = ordered[index].position
+        if side == "before":
+            prev = ordered[index - 1].position if index > 0 else anchor - _POSITION_GAP
+            return (prev + anchor) / 2
+        nxt = (ordered[index + 1].position if index + 1 < len(ordered)
+               else anchor + _POSITION_GAP)
+        return (anchor + nxt) / 2
+
+    def add_custom_step(self, shipment_id: str, title: str, *, author: str | None,
+                        anchor_code: str | None = None,
+                        side: str = "after") -> str:
+        """Add a custom TODO step. Positioned relative to anchor_code, or at the
+        end when anchor_code is None. Returns the new step code.
+        """
+        ordered = self.steps(shipment_id)
+        if anchor_code:
+            position = self._position_for(ordered, anchor_code, side)
+        else:
+            last = ordered[-1].position if ordered else 0.0
+            position = last + _POSITION_GAP
+        code = f"{CUSTOM_PREFIX}{new_id()}"
+        self.db.execute(
+            "INSERT INTO workflow_steps (id, shipment_id, step_code, status, "
+            "position, is_custom, title, added_by, added_at) "
+            "VALUES (?,?,?,'pending',?,1,?,?,?)",
+            (new_id(), shipment_id, code, position, title.strip(),
+             author or None, _now()))
+        return code
+
+    def delete_step(self, shipment_id: str, step_code: str) -> bool:
+        """Delete a custom step. Built-in steps are guarded and never deleted."""
+        if not step_code.startswith(CUSTOM_PREFIX):
+            return False
+        self.db.execute(
+            "DELETE FROM workflow_steps WHERE shipment_id=? AND step_code=? "
+            "AND is_custom=1", (shipment_id, step_code))
+        return True
+
+    def move_step(self, shipment_id: str, step_code: str, *, anchor_code: str,
+                  side: str = "after") -> bool:
+        """Reposition a custom step relative to another step. Custom only."""
+        if not step_code.startswith(CUSTOM_PREFIX):
+            return False
+        ordered = [s for s in self.steps(shipment_id) if s.code != step_code]
+        position = self._position_for(ordered, anchor_code, side)
+        self.db.execute(
+            "UPDATE workflow_steps SET position=? WHERE shipment_id=? "
+            "AND step_code=? AND is_custom=1",
+            (position, shipment_id, step_code))
+        return True
+
+    def set_step_remark(self, shipment_id: str, step_code: str, remark: str, *,
+                        author: str | None) -> None:
+        """Set or clear a step's single remark. Blank clears it."""
+        self._ensure_builtin_row(shipment_id, step_code)
+        text = (remark or "").strip()
+        if text:
+            self.db.execute(
+                "UPDATE workflow_steps SET remark=?, remark_author=?, remark_at=? "
+                "WHERE shipment_id=? AND step_code=?",
+                (text, author or None, _now(), shipment_id, step_code))
+        else:
+            self.db.execute(
+                "UPDATE workflow_steps SET remark=NULL, remark_author=NULL, "
+                "remark_at=NULL WHERE shipment_id=? AND step_code=?",
                 (shipment_id, step_code))
 
     def mark_complete(self, shipment_id: str) -> None:

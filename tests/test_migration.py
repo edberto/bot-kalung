@@ -134,6 +134,11 @@ with tempfile.TemporaryDirectory() as tmp:
           {"shipment_id", "loading_remain", "phase"}
           <= columns(path, "bnct_checks"))
 
+    # workflow_steps gained the ad-hoc-step + remark columns (2026-07-21).
+    check("migration adds the custom-step / remark columns",
+          {"position", "is_custom", "title", "remark", "remark_author",
+           "remark_at", "added_by", "added_at"} <= columns(path, "workflow_steps"))
+
     # ---- the operation that used to kill the app ---------------------------
     shipments = Shipments(db)
     shipment_id = shipments.create({
@@ -150,6 +155,20 @@ with tempfile.TemporaryDirectory() as tmp:
     check("shipping company stored",
           shipments.get(shipment_id)["shipping_company"] == "EVERGREEN")
     check("workflow steps seeded", len(shipments.steps(shipment_id)) == 22)
+
+    # A legacy step row (position NULL, is_custom NULL — as a pre-migration
+    # build left it) must still read as a built-in and sort correctly.
+    db.execute("UPDATE workflow_steps SET position=NULL, is_custom=NULL "
+               "WHERE shipment_id=? AND step_code='A2'", (shipment_id,))
+    legacy_steps = shipments.steps(shipment_id)
+    check("legacy NULL-position row still ordered as its built-in",
+          [s.code for s in legacy_steps][:2] == ["A1", "A2"])
+    check("legacy NULL is_custom reads as built-in",
+          not next(s for s in legacy_steps if s.code == "A2").is_custom)
+    # And ticking it (UPSERT path) persists despite the legacy shape.
+    shipments.set_step(shipment_id, "A2", True)
+    check("legacy step can still be ticked",
+          next(s for s in shipments.steps(shipment_id) if s.code == "A2").is_complete)
 
     # ---- and it survives a reopen, which is what the report described ------
     reopened = Shipments(Database(path))
