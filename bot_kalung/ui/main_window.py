@@ -113,6 +113,9 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(root)
 
         # -- BNCT monitoring (PRD 15) --------------------------------------
+        # Clicking a tray toast can only tell us *a* message was clicked, not
+        # which one, so remember the shipment behind the most recent toast.
+        self._notified_shipment: str | None = None
         self.tray = self._build_tray()
         self.bnct = BnctController(ctx.db, ctx.settings)
         self.bnct.notified.connect(self._on_bnct_notification)
@@ -134,6 +137,7 @@ class MainWindow(QMainWindow):
         icon = self.windowIcon()
         tray.setIcon(icon if not icon.isNull() else QIcon())
         tray.setToolTip(APP_NAME)
+        tray.messageClicked.connect(self._open_notified_shipment)
         tray.show()
         return tray
 
@@ -143,15 +147,36 @@ class MainWindow(QMainWindow):
 
     def _on_bnct_notification(self, note):
         """A monitoring transition — notify natively, and via a dialog for the
-        departure alert since that one demands action (pay LOLO).
+        departure alert since that one demands action (pay LOLO). Both routes
+        deep-link to the shipment the notification is about.
         """
+        self._notified_shipment = note.shipment_id
         if self.tray is not None:
             icon = (QSystemTrayIcon.MessageIcon.Critical
                     if note.kind == "departing"
                     else QSystemTrayIcon.MessageIcon.Information)
             self.tray.showMessage(note.title, note.body, icon, 15_000)
         if note.kind == "departing":
-            QMessageBox.warning(self, note.title, note.body)
+            box = QMessageBox(QMessageBox.Icon.Warning, note.title, note.body,
+                              parent=self)
+            open_btn = box.addButton("Buka Pengiriman",
+                                     QMessageBox.ButtonRole.AcceptRole)
+            box.addButton("Tutup", QMessageBox.ButtonRole.RejectRole)
+            box.exec()
+            if box.clickedButton() is open_btn:
+                self._focus_shipment(note.shipment_id)
+
+    def _open_notified_shipment(self):
+        """Tray toast was clicked — jump to whichever shipment it was about."""
+        self._focus_shipment(self._notified_shipment)
+
+    def _focus_shipment(self, shipment_id: str | None):
+        if not shipment_id or self.shipments.get(shipment_id) is None:
+            return          # deleted or unknown; nothing to open
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+        self.open_shipment(shipment_id)
 
     # -- navigation ------------------------------------------------------
 

@@ -64,6 +64,15 @@ def columns(path, table="shipments"):
         conn.close()
 
 
+def table_names(path):
+    conn = sqlite3.connect(str(path))
+    try:
+        return {r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'")}
+    finally:
+        conn.close()
+
+
 # ---- schema parsing --------------------------------------------------------
 expected = _expected_columns()
 check("all five tables parsed from SCHEMA",
@@ -88,6 +97,7 @@ with tempfile.TemporaryDirectory() as tmp:
     conn.close()
 
     before = columns(path)
+    table_names_before = table_names(path)
     check("old database lacks shipping_company", "shipping_company" not in before)
     check("old database has shipping_company_id", "shipping_company_id" in before)
 
@@ -113,6 +123,16 @@ with tempfile.TemporaryDirectory() as tmp:
     check("migration keeps the obsolete column rather than dropping data",
           "shipping_company_id" in after)
     check("existing tables are otherwise untouched", before <= after)
+
+    # A brand-new table (bnct_checks, added 2026-07-21) must appear on an
+    # existing database, not only on a freshly created one.
+    check("the old database had no bnct_checks table",
+          "bnct_checks" not in table_names_before)
+    check("migration creates the new bnct_checks table",
+          "bnct_checks" in table_names(path))
+    check("the new table has its key columns",
+          {"shipment_id", "loading_remain", "phase"}
+          <= columns(path, "bnct_checks"))
 
     # ---- the operation that used to kill the app ---------------------------
     shipments = Shipments(db)

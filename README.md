@@ -76,6 +76,33 @@ hidden import, which otherwise only surfaces when a worker hits that feature.
 If the app ever fails to start, `botkalung-error.log` appears next to the
 executable with the traceback — a frozen GUI build has no console to print to.
 
+## Local CI/CD
+
+There is no cloud runner — the app needs Windows, Excel and the team's Google
+Drive, so the pipeline runs on a developer's machine:
+
+```
+.venv\Scripts\python tools\ci.py            # lint + tests + schema check
+.venv\Scripts\python tools\ci.py --build    # ...also build the exe + selftest
+.venv\Scripts\python tools\ci.py --fast     # lint + fast tests + schema (~15s)
+```
+
+Stages: **lint** (pyflakes, honouring `# noqa`), **test** (every `tests/test_*`,
+classified PASS / SKIP / FAIL — Excel/Drive tests SKIP when unavailable),
+**schema** (migration verification; `--migrate <db>` applies the current schema
+to a real database on purpose), and **build** (PyInstaller + the exe's
+`--selftest`). Exit code is non-zero if any stage fails.
+
+A git pre-push hook runs the fast gate automatically. Enable it once per clone:
+
+```
+git config core.hooksPath .githooks
+```
+
+Then a push is blocked if lint, the fast tests, or the schema check fail. Use
+`git push --no-verify` to override in an emergency. The full pipeline
+(`--build`, Excel tests) stays manual.
+
 ## Tests
 
 ```

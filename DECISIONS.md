@@ -327,6 +327,25 @@ Design decisions:
 Live network calls are skipped under the offscreen Qt platform, so the test
 suite never hits the portal.
 
+## 22. Local CI/CD pipeline (2026-07-21)
+
+`tools/ci.py` is the pipeline; there is no cloud runner because the app needs
+Windows, Excel and the team's Google Drive. Stages: lint (pyflakes, honouring
+`# noqa` — pyflakes itself ignores it, so the runner post-filters), test (every
+`tests/test_*`, classified PASS/SKIP/FAIL by exit code and the "all checks
+passed" footer, not by fragile string matching), schema (migration
+verification, with an opt-in `--migrate <db>` to update a real database), and
+build (PyInstaller + the exe's `--selftest`).
+
+`--fast` skips the Excel/Drive suites and the build (~15s); the git pre-push
+hook (`.githooks/pre-push`, enabled per clone with
+`git config core.hooksPath .githooks`) runs it so a broken lint/test/schema
+blocks a push. The full run, including the exe build, stays manual.
+
+Choosing "schema" as its own stage was the user's call: the app migrates by
+`CREATE TABLE IF NOT EXISTS` + `ALTER TABLE ADD COLUMN` on launch, so the stage
+guards against a SCHEMA change the migration path does not actually apply.
+
 ## Still open
 
 - BNCT portal monitoring with the result recorded in the app (Phase 2, to be

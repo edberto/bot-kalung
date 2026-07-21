@@ -1,0 +1,27 @@
+#!/bin/sh
+# Runs the fast CI gate (lint + non-Excel tests + schema check) before a push.
+# Enable with:  git config core.hooksPath .githooks
+#
+# The full pipeline (Excel tests + exe build) stays manual:
+#   python tools/ci.py --build
+#
+# To push despite a failure in an emergency:  git push --no-verify
+
+root=$(git rev-parse --show-toplevel)
+
+# Prefer the project venv; fall back to whatever python is on PATH.
+if [ -x "$root/.venv/Scripts/python.exe" ]; then
+    py="$root/.venv/Scripts/python.exe"
+elif [ -x "$root/.venv/bin/python" ]; then
+    py="$root/.venv/bin/python"
+else
+    py="python"
+fi
+
+echo "pre-push: running fast CI gate..."
+"$py" "$root/tools/ci.py" --fast
+status=$?
+if [ "$status" -ne 0 ]; then
+    echo "pre-push: CI failed — push aborted. Use 'git push --no-verify' to override."
+fi
+exit $status

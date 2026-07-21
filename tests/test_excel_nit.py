@@ -112,8 +112,11 @@ try:
               any("SI" in w and "manual" in w for w in report.warnings))
         check("P.List reports the same",
               any("P.List" in w and "manual" in w for w in report.warnings))
+        # The prose 'TOTAL' cell has drifted rows as the live workbook is
+        # edited (D33 -> D36 by 2026-07-21), so locate it rather than pinning a
+        # row. What matters is that the prose is still there and untouched.
         check("SI prose content left intact",
-              si.range("D33").value == "TOTAL")
+              any(si.range((r, 4)).value == "TOTAL" for r in range(28, 45)))
 
         # ---- growing back 8 -> 12 --------------------------------------------
         excel.prefill_workbook(

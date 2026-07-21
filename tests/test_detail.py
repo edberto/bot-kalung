@@ -165,6 +165,27 @@ with tempfile.TemporaryDirectory() as tmp:
     check("a failed folder delete surfaces the reason",
           not detail.message.isHidden())
 
+    # ---- BNCT notification deep-link -------------------------------------
+    from bot_kalung.ui.main_window import VIEW_DASHBOARD
+
+    window.open_dashboard()
+    check("starts on the dashboard", window.stack.currentIndex() == VIEW_DASHBOARD)
+    # Simulate a tray toast for the quarantined shipment being clicked.
+    window._notified_shipment = quarantined
+    window._open_notified_shipment()
+    check("clicking the notification opens its shipment",
+          window.stack.currentIndex() == VIEW_DETAIL
+          and window.current_shipment_id == quarantined)
+
+    # A notification for a since-deleted shipment must not crash or navigate.
+    window.open_dashboard()
+    window._focus_shipment(plain)     # plain was deleted earlier
+    check("a deep-link to a deleted shipment is ignored",
+          window.stack.currentIndex() == VIEW_DASHBOARD)
+    window._focus_shipment(None)
+    check("a deep-link with no shipment is ignored",
+          window.stack.currentIndex() == VIEW_DASHBOARD)
+
     window.wizard.shutdown()
 
 print()
