@@ -1,10 +1,13 @@
 # Bot Kalung
 
-Windows desktop app for managing broomstick export shipments — folder setup,
+Windows desktop app for managing export shipments — folder setup,
 Excel pre-fill, workflow tracking, and email drafting.
 
 See `PRD.md` for the specification and `DECISIONS.md` for every place the build
 deliberately departs from it, with the reasoning.
+
+This repository was vibe-coded and was not made to clean code standards. Only designed to "make it work" due to nature of timeline. 
+Code cleanup pending
 
 ## Running from source
 
