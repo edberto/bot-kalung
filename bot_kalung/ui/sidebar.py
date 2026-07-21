@@ -19,14 +19,6 @@ class ShipmentEntry(Panel):
 
     def __init__(self, shipment, done: int, total: int):
         super().__init__()
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        # The entry widget sits on top of the list item, so the list's own
-        # ::item:hover never shows. Highlight the widget itself instead.
-        # Object-name scoped so only the card, not its child labels, is styled.
-        self.setObjectName("shipmentEntry")
-        self.setStyleSheet(theme.style(
-            "#shipmentEntry { border-radius: 6px; background: transparent; }"
-            "#shipmentEntry:hover { background: #eef2ff; }"))
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 8, 10, 8)
         layout.setSpacing(3)
@@ -58,6 +50,16 @@ class ShipmentEntry(Panel):
         progress = QLabel(f"{done} / {total} langkah selesai")
         progress.setStyleSheet(theme.style("font-size: 11px; color: #6b7280;"))
         layout.addWidget(progress)
+
+        # Let hover and clicks fall through to the underlying list item, so its
+        # own full-row ::item:hover / ::item:selected highlight shows cleanly
+        # (rounded, full width). Highlighting the widget itself looked chopped
+        # because it does not match the item's rounding and margin. The list
+        # still handles clicks via itemClicked. The attribute does not inherit,
+        # so it is set on every child too.
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        for child in self.findChildren(QLabel):
+            child.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
 
 
 class Sidebar(Panel):
@@ -100,6 +102,7 @@ class Sidebar(Panel):
             QListWidget::item:hover { background: #eef2ff; }
         """))
         self.shipment_list.itemClicked.connect(self._on_item_clicked)
+        self.shipment_list.setCursor(Qt.CursorShape.PointingHandCursor)
         layout.addWidget(self.shipment_list, 1)
 
         self.empty_note = QLabel("Belum ada pengiriman aktif.")
