@@ -431,6 +431,42 @@ must not abort the operation it is auditing.
 Surfaced as its own **"Log Aktivitas"** sidebar item (user choice), separate
 from Notifikasi, with no unread counter.
 
+## 27. Sequence-number migration (2026-07-21)
+
+Correcting a shipment's number touches four places, because nothing derived
+from the sequence is stored in the database: the folder's numeric prefix, the
+main-workbook and invoice filenames, the document numbers inside the workbook
+(VGM number and SI title), and the names of already-exported PDFs. Email
+subjects and folder-name variables render live from the row, so they fix
+themselves.
+
+Renaming the workbook is **mandatory**, not cosmetic: `_sequence_from_documents`
+reads a shipment's number from the workbook filename before the folder prefix
+(section 4), so renaming only the folder would leave the old number
+authoritative and corrupt `next_sequence_number` for every future shipment.
+
+The folder is renamed by swapping its numeric prefix rather than rebuilding the
+name from `naming.folder_name`, so hand-made parts of an existing folder name
+survive. Padding is taken from the prefix itself (`04.` stays two digits).
+
+**Clashes are resolved by the worker, not automatically** (user decision): when
+a target number is taken, the app names the holder and asks where *it* should
+go, repeating until the whole assignment is clash-free — so a swap (23→24,
+24→23) settles in one prompt, while a longer chain is possible if wanted.
+Sequences are per-exporter, so AMJ24 and TTJ24 never clash.
+
+**Check-then-run**: the migration pre-flights for open workbooks (Excel's
+`~$` lock files plus a write-open probe) and destination-name collisions, lists
+what must be closed, and only proceeds once a re-check is clean — rather than
+discovering a lock half-way through a rename. Files are renamed before the
+folder, and the database row is updated last, so it never points at a folder
+that failed to move.
+
+Exported PDFs are renamed too (user decision), with the caveat reported that
+their *contents* still show the old document number, so a re-export is advised.
+
+Triggered from a "Ubah Nomor Urut" button on the dashboard (user choice).
+
 ## Still open
 
 - ~~BNCT portal monitoring with the result recorded in the app~~ — closed

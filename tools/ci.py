@@ -38,7 +38,7 @@ PYTHON = sys.executable
 # those are unavailable, but they are slow, so --fast leaves them out entirely.
 EXTERNAL_TESTS = {
     "test_excel_amj", "test_excel_nit", "test_excel_ttj_tsi",
-    "test_pdf_export", "test_drive", "test_fileops",
+    "test_pdf_export", "test_drive", "test_fileops", "test_resequence",
 }
 
 LINT_TARGETS = ["bot_kalung", "app.py", "tools", "tests"]

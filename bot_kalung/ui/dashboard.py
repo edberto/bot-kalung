@@ -116,6 +116,7 @@ class ShipmentCard(Panel):
 class DashboardView(QWidget):
     new_shipment_clicked = pyqtSignal()
     shipment_opened = pyqtSignal(str)
+    resequence_requested = pyqtSignal()
 
     def __init__(self):
         super().__init__()
@@ -128,6 +129,9 @@ class DashboardView(QWidget):
         title.setStyleSheet(theme.style("font-size: 22px; font-weight: 700; color: #111827;"))
         header.addWidget(title)
         header.addStretch(1)
+        self.resequence_button = SecondaryButton("Ubah Nomor Urut")
+        self.resequence_button.clicked.connect(self.resequence_requested)
+        header.addWidget(self.resequence_button)
         self.today_label = QLabel()
         self.today_label.setStyleSheet(theme.style("font-size: 12px; color: #6b7280;"))
         header.addWidget(self.today_label)

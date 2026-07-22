@@ -25,6 +25,7 @@ from ..services.notifications import NotificationStore
 from .new_shipment import NewShipmentWizard
 from .audit_view import AuditView
 from .notifications_view import NotificationsView
+from .resequence_dialog import ResequenceDialog
 from .settings_view import SettingsView
 from .shipment_detail import ShipmentDetailView
 from .sidebar import Sidebar
@@ -87,6 +88,7 @@ class MainWindow(QMainWindow):
         self.dashboard = DashboardView()
         self.dashboard.new_shipment_clicked.connect(self.open_wizard)
         self.dashboard.shipment_opened.connect(self.open_shipment)
+        self.dashboard.resequence_requested.connect(self.open_resequence)
         self.stack.addWidget(self.dashboard)
 
         self.wizard = NewShipmentWizard(ctx)
@@ -310,6 +312,14 @@ class MainWindow(QMainWindow):
         self.sidebar.select_shipment(None)
         self.notifications.refresh()
         self._go(VIEW_NOTIFICATIONS)
+
+    def open_resequence(self):
+        """Change a shipment's sequence number (folder, files, Excel, PDFs)."""
+        if not self._leave_wizard_ok():
+            return
+        dialog = ResequenceDialog(self.ctx.db, self)
+        dialog.exec()
+        self.refresh()   # numbers and folder paths may have changed
 
     def open_audit(self):
         if not self._leave_wizard_ok():
