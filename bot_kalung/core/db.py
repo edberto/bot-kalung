@@ -105,6 +105,19 @@ CREATE TABLE IF NOT EXISTS notifications (
     created_at  TEXT NOT NULL,
     read        INTEGER NOT NULL DEFAULT 0
 );
+
+-- Shipment lifecycle trail. shipment_id is deliberately NOT a foreign key:
+-- a "shipment deleted" entry must survive the shipment it describes, which an
+-- ON DELETE CASCADE would erase. label keeps the entry readable afterwards.
+CREATE TABLE IF NOT EXISTS audit_log (
+    id          TEXT PRIMARY KEY,
+    created_at  TEXT NOT NULL,
+    actor       TEXT,
+    action      TEXT NOT NULL,
+    shipment_id TEXT,
+    label       TEXT,
+    detail      TEXT
+);
 """
 
 # Indexes are created AFTER _add_missing_columns, because one references a
@@ -116,6 +129,7 @@ CREATE INDEX IF NOT EXISTS idx_steps_shipment ON workflow_steps(shipment_id);
 CREATE INDEX IF NOT EXISTS idx_steps_position ON workflow_steps(shipment_id, position);
 CREATE INDEX IF NOT EXISTS idx_bnct_shipment ON bnct_checks(shipment_id);
 CREATE INDEX IF NOT EXISTS idx_notifications_read ON notifications(read);
+CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at);
 """
 
 

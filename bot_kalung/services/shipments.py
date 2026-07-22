@@ -8,6 +8,7 @@ from typing import Any
 
 from ..core.constants import WORKFLOW_STEPS
 from ..core.db import Database, new_id
+from .audit import COMPLETED, CREATED, DELETED, AuditLog
 
 # Built-in steps keyed by code -> (ordinal, title, description, phase2_only).
 # Ordinal drives the default sort position so the fixed 22 keep their order.
@@ -62,9 +63,21 @@ class StepState:
         return self.is_custom or not self.phase2_only
 
 
+def _label(row_or_values) -> str:
+    """Short shipment label, e.g. "AMJ24" — kept in the audit trail so an entry
+    still reads correctly after the shipment is deleted.
+    """
+    try:
+        return (f"{row_or_values['exporter_code']}"
+                f"{row_or_values['sequence_number']}")
+    except (KeyError, TypeError):
+        return ""
+
+
 class Shipments:
     def __init__(self, db: Database):
         self.db = db
+        self.audit = AuditLog(db)
 
     # -- reads ----------------------------------------------------------
 
@@ -196,6 +209,10 @@ class Shipments:
             ),
         )
         self._seed_steps(shipment_id)
+        vessel = f"{values.get('vessel_name') or ''} " \
+                 f"{values.get('voyage') or ''}".strip()
+        self.audit.record(CREATED, shipment_id=shipment_id,
+                          label=_label(values), detail=vessel)
         return shipment_id
 
     def _seed_steps(self, shipment_id: str) -> None:
@@ -314,9 +331,20 @@ class Shipments:
                 (shipment_id, step_code))
 
     def mark_complete(self, shipment_id: str) -> None:
+        row = self.get(shipment_id)
         self.db.execute(
             "UPDATE shipments SET status='completed', completed_at=? WHERE id=?",
-            (datetime.now().isoformat(timespec="seconds"), shipment_id))
+            (_now(), shipment_id))
+        if row is not None:
+            vessel = f"{row['vessel_name'] or ''} {row['voyage'] or ''}".strip()
+            self.audit.record(COMPLETED, shipment_id=shipment_id,
+                              label=_label(row), detail=vessel)
 
     def delete(self, shipment_id: str) -> None:
+        # Read the label before the row goes, so the entry stays meaningful.
+        row = self.get(shipment_id)
+        label = _label(row) if row is not None else ""
+        detail = (row["folder_path"] or "") if row is not None else ""
         self.db.execute("DELETE FROM shipments WHERE id=?", (shipment_id,))
+        self.audit.record(DELETED, shipment_id=shipment_id, label=label,
+                          detail=detail)

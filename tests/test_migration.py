@@ -75,9 +75,10 @@ def table_names(path):
 
 # ---- schema parsing --------------------------------------------------------
 expected = _expected_columns()
-check("all six tables parsed from SCHEMA",
+check("all seven tables parsed from SCHEMA",
       set(expected) == {"shipments", "workflow_steps", "settings",
-                        "message_templates", "bnct_checks", "notifications"})
+                        "message_templates", "bnct_checks", "notifications",
+                        "audit_log"})
 check("shipments columns parsed", len(expected["shipments"]) == 19)
 check("shipping_company is expected", "shipping_company" in expected["shipments"])
 check("table constraints are not read as columns",
@@ -138,6 +139,14 @@ with tempfile.TemporaryDirectory() as tmp:
     check("migration adds the custom-step / remark columns",
           {"position", "is_custom", "title", "remark", "remark_author",
            "remark_at", "added_by", "added_at"} <= columns(path, "workflow_steps"))
+
+    # The audit trail table (2026-07-21) must appear too, and must NOT carry a
+    # cascading shipment FK — its "deleted" entries have to outlive the shipment.
+    check("migration creates the audit_log table",
+          "audit_log" in table_names(path))
+    check("audit_log has its columns",
+          {"actor", "action", "shipment_id", "label", "detail"}
+          <= columns(path, "audit_log"))
 
     # ---- the operation that used to kill the app ---------------------------
     shipments = Shipments(db)

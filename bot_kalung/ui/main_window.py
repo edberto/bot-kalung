@@ -23,6 +23,7 @@ from .dashboard import DashboardView
 from .history import HistoryView
 from ..services.notifications import NotificationStore
 from .new_shipment import NewShipmentWizard
+from .audit_view import AuditView
 from .notifications_view import NotificationsView
 from .settings_view import SettingsView
 from .shipment_detail import ShipmentDetailView
@@ -51,6 +52,7 @@ VIEW_DETAIL = 2
 VIEW_HISTORY = 3
 VIEW_SETTINGS = 4
 VIEW_NOTIFICATIONS = 5
+VIEW_AUDIT = 6
 
 
 class MainWindow(QMainWindow):
@@ -117,10 +119,14 @@ class MainWindow(QMainWindow):
         self.notifications.changed.connect(self._refresh_notification_badge)
         self.stack.addWidget(self.notifications)
 
+        self.audit = AuditView(ctx.db)
+        self.stack.addWidget(self.audit)
+
         layout.addWidget(self.stack, 1)
         self.setCentralWidget(root)
 
         self.sidebar.notifications_clicked.connect(self.open_notifications)
+        self.sidebar.audit_clicked.connect(self.open_audit)
 
         # -- BNCT monitoring (PRD 15) --------------------------------------
         # Clicking a tray toast can only tell us *a* message was clicked, not
@@ -304,6 +310,13 @@ class MainWindow(QMainWindow):
         self.sidebar.select_shipment(None)
         self.notifications.refresh()
         self._go(VIEW_NOTIFICATIONS)
+
+    def open_audit(self):
+        if not self._leave_wizard_ok():
+            return
+        self.sidebar.select_shipment(None)
+        self.audit.refresh()
+        self._go(VIEW_AUDIT)
 
     def open_settings(self):
         if not self._leave_wizard_ok():

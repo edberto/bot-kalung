@@ -408,6 +408,29 @@ treat NULL `is_custom` as built-in and NULL `position` as the built-in ordinal.
 Indexes moved out of `SCHEMA` into a separate `INDEXES` block created *after* the
 column migration, because `idx_steps_position` references the newly-added column.
 
+## 26. Shipment activity log (2026-07-21)
+
+The database is shared by three workers over Drive, so "who created, completed
+or deleted this shipment, and when" is worth keeping. Scope is deliberately
+narrow — **lifecycle only**, not every checkbox tick or remark (user decision) —
+so the log stays readable.
+
+Its own `audit_log` table, not the `notifications` table, for two reasons:
+`notifications.shipment_id` cascades on delete, which would erase the very
+"shipment deleted" entry it needs to keep; and the notification list drives the
+unread badge, which this passive log must not inflate. `audit_log.shipment_id`
+therefore carries **no foreign key**, and each entry stores the shipment `label`
+("AMJ24") so it still reads correctly after the shipment is gone.
+
+Recording lives in `Shipments.create/mark_complete/delete` rather than at the UI
+call sites, so every path (wizard, detail view, history view) is covered without
+threading an actor through any signature — the acting worker is resolved from
+the shared `my_email` setting. `AuditLog.record()` never raises: an audit failure
+must not abort the operation it is auditing.
+
+Surfaced as its own **"Log Aktivitas"** sidebar item (user choice), separate
+from Notifikasi, with no unread counter.
+
 ## Still open
 
 - ~~BNCT portal monitoring with the result recorded in the app~~ — closed
