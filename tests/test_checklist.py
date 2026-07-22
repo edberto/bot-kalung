@@ -166,6 +166,33 @@ with tempfile.TemporaryDirectory() as tmp:
 
     check("steps with actions have buttons", len(checklist.rows["B6"].buttons) == 1)
 
+    # Every step offers a date affordance; the chip appears once set.
+    check("every step has a date edit button",
+          all(r.date_button is not None for r in checklist.rows.values()))
+    check("no date chip before a date is set",
+          checklist.rows["C1"].date_label.isHidden())
+    # The button opens a modal date dialog; stub it so the test never blocks.
+    from PyQt6.QtWidgets import QDialog
+
+    class _FakeDateDialog:
+        def __init__(self, step, parent=None):
+            pass
+
+        def exec(self):
+            return QDialog.DialogCode.Accepted
+
+        def value(self):
+            return "2026-08-09"
+
+    shipment_detail._StepDateDialog = _FakeDateDialog
+    checklist.rows["C1"].date_button.click()
+    check("the date button sets the step's date",
+          next(s for s in shipments.steps(shipment_id)
+               if s.code == "C1").due_date == "2026-08-09")
+    check("the date chip shows once a date is set",
+          not checklist.rows["C1"].date_label.isHidden()
+          and "Agustus" in checklist.rows["C1"].date_label.text())
+
     # Communication buttons are labelled generically — "Email" / "WhatsApp",
     # never by recipient (user, 2026-07-21).
     comm_labels = {label for actions in STEP_ACTIONS.values()

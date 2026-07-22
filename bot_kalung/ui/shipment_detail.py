@@ -13,24 +13,29 @@ import os
 import subprocess
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from datetime import date as _date
+
+from PyQt6.QtCore import QDate, Qt, QThread, pyqtSignal
 from PyQt6.QtWidgets import (
     QComboBox, QDialog, QDialogButtonBox, QFormLayout, QFrame, QHBoxLayout,
-    QLabel, QLineEdit, QMessageBox, QProgressBar, QScrollArea, QVBoxLayout,
-    QWidget,
+    QLabel, QLineEdit, QMessageBox, QProgressBar, QPushButton,
+    QScrollArea, QVBoxLayout, QWidget,
 )
 
 from ..core.constants import (
     EXPORTER_COLORS, NON_COMPLETING_ACTION_KINDS, STEPS_COMPLETED_BY_ACTION,
     STEPS_WITH_SIDE_EFFECTS,
 )
-from ..services import fileops, messaging, pdf_export, printing, whatsapp
+from ..services import (
+    etd_change, fileops, messaging, pdf_export, printing, whatsapp,
+)
 from ..services.messaging import DraftBuilder, MessagingError
+from ..services.naming import parse_iso_date
 from ..services.shipments import Shipments
 from .bnct_panel import BnctPanel
 from .checklist import ChecklistView
 from .widgets import (
-    DangerButton, InlineMessage, Panel, SecondaryButton, days_until,
+    DangerButton, DateEdit, InlineMessage, Panel, SecondaryButton, days_until,
     format_date_id,
 )
 
@@ -76,6 +81,79 @@ def open_path(path: str | Path) -> bool:
             return True
         except OSError:
             return False
+
+
+class _StepDateDialog(QDialog):
+    """Pick (or clear) a step's date."""
+
+    def __init__(self, step, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Tanggal Langkah")
+        self._cleared = False
+        form = QFormLayout(self)
+
+        title = QLabel(f"{step.display_number}. {step.title}")
+        title.setWordWrap(True)
+        form.addRow(title)
+
+        self.date_field = DateEdit()
+        existing = parse_iso_date(step.due_date) if step.due_date else None
+        self.date_field.setDate(QDate(existing.year, existing.month, existing.day)
+                                if existing else QDate.currentDate())
+        form.addRow("Tanggal", self.date_field)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel)
+        if step.due_date:
+            clear = buttons.addButton("Hapus tanggal",
+                                      QDialogButtonBox.ButtonRole.DestructiveRole)
+            clear.clicked.connect(self._clear)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        form.addRow(buttons)
+
+    def _clear(self):
+        self._cleared = True
+        self.accept()
+
+    def value(self) -> str | None:
+        if self._cleared:
+            return None
+        return self.date_field.date().toString("yyyy-MM-dd")
+
+
+class _EtdDialog(QDialog):
+    """Pick a new ETD for the shipment."""
+
+    def __init__(self, row, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Ubah ETD")
+        form = QFormLayout(self)
+
+        note = QLabel(
+            "Mengubah ETD juga mengganti akhiran tanggal pada nama folder dan "
+            "memperbarui nomor dokumen, tanggal VGM, dan ETD di sheet SI.")
+        note.setWordWrap(True)
+        note.setStyleSheet(theme.style("font-size: 11px; color: #6b7280;"))
+        form.addRow(note)
+
+        self.date_field = DateEdit()
+        existing = parse_iso_date(row["etd_belawan"]) if row["etd_belawan"] else None
+        self.date_field.setDate(QDate(existing.year, existing.month, existing.day)
+                                if existing else QDate.currentDate())
+        form.addRow("ETD baru", self.date_field)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        form.addRow(buttons)
+
+    def value(self):
+        qdate = self.date_field.date()
+        return _date(qdate.year(), qdate.month(), qdate.day())
 
 
 class _AddStepDialog(QDialog):
@@ -163,6 +241,19 @@ class ShipmentDetailView(QWidget):
         self.etd_label.setStyleSheet(theme.style(
             "font-size: 13px; font-weight: 600; border: none;"))
         top.addWidget(self.etd_label)
+
+        # The ETD is editable: changing it also renames the folder's date
+        # suffix and rewrites the VGM/SI cells that derive from it.
+        self.etd_edit_button = QPushButton("✎")
+        self.etd_edit_button.setToolTip("Ubah ETD")
+        self.etd_edit_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.etd_edit_button.setFixedWidth(24)
+        self.etd_edit_button.setStyleSheet(theme.style(
+            "QPushButton { border: none; background: transparent;"
+            " color: #2563eb; font-size: 13px; }"
+            "QPushButton:hover { color: #1d4ed8; }"))
+        self.etd_edit_button.clicked.connect(self._on_edit_etd)
+        top.addWidget(self.etd_edit_button)
         header_layout.addLayout(top)
 
         self.meta_label = QLabel()
@@ -222,9 +313,10 @@ class ShipmentDetailView(QWidget):
         divider.setStyleSheet(theme.style("color: #e5e7eb;"))
         outer.addWidget(divider)
 
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        # Kept as an attribute so a step can be scrolled into view (focus_step).
+        self.checklist_scroll = QScrollArea()
+        self.checklist_scroll.setWidgetResizable(True)
+        self.checklist_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         self.checklist = ChecklistView()
         self.checklist.step_toggled.connect(self._on_step_toggled)
         self.checklist.action_requested.connect(self._on_action)
@@ -233,8 +325,9 @@ class ShipmentDetailView(QWidget):
         self.checklist.add_requested.connect(self._on_add_custom)
         self.checklist.delete_requested.connect(self._on_delete_custom)
         self.checklist.move_requested.connect(self._on_move_custom)
-        scroll.setWidget(self.checklist)
-        outer.addWidget(scroll, 1)
+        self.checklist.date_edit_requested.connect(self._on_date_edit)
+        self.checklist_scroll.setWidget(self.checklist)
+        outer.addWidget(self.checklist_scroll, 1)
 
     # -- state -------------------------------------------------------------
 
@@ -345,6 +438,79 @@ class ShipmentDetailView(QWidget):
 
         self.shipments.set_step(self.shipment_id, code, complete)
         self.load(self.shipment_id)   # reloads the checklist and the header
+        self.changed.emit()
+
+    # -- dates -------------------------------------------------------------
+
+    def focus_step(self, code: str):
+        """Scroll a step into view and highlight it — used when arriving from
+        the calendar. The highlight clears on the next load().
+        """
+        row = self.checklist.rows.get(code)
+        if row is None:
+            return
+        self.checklist_scroll.ensureWidgetVisible(row, 50, 50)
+        row.setStyleSheet(theme.style(
+            "background: #eef2ff; border: 2px solid #2563eb;"
+            "border-radius: 6px;"))
+
+    def _on_date_edit(self, code: str):
+        step = next((s for s in self.shipments.steps(self.shipment_id)
+                     if s.code == code), None)
+        if step is None:
+            return
+        dialog = _StepDateDialog(step, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        self.shipments.set_step_date(self.shipment_id, code, dialog.value())
+        self.load(self.shipment_id)
+        self.changed.emit()
+
+    def _on_edit_etd(self):
+        """Change the ETD, updating the folder's date suffix and the Excel
+        cells that derive from it. Check-then-run, like the resequence flow.
+        """
+        row = self.shipments.get(self.shipment_id)
+        if row is None:
+            return
+        dialog = _EtdDialog(row, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        new_etd = dialog.value()
+        if new_etd is None or new_etd.isoformat() == (row["etd_belawan"] or ""):
+            return
+
+        plan = etd_change.build_plan(row, new_etd)
+        blockers = etd_change.preflight(plan)
+        if blockers:
+            QMessageBox.warning(
+                self, "Tutup berkas dulu",
+                "Tutup berkas berikut lalu coba lagi:\n\n"
+                + "\n".join(f"  • {b.path} — {b.reason}" for b in blockers))
+            return
+
+        summary = [f"ETD {format_date_id(row['etd_belawan'])} → "
+                   f"{format_date_id(new_etd.isoformat())}"]
+        if plan.new_folder is not None:
+            summary.append(f"Folder → {plan.new_folder.name}")
+        if plan.document_number_changes:
+            summary.append(f"Nomor dokumen {plan.old_document_number} → "
+                           f"{plan.new_document_number}")
+        summary.append(f"VGM DATE → {plan.new_vgm_date}")
+        summary.append(f"ETD di SI → {plan.new_si_etd}")
+        answer = QMessageBox.question(
+            self, "Ubah ETD?", "\n".join(summary) + "\n\nLanjutkan?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+
+        result = etd_change.execute(self.db, plan)
+        if result.ok:
+            self.message.show_success("; ".join(result.changed))
+        else:
+            self.message.show_error("; ".join(result.failed))
+        self.load(self.shipment_id)
         self.changed.emit()
 
     # -- custom steps and remarks ------------------------------------------

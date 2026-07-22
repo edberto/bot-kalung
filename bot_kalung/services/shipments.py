@@ -36,6 +36,24 @@ def _now() -> str:
 
 
 @dataclass
+class CalendarEntry:
+    """One thing to draw on a day in the month calendar."""
+    kind: str                    # "step" | "etd"
+    shipment_id: str
+    label: str                   # "AMJ24"
+    step_code: str | None
+    title: str
+    date: str                    # ISO yyyy-mm-dd
+    is_complete: bool
+
+    def is_overdue(self, today: str) -> bool:
+        """Unfinished and already past. Completion beats overdue, and a step
+        dated today is not yet overdue.
+        """
+        return self.kind == "step" and not self.is_complete and self.date < today
+
+
+@dataclass
 class StepState:
     code: str
     status: str
@@ -50,6 +68,7 @@ class StepState:
     remark_at: str | None = None
     added_by: str | None = None
     added_at: str | None = None
+    due_date: str | None = None
     display_number: int = 0
     phase2_only: bool = False
 
@@ -122,6 +141,7 @@ class Shipments:
                 remark=row["remark"] if row else None,
                 remark_author=row["remark_author"] if row else None,
                 remark_at=row["remark_at"] if row else None,
+                due_date=row["due_date"] if row else None,
             ))
 
         # Custom steps: any stored row flagged custom whose code is not built-in.
@@ -137,7 +157,7 @@ class Shipments:
                 is_custom=True,
                 title=row["title"] or "(tanpa judul)", description="",
                 remark=row["remark"], remark_author=row["remark_author"],
-                remark_at=row["remark_at"],
+                remark_at=row["remark_at"], due_date=row["due_date"],
                 added_by=row["added_by"], added_at=row["added_at"],
             ))
 
@@ -329,6 +349,57 @@ class Shipments:
                 "UPDATE workflow_steps SET remark=NULL, remark_author=NULL, "
                 "remark_at=NULL WHERE shipment_id=? AND step_code=?",
                 (shipment_id, step_code))
+
+    def set_step_date(self, shipment_id: str, step_code: str,
+                      iso: str | None) -> None:
+        """Set or clear a step's date. Blank/None clears it."""
+        self._ensure_builtin_row(shipment_id, step_code)
+        value = (iso or "").strip() or None
+        self.db.execute(
+            "UPDATE workflow_steps SET due_date=? WHERE shipment_id=? "
+            "AND step_code=?", (value, shipment_id, step_code))
+
+    # -- calendar ----------------------------------------------------------
+
+    def calendar_entries(self, start_iso: str,
+                         end_iso: str) -> list[CalendarEntry]:
+        """Dated steps plus shipment ETDs falling in [start, end], across ALL
+        shipments (active and completed).
+        """
+        entries: list[CalendarEntry] = []
+
+        rows = self.db.query(
+            "SELECT w.shipment_id, w.step_code, w.due_date, w.status, w.title, "
+            "       s.exporter_code, s.sequence_number "
+            "FROM workflow_steps w JOIN shipments s ON s.id = w.shipment_id "
+            "WHERE w.due_date IS NOT NULL AND w.due_date BETWEEN ? AND ? "
+            "ORDER BY w.due_date, s.exporter_code, s.sequence_number",
+            (start_iso, end_iso))
+        for row in rows:
+            code = row["step_code"]
+            # Built-in titles live in the constants, not the database.
+            title = (_BUILTIN[code][1] if code in _BUILTIN
+                     else (row["title"] or "(tanpa judul)"))
+            entries.append(CalendarEntry(
+                kind="step", shipment_id=row["shipment_id"],
+                label=f"{row['exporter_code']}{row['sequence_number']}",
+                step_code=code, title=title, date=row["due_date"][:10],
+                is_complete=row["status"] == "complete"))
+
+        etds = self.db.query(
+            "SELECT id, exporter_code, sequence_number, etd_belawan, "
+            "       vessel_name, voyage FROM shipments "
+            "WHERE etd_belawan IS NOT NULL AND etd_belawan BETWEEN ? AND ? "
+            "ORDER BY etd_belawan, exporter_code, sequence_number",
+            (start_iso, end_iso))
+        for row in etds:
+            vessel = f"{row['vessel_name'] or ''} {row['voyage'] or ''}".strip()
+            entries.append(CalendarEntry(
+                kind="etd", shipment_id=row["id"],
+                label=f"{row['exporter_code']}{row['sequence_number']}",
+                step_code=None, title=f"ETD {vessel}".strip(),
+                date=row["etd_belawan"][:10], is_complete=False))
+        return entries
 
     def mark_complete(self, shipment_id: str) -> None:
         row = self.get(shipment_id)

@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS workflow_steps (
     remark_at         TEXT,
     added_by          TEXT,
     added_at          TEXT,
+    due_date          TEXT,
     UNIQUE (shipment_id, step_code)
 );
 
@@ -130,6 +131,7 @@ CREATE INDEX IF NOT EXISTS idx_steps_position ON workflow_steps(shipment_id, pos
 CREATE INDEX IF NOT EXISTS idx_bnct_shipment ON bnct_checks(shipment_id);
 CREATE INDEX IF NOT EXISTS idx_notifications_read ON notifications(read);
 CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at);
+CREATE INDEX IF NOT EXISTS idx_steps_due ON workflow_steps(due_date);
 """
 
 

@@ -211,8 +211,11 @@ def _matching_source(folder: Path, derive, new_sequence: int) -> Path | None:
 
 # -- pre-flight --------------------------------------------------------------
 
-def _is_locked(path: Path) -> bool:
-    """True when another process holds the file open (Excel, a viewer…)."""
+def is_locked(path: Path) -> bool:
+    """True when another process holds the file open (Excel, a viewer…).
+
+    Shared with `etd_change`, which needs the same pre-flight.
+    """
     try:
         with open(path, "r+b"):
             return False
@@ -236,7 +239,7 @@ def preflight(plan: list[Move]) -> list[Blocker]:
                 move.label, str(lock.name),
                 "File Excel sedang dibuka. Tutup dulu."))
         for rename in move.file_renames + move.pdf_renames:
-            if _is_locked(rename.source):
+            if is_locked(rename.source):
                 blockers.append(Blocker(
                     move.label, rename.source.name,
                     "File sedang dipakai program lain. Tutup dulu."))

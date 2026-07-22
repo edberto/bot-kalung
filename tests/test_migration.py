@@ -138,7 +138,8 @@ with tempfile.TemporaryDirectory() as tmp:
     # workflow_steps gained the ad-hoc-step + remark columns (2026-07-21).
     check("migration adds the custom-step / remark columns",
           {"position", "is_custom", "title", "remark", "remark_author",
-           "remark_at", "added_by", "added_at"} <= columns(path, "workflow_steps"))
+           "remark_at", "added_by", "added_at",
+           "due_date"} <= columns(path, "workflow_steps"))
 
     # The audit trail table (2026-07-21) must appear too, and must NOT carry a
     # cascading shipment FK — its "deleted" entries have to outlive the shipment.

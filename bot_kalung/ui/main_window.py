@@ -89,6 +89,8 @@ class MainWindow(QMainWindow):
         self.dashboard.new_shipment_clicked.connect(self.open_wizard)
         self.dashboard.shipment_opened.connect(self.open_shipment)
         self.dashboard.resequence_requested.connect(self.open_resequence)
+        self.dashboard.calendar_entry_clicked.connect(self._on_calendar_entry)
+        self.dashboard.calendar_range_requested.connect(self._load_calendar)
         self.stack.addWidget(self.dashboard)
 
         self.wizard = NewShipmentWizard(ctx)
@@ -314,6 +316,19 @@ class MainWindow(QMainWindow):
         self.sidebar.select_shipment(None)
         self.notifications.refresh()
         self._go(VIEW_NOTIFICATIONS)
+
+    def _load_calendar(self, start_iso: str, end_iso: str):
+        """The calendar asked for a month's entries."""
+        self.dashboard.calendar.set_entries(
+            self.shipments.calendar_entries(start_iso, end_iso))
+
+    def _on_calendar_entry(self, shipment_id: str, step_code: str):
+        """Open the shipment a calendar card belongs to, focusing its step."""
+        if self.shipments.get(shipment_id) is None:
+            return
+        self.open_shipment(shipment_id)
+        if step_code:
+            self.detail.focus_step(step_code)
 
     def open_resequence(self):
         """Change a shipment's sequence number (folder, files, Excel, PDFs)."""

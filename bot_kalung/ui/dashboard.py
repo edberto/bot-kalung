@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ..core.constants import EXPORTER_COLORS
+from .calendar_view import MonthCalendar
 from .widgets import (
     MONTHS_ID, Panel, PrimaryButton, SecondaryButton, days_until, format_date_id,
 )
@@ -117,6 +118,8 @@ class DashboardView(QWidget):
     new_shipment_clicked = pyqtSignal()
     shipment_opened = pyqtSignal(str)
     resequence_requested = pyqtSignal()
+    calendar_entry_clicked = pyqtSignal(str, str)   # shipment id, step code
+    calendar_range_requested = pyqtSignal(str, str)  # start iso, end iso
 
     def __init__(self):
         super().__init__()
@@ -140,6 +143,13 @@ class DashboardView(QWidget):
         self.stats_row = QHBoxLayout()
         self.stats_row.setSpacing(12)
         outer.addLayout(self.stats_row)
+
+        # The month calendar sits above the shipment cards.
+        self.calendar = MonthCalendar()
+        self.calendar.setMinimumHeight(360)
+        self.calendar.entry_clicked.connect(self.calendar_entry_clicked)
+        self.calendar.month_changed.connect(self.calendar_range_requested)
+        outer.addWidget(self.calendar)
 
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
@@ -196,4 +206,7 @@ class DashboardView(QWidget):
         has_any = bool(shipments)
         self.scroll.setVisible(has_any)
         self.empty_state.setVisible(not has_any)
+
+        # Dates may have changed with the data; ask for this month again.
+        self.calendar.reload()
 

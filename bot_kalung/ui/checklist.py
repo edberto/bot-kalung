@@ -55,6 +55,7 @@ class StepRow(Panel):
     remark_edited = pyqtSignal(str, str)  # step code, text
     delete_requested = pyqtSignal(str)   # custom step code
     move_requested = pyqtSignal(str, str)  # step code, "up" | "down"
+    date_edit_requested = pyqtSignal(str)  # step code
 
     def __init__(self, state):
         super().__init__()
@@ -80,6 +81,15 @@ class StepRow(Panel):
         self.title.setStyleSheet(theme.style(
             "border: none; font-size: 13px; font-weight: 600; color: #111827;"))
         text_column.addWidget(self.title)
+
+        # Date chip, shown only once the step has a date.
+        self.date_label = QLabel()
+        self.date_label.setStyleSheet(theme.style(
+            "border: none; font-size: 11px; font-weight: 600; color: #2563eb;"))
+        self.date_label.setVisible(bool(state.due_date))
+        if state.due_date:
+            self.date_label.setText(f"📅 {format_date_id(state.due_date)}")
+        text_column.addWidget(self.date_label)
 
         if state.description:
             desc = QLabel(state.description)
@@ -155,6 +165,14 @@ class StepRow(Panel):
             lambda checked: self.toggled.emit(self.code, checked))
         layout.addWidget(self.checkbox, 0, Qt.AlignmentFlag.AlignVCenter)
 
+        # Small date button, pinned to the card's top-right corner.
+        self.date_button = _link_button("✎")
+        self.date_button.setToolTip(
+            "Ubah tanggal" if state.due_date else "Tambah tanggal")
+        self.date_button.clicked.connect(
+            lambda: self.date_edit_requested.emit(self.code))
+        layout.addWidget(self.date_button, 0, Qt.AlignmentFlag.AlignTop)
+
         self._show_remark(state.remark, state.remark_author)
         self._restyle()
 
@@ -218,6 +236,7 @@ class ChecklistView(QWidget):
     add_requested = pyqtSignal()               # detail view runs the dialog
     delete_requested = pyqtSignal(str)         # custom code
     move_requested = pyqtSignal(str, str)      # code, "up" | "down"
+    date_edit_requested = pyqtSignal(str)      # code
 
     def __init__(self):
         super().__init__()
@@ -272,6 +291,7 @@ class ChecklistView(QWidget):
             row.remark_edited.connect(self.remark_edited)
             row.delete_requested.connect(self.delete_requested)
             row.move_requested.connect(self.move_requested)
+            row.date_edit_requested.connect(self.date_edit_requested)
             self.rows[state.code] = row
             self.list_layout.addWidget(row)
 

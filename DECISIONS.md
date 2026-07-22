@@ -467,6 +467,39 @@ their *contents* still show the old document number, so a re-export is advised.
 
 Triggered from a "Ubah Nomor Urut" button on the dashboard (user choice).
 
+## 28. Month calendar, dated steps, and an editable ETD (2026-07-22)
+
+Shipments are driven by dates, but the app had no time view and the ETD was
+write-once. Three connected additions:
+
+**Calendar** — a month grid on the dashboard, above the shipment cards, with
+month navigation, today's cell highlighted, and a "Hari ini" button. It owns the
+displayed month and asks for data by emitting `month_changed(start, end)`, so
+the widget never touches the database. Busy days cap at three cards and say
+"+N lainnya" rather than truncating silently.
+
+**Dated steps** — one additive `due_date` column on `workflow_steps`. A step's
+date is set from the existing `widgets.DateEdit` (already a calendar popup) via
+a small edit icon at the top-right of the step row, and shows as a chip on the
+row. Card colour is decided at render time against today, in priority order:
+**done → green**, **not done and strictly past → red**, otherwise **blue**.
+Completion beats overdue, and a step dated *today* is blue, not red. A shipment
+ETD also appears, in a fourth accent, so sailing dates never read as steps. All
+four colours come from `theme.banner()` triples, so they follow light/dark for
+free. All shipments feed the calendar, completed ones included (user decision).
+
+**Editable ETD** — needed no schema change (`etd_belawan` already existed with
+no writer). Changing it is a migration like `resequence`: the folder's trailing
+date segment (`-03 aug`) is swapped by regex — again keeping any hand-made part
+of the name — and the VGM number, VGM DATE, SI title and SI ETD cells are
+rewritten. `document_number` embeds the ETD's month and year, so a same-month
+day change deliberately leaves the document number alone while still updating
+the SI ETD cell. Simpler than `resequence` because workbook, invoice and PDF
+names embed the *sequence*, not the ETD, so nothing inside the folder is
+renamed. It shares `resequence.is_locked` so both pre-flights behave identically,
+and updates the database row last so it never points at a folder that failed to
+move. Exported PDFs keep the old ETD in their contents; the result says so.
+
 ## Still open
 
 - ~~BNCT portal monitoring with the result recorded in the app~~ — closed

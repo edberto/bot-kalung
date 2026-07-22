@@ -39,6 +39,7 @@ PYTHON = sys.executable
 EXTERNAL_TESTS = {
     "test_excel_amj", "test_excel_nit", "test_excel_ttj_tsi",
     "test_pdf_export", "test_drive", "test_fileops", "test_resequence",
+    "test_etd_change",
 }
 
 LINT_TARGETS = ["bot_kalung", "app.py", "tools", "tests"]
