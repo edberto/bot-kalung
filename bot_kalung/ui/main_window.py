@@ -23,6 +23,7 @@ from .dashboard import DashboardView
 from .history import HistoryView
 from ..services.notifications import NotificationStore
 from .new_shipment import NewShipmentWizard
+from .all_shipments import AllShipmentsView
 from .audit_view import AuditView
 from .notifications_view import NotificationsView
 from .resequence_dialog import ResequenceDialog
@@ -54,6 +55,7 @@ VIEW_HISTORY = 3
 VIEW_SETTINGS = 4
 VIEW_NOTIFICATIONS = 5
 VIEW_AUDIT = 6
+VIEW_ALL_SHIPMENTS = 7
 
 
 class MainWindow(QMainWindow):
@@ -78,6 +80,7 @@ class MainWindow(QMainWindow):
         self.sidebar.new_shipment_clicked.connect(self.open_wizard)
         self.sidebar.shipment_selected.connect(self.open_shipment)
         self.sidebar.history_clicked.connect(self.open_history)
+        self.sidebar.all_shipments_clicked.connect(self.open_all_shipments)
         self.sidebar.settings_clicked.connect(self.open_settings)
         self.sidebar.home_clicked.connect(self.open_dashboard)
         layout.addWidget(self.sidebar)
@@ -126,6 +129,10 @@ class MainWindow(QMainWindow):
         self.audit = AuditView(ctx.db)
         self.stack.addWidget(self.audit)
 
+        self.all_shipments = AllShipmentsView(ctx.db)
+        self.all_shipments.shipment_opened.connect(self.open_shipment)
+        self.stack.addWidget(self.all_shipments)
+
         layout.addWidget(self.stack, 1)
         self.setCentralWidget(root)
 
@@ -147,11 +154,13 @@ class MainWindow(QMainWindow):
         self.bnct.polled.connect(self._on_bnct_polled)
         self.settings.saved.connect(self.bnct.apply_interval)
 
+        # Whether this process may reach the live BNCT portal. Offscreen
+        # means tests/headless, where a network call would hang the run.
+        self._bnct_live = os.environ.get("QT_QPA_PLATFORM") != "offscreen"
+
         self.refresh()
         self._refresh_notification_badge()
-        # Don't reach out to the live BNCT portal under the offscreen platform
-        # (tests / headless); real runs start polling normally.
-        if os.environ.get("QT_QPA_PLATFORM") != "offscreen":
+        if self._bnct_live:
             self.bnct.start()
 
     # -- BNCT ------------------------------------------------------------
@@ -294,6 +303,10 @@ class MainWindow(QMainWindow):
         self.sidebar.select_shipment(shipment_id)
         self.detail.load(shipment_id)
         self._go(VIEW_DETAIL)
+        # Check BNCT straight away rather than waiting up to a full interval —
+        # a new shipment's vessel is often already on the schedule.
+        if self._bnct_live:
+            self.bnct.poll_now()
 
     def open_shipment(self, shipment_id: str):
         if not self._leave_wizard_ok():
@@ -302,6 +315,13 @@ class MainWindow(QMainWindow):
         self.sidebar.select_shipment(shipment_id)
         self.detail.load(shipment_id)
         self._go(VIEW_DETAIL)
+
+    def open_all_shipments(self):
+        if not self._leave_wizard_ok():
+            return
+        self.sidebar.select_shipment(None)
+        self.all_shipments.refresh()
+        self._go(VIEW_ALL_SHIPMENTS)
 
     def open_history(self):
         if not self._leave_wizard_ok():

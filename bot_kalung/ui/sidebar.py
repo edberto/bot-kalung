@@ -14,6 +14,20 @@ from ..core.constants import APP_NAME, EXPORTER_COLORS
 from .widgets import Panel, PrimaryButton, days_until, format_date_id
 
 
+def _see_all_button() -> QPushButton:
+    """Link-styled 'see all' under the active list."""
+    # Plain text, no arrow glyph — the font may not have one (the ◀/▶ month
+    # arrows had to be replaced with drawn icons for exactly this reason).
+    button = QPushButton("Lihat Semua")
+    button.setCursor(Qt.CursorShape.PointingHandCursor)
+    button.setStyleSheet(theme.style("""
+        QPushButton { border: none; background: transparent; color: #2563eb;
+                      font-size: 11px; text-align: left; padding: 2px 8px; }
+        QPushButton:hover { color: #1d4ed8; text-decoration: underline; }
+    """))
+    return button
+
+
 class ShipmentEntry(Panel):
     """One active shipment row: badge, vessel/voyage, ETD, progress."""
 
@@ -69,6 +83,7 @@ class ShipmentEntry(Panel):
 class Sidebar(Panel):
     new_shipment_clicked = pyqtSignal()
     shipment_selected = pyqtSignal(str)
+    all_shipments_clicked = pyqtSignal()
     history_clicked = pyqtSignal()
     notifications_clicked = pyqtSignal()
     audit_clicked = pyqtSignal()
@@ -113,6 +128,10 @@ class Sidebar(Panel):
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.shipment_list.itemClicked.connect(self._on_item_clicked)
         layout.addWidget(self.shipment_list, 1)
+
+        self.see_all_button = _see_all_button()
+        self.see_all_button.clicked.connect(self.all_shipments_clicked)
+        layout.addWidget(self.see_all_button)
 
         self.empty_note = QLabel("Belum ada pengiriman aktif.")
         self.empty_note.setWordWrap(True)

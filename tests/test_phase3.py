@@ -17,7 +17,7 @@ from PyQt6.QtWidgets import QApplication
 from bot_kalung.core.constants import WORKFLOW_STEPS
 from bot_kalung.core.context import AppContext
 from bot_kalung.services.shipments import Shipments
-from bot_kalung.ui.dashboard import days_until, format_date_id
+from bot_kalung.ui.widgets import days_until, format_date_id
 from bot_kalung.ui.main_window import (
     VIEW_DASHBOARD, VIEW_DETAIL, VIEW_HISTORY, VIEW_SETTINGS, VIEW_WIZARD,
     MainWindow,
@@ -57,8 +57,16 @@ with tempfile.TemporaryDirectory() as tmp:
 
     # ---- empty state -------------------------------------------------------
     check("opens on the dashboard", window.stack.currentIndex() == VIEW_DASHBOARD)
-    check("dashboard shows its empty state", window.dashboard.empty_state.isVisible()
-          or not window.dashboard.scroll.isVisible())
+    # The dashboard is the month calendar now; shipment cards moved to the
+    # "Semua Pengiriman" screen behind the sidebar's "Lihat Semua".
+    check("dashboard is the calendar", hasattr(window.dashboard, "calendar"))
+    check("dashboard no longer carries cards or stats",
+          not hasattr(window.dashboard, "grid")
+          and not hasattr(window.dashboard, "stats_row"))
+    window.open_all_shipments()
+    check("all-shipments screen shows its empty state",
+          not window.all_shipments.empty_state.isHidden())
+    window.open_dashboard()
     check("sidebar shows the empty note", not window.sidebar.empty_note.isHidden())
     check("sidebar list has no rows", window.sidebar.shipment_list.count() == 0)
 
@@ -127,14 +135,19 @@ with tempfile.TemporaryDirectory() as tmp:
           ":hover" in entry.styleSheet() and "border" in entry.styleSheet())
     check("sidebar entry is transparent so selection still shows",
           "background: transparent" in entry.styleSheet())
-    check("dashboard grid holds both cards", window.dashboard.grid.count() == 2)
-    check("dashboard stats row has three cards",
-          window.dashboard.stats_row.count() == 3)
+    # ---- the "Semua Pengiriman" screen ---------------------------------------
+    check("sidebar offers 'Lihat Semua'",
+          window.sidebar.see_all_button.text() == "Lihat Semua")
+    window.open_all_shipments()
+    check("all-shipments screen lists both shipments",
+          len(window.all_shipments.cards) == 2)
+    check("it counts active and completed separately",
+          "2 aktif" in window.all_shipments.count_label.text())
 
-    # A dashboard card is clickable anywhere, not just the "Buka" button.
+    # A card is clickable anywhere, not just the "Buka" button.
     from PyQt6.QtGui import QMouseEvent
 
-    card = window.dashboard.grid.itemAt(0).widget()
+    card = window.all_shipments.cards[first]
     check("card advertises itself as clickable",
           card.cursor().shape() == Qt.CursorShape.PointingHandCursor)
     opened = []
@@ -145,6 +158,7 @@ with tempfile.TemporaryDirectory() as tmp:
         Qt.KeyboardModifier.NoModifier))
     check("clicking the card body opens its shipment",
           opened == [card.shipment_id])
+    window.open_dashboard()
 
     # ---- navigation ----------------------------------------------------------
     window.open_shipment(first)

@@ -500,6 +500,29 @@ renamed. It shares `resequence.is_locked` so both pre-flights behave identically
 and updates the database row last so it never points at a folder that failed to
 move. Exported PDFs keep the old ETD in their contents; the result says so.
 
+## 29. Dashboard is the calendar; shipments move to their own screen (2026-07-22)
+
+The dashboard's stat cards and shipment-card grid duplicated the sidebar's
+active list and left the new calendar too little room, so the dashboard is now
+the month calendar alone. `ShipmentCard` moved to `ui/shipment_card.py` and the
+grid to a new **"Semua Pengiriman"** screen — all shipments, active first then
+completed — reached from the sidebar's **"Lihat Semua"** (user decisions).
+
+Two font lessons, both the same failure as the invisible `✕` earlier: the month
+navigation used `◀`/`▶`, which the font does not carry, so they render as
+nothing. They are now **Qt's own drawn arrow icons** (`SP_ArrowLeft` /
+`SP_ArrowRight`), which cannot depend on a font, and the "Lihat Semua" button
+carries no arrow glyph at all. The month label is a **fixed width and centred**
+so the arrows keep a constant position — otherwise "September" pushed the next
+arrow further out than "Juli".
+
+BNCT polling already covered every active shipment with a vessel whose D2 is
+unticked; a new shipment now also triggers an **immediate poll** instead of
+waiting up to a full interval. That poll — like the startup poll — is gated on
+a single `_bnct_live` flag (false under the offscreen platform), because
+otherwise every test that creates a shipment would make a real request to the
+portal and hang the run.
+
 ## Still open
 
 - ~~BNCT portal monitoring with the result recorded in the app~~ — closed

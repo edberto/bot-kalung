@@ -313,6 +313,30 @@ with tempfile.TemporaryDirectory() as tmp:
     check("a failed manual check surfaces the error in the banner",
           "simulated outage" in window.detail.message.text())
 
+    # A brand-new shipment must be checked at once, not up to an interval
+    # later — its vessel is often already on the schedule.
+    window.bnct.client = FakeClient(allv)
+    # Offscreen normally blocks live polling so tests never hit the portal;
+    # opt in explicitly now that the client is a fake.
+    window._bnct_live = True
+    polls = []
+    window.bnct.polled.connect(lambda: polls.append(1))
+    window._on_shipment_created(sid)
+    pump(window.bnct)
+    check("creating a shipment polls BNCT straight away", bool(polls))
+    window._bnct_live = False
+
+    # And the monitor covers every active shipment, not just one.
+    second = shipments.create({
+        "exporter_code": "AMJ", "sequence_number": 30,
+        "vessel_name": "GREEN OWL", "voyage": "629N",
+        "booking_number": "B2", "etd_belawan": "2026-08-01",
+        "destination_port": "KARACHI", "destination_country": "PAKISTAN",
+        "container_quantity": 1, "container_size_short": "40'"})
+    watched = {r["id"] for r in BnctMonitor(ctx.db).monitored()}
+    check("every active shipment with a vessel is polled",
+          {sid, second} <= watched)
+
     window.bnct.stop()
     window.wizard.shutdown()
 

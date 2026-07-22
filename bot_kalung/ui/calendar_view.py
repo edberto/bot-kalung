@@ -24,7 +24,7 @@ from . import theme
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
-    QGridLayout, QHBoxLayout, QLabel, QVBoxLayout, QWidget,
+    QGridLayout, QHBoxLayout, QLabel, QStyle, QVBoxLayout, QWidget,
 )
 
 from .widgets import MONTHS_ID, Panel, SecondaryButton
@@ -149,25 +149,40 @@ class MonthCalendar(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(6)
 
+        # Qt draws these arrows itself, so they never depend on a font having
+        # the ◀/▶ glyphs (which it may not). The month label is a fixed width
+        # and centred, so the arrows stay put whatever the month is called —
+        # otherwise "September" pushes the next arrow further than "Juli".
         header = QHBoxLayout()
-        header.setSpacing(6)
-        self.prev_button = SecondaryButton("◀")
-        self.prev_button.setFixedWidth(36)
+        header.setSpacing(8)
+        style = self.style()
+
+        self.prev_button = SecondaryButton("")
+        self.prev_button.setIcon(
+            style.standardIcon(QStyle.StandardPixmap.SP_ArrowLeft))
+        self.prev_button.setFixedSize(34, 30)
+        self.prev_button.setToolTip("Bulan sebelumnya")
         self.prev_button.clicked.connect(lambda: self.shift(-1))
         header.addWidget(self.prev_button)
 
         self.title = QLabel()
+        self.title.setFixedWidth(170)
+        self.title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.title.setStyleSheet(theme.style(
             "font-size: 15px; font-weight: 700; color: #111827;"))
         header.addWidget(self.title)
 
-        self.next_button = SecondaryButton("▶")
-        self.next_button.setFixedWidth(36)
+        self.next_button = SecondaryButton("")
+        self.next_button.setIcon(
+            style.standardIcon(QStyle.StandardPixmap.SP_ArrowRight))
+        self.next_button.setFixedSize(34, 30)
+        self.next_button.setToolTip("Bulan berikutnya")
         self.next_button.clicked.connect(lambda: self.shift(1))
         header.addWidget(self.next_button)
         header.addStretch(1)
 
         self.today_button = SecondaryButton("Hari ini")
+        self.today_button.setFixedHeight(30)
         self.today_button.clicked.connect(self.go_to_today)
         header.addWidget(self.today_button)
         outer.addLayout(header)
