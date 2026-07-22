@@ -23,8 +23,10 @@ from datetime import date
 from . import theme
 
 from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QFontMetrics
 from PyQt6.QtWidgets import (
-    QGridLayout, QHBoxLayout, QLabel, QStyle, QVBoxLayout, QWidget,
+    QGridLayout, QHBoxLayout, QLabel, QSizePolicy, QStyle, QVBoxLayout,
+    QWidget,
 )
 
 from .widgets import MONTHS_ID, Panel, SecondaryButton
@@ -51,6 +53,38 @@ def _palette(state: str) -> tuple[str, str, str]:
     }[state])
 
 
+class ElidedLabel(QLabel):
+    """A label that crops its text to whatever width it is given.
+
+    Without this a long entry title demands width, which widens its day cell
+    and knocks the whole grid out of shape. `Ignored` horizontally means the
+    label never influences the column width; the text is cropped to fit and the
+    full version stays on the card's tooltip.
+    """
+
+    def __init__(self, text: str):
+        super().__init__()
+        self._full = text
+        self.setTextFormat(Qt.TextFormat.PlainText)
+        self.setMinimumWidth(0)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored,
+                           QSizePolicy.Policy.Preferred)
+        self._apply()
+
+    def full_text(self) -> str:
+        return self._full
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._apply()
+
+    def _apply(self):
+        elided = QFontMetrics(self.font()).elidedText(
+            self._full, Qt.TextElideMode.ElideRight, max(0, self.width()))
+        if elided != self.text():          # guard against a relayout loop
+            super().setText(elided)
+
+
 class EntryCard(Panel):
     """One clickable item inside a day cell."""
 
@@ -62,18 +96,21 @@ class EntryCard(Panel):
         fg, bg, border = _palette(state)
         self.state = state
         self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setMinimumWidth(0)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored,
+                           QSizePolicy.Policy.Preferred)
         self.setStyleSheet(theme.style(
             f"background: {bg}; border: 1px solid {border};"
             "border-radius: 4px;"))
+        # The full text lives here, since the visible one may be cropped.
         self.setToolTip(f"{entry.label} · {entry.title}")
 
         row = QHBoxLayout(self)
         row.setContentsMargins(5, 2, 5, 2)
-        label = QLabel(f"{entry.label} · {entry.title}")
-        label.setTextFormat(Qt.TextFormat.PlainText)
-        label.setStyleSheet(
+        self.label = ElidedLabel(f"{entry.label} · {entry.title}")
+        self.label.setStyleSheet(
             f"border: none; color: {fg}; font-size: 10px; font-weight: 600;")
-        row.addWidget(label)
+        row.addWidget(self.label)
 
     def mousePressEvent(self, event):
         self.clicked.emit(self._entry.shipment_id, self._entry.step_code or "")
@@ -90,6 +127,11 @@ class DayCell(Panel):
         self.day = day
         self.is_today = is_today
         self.setMinimumHeight(78)
+        # Never let contents dictate the cell's width — the seven columns share
+        # the calendar evenly and long entries are cropped instead.
+        self.setMinimumWidth(0)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored,
+                           QSizePolicy.Policy.Preferred)
 
         if day is None:            # padding cell from the previous/next month
             self.setStyleSheet(theme.style(
@@ -189,6 +231,10 @@ class MonthCalendar(QWidget):
 
         self.grid = QGridLayout()
         self.grid.setSpacing(4)
+        # Seven equal columns, so no day can grow wider than its neighbours.
+        for column in range(7):
+            self.grid.setColumnStretch(column, 1)
+            self.grid.setColumnMinimumWidth(column, 0)
         for column, name in enumerate(DAY_HEADERS):
             label = QLabel(name)
             label.setAlignment(Qt.AlignmentFlag.AlignCenter)

@@ -167,6 +167,44 @@ with tempfile.TemporaryDirectory() as tmp:
     check("the overflow is reported, not silently dropped",
           any("lainnya" in label.text() for label in cell.findChildren(QLabel)))
 
+    # ---- a long entry must not widen its day cell --------------------------
+    def cell_widths(title: str):
+        widget = MonthCalendar()
+        widget.resize(900, 560)
+
+        class _One:
+            kind, shipment_id, label = "step", "x", "AMJ24"
+            step_code, is_complete = "c", False
+            date = TODAY.isoformat()
+
+            def __init__(self, t):
+                self.title = t
+
+            def is_overdue(self, today):
+                return False
+
+        widget.set_entries([_One(title)])
+        widget.show()
+        for _ in range(3):
+            app.processEvents()
+        return [c.width() for c in widget.cells.values()], widget
+
+    short_widths, _ = cell_widths("OK")
+    long_widths, long_cal = cell_widths(
+        "Terima nomor kontainer dan segel dari Toni lalu masukkan ke Excel")
+    check("day cells share one width",
+          max(short_widths) - min(short_widths) <= 2)
+    check("a long entry does not widen its cell",
+          max(long_widths) <= max(short_widths) + 2)
+
+    long_card = next(c for cell in long_cal.cells.values()
+                     for c in cell.findChildren(EntryCard))
+    check("the long entry is cropped to fit",
+          long_card.label.text() != long_card.label.full_text()
+          and long_card.label.text().endswith("…"))
+    check("the full text survives on the tooltip",
+          "Terima nomor kontainer" in long_card.toolTip())
+
     # ---- clicking an entry navigates and focuses ---------------------------
     window.open_dashboard()
     card = next(c for cell in cal.cells.values()
