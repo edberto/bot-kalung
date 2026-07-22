@@ -745,6 +745,39 @@ class NewShipmentWizard(QWidget):
             ])
         return True
 
+    def reset(self):
+        """Return the wizard to a clean step 1.
+
+        The wizard is a long-lived widget, so without this it keeps the
+        previous run's state: most visibly the success screen hides
+        `next_button` permanently, leaving the next shipment unable to advance
+        past step 1 (reported 2026-07-22). It also kept the old DO file,
+        exporter and messages.
+        """
+        if not hasattr(self, "next_button"):
+            return
+        self.exporter = None
+        for card in self.exporter_cards.values():
+            card.set_selected(False)
+        self._choose_pdf(None)
+        self.extracted = ExtractedDO()
+
+        for message in (self.step1_message, self.extract_message,
+                        self.carrier_message, self.quarantine_message,
+                        self.permit_message, self.create_message):
+            message.clear()
+        self.create_status.setText("")
+        self.create_progress.setVisible(False)
+
+        # Undo the success screen.
+        self.next_button.setVisible(True)
+        self.open_shipment_button.setVisible(False)
+        self.open_folder_button.setVisible(False)
+        self.back_button.setEnabled(True)
+
+        self.stack.setCurrentIndex(0)
+        self._refresh()
+
     def _refresh(self):
         if not hasattr(self, "next_button"):
             return

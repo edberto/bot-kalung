@@ -258,6 +258,8 @@ class MainWindow(QMainWindow):
     def open_wizard(self):
         self.current_shipment_id = None
         self.sidebar.select_shipment(None)
+        # The wizard is long-lived, so clear the previous run before showing it.
+        self.wizard.reset()
         self._go(VIEW_WIZARD)
 
     def _on_shipment_completed(self, label: str):

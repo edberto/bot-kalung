@@ -214,6 +214,37 @@ else:
               wizard3.stack.currentIndex() == 1
               and not wizard3.extract_message.isHidden())
 
+        # ---- reopening the wizard after a shipment was created -------------
+        # Regression (2026-07-22): the success screen hides next_button, and the
+        # wizard is long-lived, so a second shipment could never advance past
+        # step 1 — the "Lanjut" button was simply gone. Nothing else was reset
+        # either, so the old DO file and exporter were still loaded.
+        from bot_kalung.ui.main_window import MainWindow
+
+        window = MainWindow(ctx)
+        wiz = window.wizard
+        # Leave it exactly as a successful creation does.
+        wiz._choose_exporter("AMJ")
+        wiz._choose_pdf(str(do_copy))
+        wiz.next_button.setVisible(False)
+        wiz.open_shipment_button.setVisible(True)
+        wiz.open_folder_button.setVisible(True)
+        wiz.stack.setCurrentIndex(2)
+
+        window.open_wizard()          # "+ Pengiriman Baru"
+        check("reopening the wizard restores the Lanjut button",
+              not wiz.next_button.isHidden())
+        check("reopening the wizard returns to step 1",
+              wiz.stack.currentIndex() == 0)
+        check("reopening the wizard clears the previous DO",
+              wiz.pdf_path is None and wiz.exporter is None)
+        check("reopening the wizard hides the success buttons",
+              wiz.open_shipment_button.isHidden()
+              and wiz.open_folder_button.isHidden())
+        check("a cleared wizard cannot advance until refilled",
+              not wiz.next_button.isEnabled())
+        window.wizard.shutdown()
+
         # Background permit checks hold the PDF open; wait for them before the
         # temp directory is torn down.
         for w in (wizard, wizard2, wizard3):
