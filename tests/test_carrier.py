@@ -14,7 +14,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import sandbox  # noqa: F401 - keeps the real bootstrap pointer untouched
 
 from bot_kalung.services import carrier
-from bot_kalung.services.do_parser import extract_fields, extract_text
+from bot_kalung.services import do_parser as do_parser_mod
+from bot_kalung.services.do_parser import extract, extract_fields, extract_text
 
 EVERGREEN_DO = Path(r"G:\My Drive\AMJ\2026"
                     r"\23.2x40-karachi-Salim-KLN-EVE-084600048570-Concert 0800-088N-03 aug"
@@ -73,6 +74,20 @@ check("empty text returns None", carrier.detect_carrier("") is None)
 check("no booking number returns None",
       carrier.extract_booking_number("nothing here") is None)
 
+# ---- newly recognised export lines ----------------------------------------
+check("Wan Hai detected from the letterhead",
+      carrier.detect_carrier("PT BINTIKA BANGUNUSA\nWAN HAI DIVISION\n") == "WAN HAI")
+check("Wan Hai detected from the WHL booking prefix",
+      carrier.detect_carrier("DELIVERY ORDER\nNo: WHL-2503357\n") == "WAN HAI")
+check("VOLTA detected",
+      carrier.detect_carrier(
+          "PT COLLYER BAHARI\nDELIVERY ORDER\nNO. 034/VOLTA/DO/VII/26\n") == "VOLTA")
+check("Feederline detected from its header",
+      carrier.detect_carrier("FEEDERLINE\nBooking Number: MAPFDLINE155\n") == "FEEDERLINE")
+check("Feederline detected from the MAPFDLINE booking",
+      carrier.detect_carrier("DELIVERY ORDER\nBooking Number: MAPFDLINE268\n")
+      == "FEEDERLINE")
+
 check("candidate validation accepts the real booking",
       carrier.looks_like_booking_number("084600048570", EVERGREEN_LINE))
 check("candidate validation rejects the application number",
@@ -95,7 +110,9 @@ check("inverted layout still rejects the application number",
 class WrongClient:
     """Returns the application number, exactly as observed."""
 
-    def extract_do_fields(self, raw_text):
+    can_do_vision = False
+
+    def extract_do_fields(self, raw_text, pdf_path=None):
         return {
             "booking_number": "26070303078721",
             "vessel_name": "EVER CONCERT", "voyage": "0800-088N",
@@ -115,6 +132,69 @@ check("parser fills in the carrier", result.carrier == "EVERGREEN")
 check("other fields still come from the model",
       result.vessel_name == "EVER CONCERT"
       and result.etd_belawan == date(2026, 8, 3))
+
+
+# ---- tiered orchestration: cheap text read, escalate to vision -------------
+class FakeTieredClient:
+    """Records each call; returns the vision dict when handed a pdf_path."""
+
+    def __init__(self, cheap, vision, can_vision=True):
+        self.cheap, self.vision = cheap, vision
+        self.can_do_vision = can_vision
+        self.calls = []
+
+    def extract_do_fields(self, raw_text, pdf_path=None):
+        self.calls.append(pdf_path)
+        return dict(self.vision if pdf_path is not None else self.cheap)
+
+
+COMPLETE = {"booking_number": "2331048250", "vessel_name": "INTEGRA",
+            "voyage": "181", "etd_belawan": "2026-08-03",
+            "destination_port": "Karachi", "destination_country": "Pakistan",
+            "container_quantity": 3, "container_size_raw": "40' HI-CUBE",
+            "empty_pickup_location": "", "carrier": None}
+THIN = {**COMPLETE, "vessel_name": "", "destination_port": ""}
+VISION = {**COMPLETE, "vessel_name": "ISEACO GENESIS", "carrier": "COSCO"}
+
+
+def run_extract(text, client):
+    original = do_parser_mod.extract_text
+    do_parser_mod.extract_text = lambda _path: text
+    try:
+        return extract(client, "dummy.pdf")
+    finally:
+        do_parser_mod.extract_text = original
+
+
+DIGITAL = "A DIGITAL DO WITH PLENTY OF EXTRACTABLE TEXT CONTENT PRESENT HERE"
+
+client = FakeTieredClient(cheap=COMPLETE, vision=VISION)
+r = run_extract(DIGITAL, client)
+check("a complete cheap read does not escalate", client.calls == [None])
+check("the cheap read result is used", r.vessel_name == "INTEGRA")
+
+client = FakeTieredClient(cheap=THIN, vision=VISION)
+r = run_extract(DIGITAL, client)
+check("a cheap read missing core fields escalates to vision",
+      client.calls == [None, "dummy.pdf"])
+check("the vision result wins on escalation", r.vessel_name == "ISEACO GENESIS")
+check("the model carrier fills in when the text has no letterhead",
+      r.carrier == "COSCO")
+
+client = FakeTieredClient(cheap=THIN, vision=VISION)
+r = run_extract("   ", client)
+check("a scan (no usable text) escalates immediately",
+      client.calls == [None, "dummy.pdf"])
+
+client = FakeTieredClient(cheap={**COMPLETE, "carrier": "WRONG"}, vision=VISION)
+r = run_extract(OOCL_LINE, client)
+check("a complete read on an OOCL DO does not escalate", client.calls == [None])
+check("the deterministic carrier overrides the model's carrier",
+      r.carrier == "OOCL")
+
+client = FakeTieredClient(cheap=THIN, vision=VISION, can_vision=False)
+r = run_extract("   ", client)
+check("a text-only provider never escalates", client.calls == [None])
 
 
 # ---- against the real PDFs -------------------------------------------------

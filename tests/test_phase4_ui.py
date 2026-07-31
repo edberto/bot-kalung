@@ -56,7 +56,7 @@ class FakeClient:
     def __init__(self, payload):
         self.payload = payload
 
-    def extract_do_fields(self, raw_text):
+    def extract_do_fields(self, raw_text, pdf_path=None):
         return self.payload
 
 

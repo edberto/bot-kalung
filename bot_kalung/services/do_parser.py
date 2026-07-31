@@ -51,6 +51,13 @@ class ExtractedDO:
         ])
 
 
+# Fields every DO carries. If the cheap text read misses one of these the read
+# clearly failed on the essentials, so escalate to the vision tier. ETD and the
+# pickup location are legitimately absent on some formats (e.g. Wan Hai has no
+# ETD), so they never trigger an escalation on their own.
+CORE_KEYS = ("booking_number", "vessel_name", "destination_port")
+
+
 def extract_text(pdf_path) -> str:
     """PRD 8.1 step 1."""
     import pdfplumber
@@ -62,14 +69,33 @@ def extract_text(pdf_path) -> str:
         return "\n".join(page.extract_text() or "" for page in pdf.pages)
 
 
-def extract_fields(client: LLMClient, raw_text: str) -> ExtractedDO:
+def _needs_vision(text: str, result: "ExtractedDO") -> bool:
+    """A scan (no usable text) or a text read that missed a core field."""
+    if len((text or "").strip()) < 40:
+        return True
+    return any(not getattr(result, key).strip() for key in CORE_KEYS)
+
+
+def extract(client: LLMClient, pdf_path) -> ExtractedDO:
+    """Read a DO, escalating a scan or a thin text read to the vision tier."""
+    text = extract_text(pdf_path)
+    result = extract_fields(client, text)
+    if getattr(client, "can_do_vision", False) and _needs_vision(text, result):
+        result = extract_fields(client, text, pdf_path=pdf_path)
+    return result
+
+
+def extract_fields(client: LLMClient, raw_text: str, pdf_path=None) -> ExtractedDO:
     """PRD 8.1 steps 2-4 plus the 8.3 post-processing.
 
     Raises LLMError when the call fails outright; a call that succeeds but
     returns partial data yields an ExtractedDO with `missing` populated, so the
     wizard can show the "fill them in manually" banner (PRD Section 14).
+
+    With `pdf_path` set the client reads the PDF directly (the vision tier);
+    otherwise it reads `raw_text`.
     """
-    data = client.extract_do_fields(raw_text)
+    data = client.extract_do_fields(raw_text, pdf_path=pdf_path)
     if not isinstance(data, dict):
         raise LLMError("Jawaban model bukan objek JSON.")
 
@@ -80,8 +106,10 @@ def extract_fields(client: LLMClient, raw_text: str) -> ExtractedDO:
         value = data.get(key)
         return "" if value is None else str(value).strip()
 
-    # Carrier is read from the letterhead, never from the model.
-    result.carrier = carrier_service.detect_carrier(raw_text) or ""
+    # Carrier: prefer the deterministic letterhead read; fall back to the model
+    # (the only source on a scan, where there is no text to read a marker from).
+    result.carrier = (carrier_service.detect_carrier(raw_text)
+                      or text_of("carrier") or "")
 
     # Booking number: trust the document over the model. On an Evergreen DO the
     # application number sits on the same line and has been returned in its

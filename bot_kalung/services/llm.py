@@ -6,13 +6,20 @@ supported: the Anthropic API (recommended) and a local Ollama instance.
 
 from __future__ import annotations
 
+import base64
 import json
 import re
+from pathlib import Path
 from typing import Any
 
-# PRD Section 13 names Claude Haiku explicitly; extraction is a short, simple,
-# high-volume task where Haiku is the right tier.
+# PRD Section 13 names Claude Haiku explicitly; text extraction is a short,
+# simple, high-volume task where Haiku is the right tier.
 ANTHROPIC_MODEL = "claude-haiku-4-5"
+
+# The cheap Haiku text read cannot see a scanned or handwritten DO (pdfplumber
+# gets no text). Those escalate to a stronger vision model that reads the PDF
+# page directly. Only the hard minority of DOs reach it.
+ANTHROPIC_VISION_MODEL = "claude-sonnet-4-6"
 
 DO_EXTRACTION_PROMPT = """You are extracting fields from a shipping Booking Confirmation (Delivery Order) document.
 Extract the following fields and return them as a JSON object with exactly these keys:
@@ -25,7 +32,8 @@ Extract the following fields and return them as a JSON object with exactly these
   "destination_country": "string - country of port of discharging",
   "container_quantity": integer,
   "container_size_raw": "string - full container type as written, e.g. 40' HI-CUBE",
-  "empty_pickup_location": "string - empty container pickup location, or null if not found"
+  "empty_pickup_location": "string - empty container pickup location, or null if not found",
+  "carrier": "string - the actual ocean shipping line / pelayaran; if a forwarding agent issued the DO give the line, not the agent, or null if unclear"
 }}
 Note on layout: these documents use two columns, so the extracted text can place
 a value on the line BEFORE its label. A label ending in a colon with nothing
@@ -37,6 +45,25 @@ number.
 Return only valid JSON. No explanation. If a field cannot be found, use null.
 --- DOCUMENT TEXT BELOW ---
 {raw_text}"""
+
+# Used when a DO is sent as a PDF/image to a vision model (scans, handwriting,
+# or a layout the text read could not parse). No {raw_text} placeholder — the
+# document is attached, so this is passed as-is (single braces, never .format()).
+DO_EXTRACTION_PROMPT_VISION = """You are extracting fields from a shipping Booking Confirmation / Delivery Order (DO). The document is attached; it may be a clean digital PDF, a scan, or partly handwritten. Read it directly.
+Return a JSON object with exactly these keys:
+{
+  "booking_number": "string - the number labelled BOOKING NO./BOOKING NUMBER/No./Ref. It is NOT the APPLICATION NO., rate agreement number, contract number or CS reference number.",
+  "vessel_name": "string - the ocean/feeder vessel name only, no voyage code",
+  "voyage": "string - voyage code only",
+  "etd_belawan": "YYYY-MM-DD - ETD at the port of loading (Belawan), or null if not shown",
+  "destination_port": "string - port of discharge / destination, city name only. Labels vary: Port of Discharge, Port of Discharging, POD, Tujuan, Destination, To.",
+  "destination_country": "string - country of the destination port",
+  "container_quantity": integer,
+  "container_size_raw": "string - full container type as written, e.g. 40' HI-CUBE",
+  "empty_pickup_location": "string - empty container pickup location, or null if not found",
+  "carrier": "string - the actual ocean shipping line / pelayaran (e.g. OOCL, EVERGREEN, WAN HAI, PIL, COSCO, ONE, MAERSK). If a forwarding agent issued the DO, give the shipping line, not the agent. null if unclear."
+}
+Return only valid JSON. No explanation. If a field cannot be found, use null."""
 
 PERMIT_EXPIRY_PROMPT = """Extract the expiry date from this import permit document.
 Return a JSON object: {{ "expiry_date": "YYYY-MM-DD" }}
@@ -82,6 +109,11 @@ class LLMClient:
         return self._complete_anthropic(prompt, max_tokens)
 
     def _complete_anthropic(self, prompt: str, max_tokens: int) -> str:
+        return self._call_anthropic(prompt, max_tokens, ANTHROPIC_MODEL)
+
+    def _call_anthropic(self, content, max_tokens: int, model: str) -> str:
+        """One Anthropic request. `content` is a plain string or a list of
+        content blocks (e.g. a document + a text prompt for vision)."""
         import anthropic
 
         if not self.api_key:
@@ -90,9 +122,9 @@ class LLMClient:
         client = anthropic.Anthropic(api_key=self.api_key)
         try:
             response = client.messages.create(
-                model=ANTHROPIC_MODEL,
+                model=model,
                 max_tokens=max_tokens,
-                messages=[{"role": "user", "content": prompt}],
+                messages=[{"role": "user", "content": content}],
             )
         except anthropic.AuthenticationError as exc:
             raise LLMError(ERR_AUTH) from exc
@@ -106,6 +138,11 @@ class LLMClient:
             raise LLMError(f"Kesalahan API ({exc.status_code}): {exc.message}") from exc
 
         return "".join(b.text for b in response.content if b.type == "text")
+
+    @property
+    def can_do_vision(self) -> bool:
+        """Anthropic can read a PDF/image directly; the Ollama fallback cannot."""
+        return self.provider != "ollama"
 
     def _complete_ollama(self, prompt: str, max_tokens: int) -> str:
         import requests
@@ -145,10 +182,29 @@ class LLMClient:
             return True, "✓ Koneksi berhasil"
         return False, "Model tidak mengembalikan jawaban."
 
-    def extract_do_fields(self, raw_text: str) -> dict[str, Any]:
-        """PRD Section 8.2. Raises LLMError; caller falls back to manual entry."""
-        reply = self.complete(DO_EXTRACTION_PROMPT.format(raw_text=raw_text))
+    def extract_do_fields(self, raw_text: str, pdf_path=None) -> dict[str, Any]:
+        """PRD Section 8.2. Raises LLMError; caller falls back to manual entry.
+
+        With a `pdf_path` on a vision-capable provider, sends the PDF itself to a
+        stronger model so scanned/handwritten DOs can be read; otherwise reads the
+        already-extracted text with Haiku.
+        """
+        if pdf_path is not None and self.can_do_vision:
+            reply = self._extract_do_vision(pdf_path)
+        else:
+            reply = self.complete(DO_EXTRACTION_PROMPT.format(raw_text=raw_text))
         return _parse_json(reply)
+
+    def _extract_do_vision(self, pdf_path) -> str:
+        data = base64.standard_b64encode(Path(pdf_path).read_bytes()).decode("ascii")
+        content = [
+            {"type": "document",
+             "source": {"type": "base64", "media_type": "application/pdf",
+                        "data": data}},
+            {"type": "text", "text": DO_EXTRACTION_PROMPT_VISION},
+        ]
+        return self._call_anthropic(content, max_tokens=2000,
+                                    model=ANTHROPIC_VISION_MODEL)
 
     def extract_permit_expiry(self, permit_text: str) -> str | None:
         """PRD Section 5. Returns an ISO date string or None."""

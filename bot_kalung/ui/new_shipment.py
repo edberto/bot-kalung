@@ -41,16 +41,13 @@ class _ExtractionWorker(QThread):
 
     def run(self):
         try:
-            text = do_parser.extract_text(self.pdf_path)
-        except Exception as exc:  # noqa: BLE001
-            self.done.emit(None, f"Tidak dapat membaca file DO: {exc}")
-            return
-        try:
-            self.done.emit(do_parser.extract_fields(self.client, text), "")
+            data = do_parser.extract(self.client, self.pdf_path)
         except LLMError as exc:
             self.done.emit(None, str(exc))
         except Exception as exc:  # noqa: BLE001
-            self.done.emit(None, f"Kesalahan tidak terduga: {exc}")
+            self.done.emit(None, f"Tidak dapat membaca file DO: {exc}")
+        else:
+            self.done.emit(data, "")
 
 
 class _PermitWorker(QThread):

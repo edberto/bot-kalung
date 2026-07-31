@@ -29,6 +29,9 @@ CARRIER_MARKERS: dict[str, tuple[str, ...]] = {
     "CMA CGM": ("CMA CGM",),
     "COSCO": ("COSCO",),
     "HAPAG-LLOYD": ("HAPAG-LLOYD", "HAPAG LLOYD"),
+    "WAN HAI": ("WAN HAI", "WHL"),
+    "VOLTA": ("VOLTA",),
+    "FEEDERLINE": ("FEEDERLINE", "MAPFDLINE"),
 }
 
 # Tried in order. Each must capture the number itself, stopping before any
