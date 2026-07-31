@@ -13,10 +13,31 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtWidgets import QApplication, QLabel
 
+import bot_kalung.services.shipments as _shipments_mod
+import bot_kalung.ui.calendar_view as _calendar_view_mod
+import bot_kalung.ui.dashboard as _dashboard_mod
 from bot_kalung.core.context import AppContext
 from bot_kalung.services.shipments import Shipments
 from bot_kalung.ui.calendar_view import MAX_PER_DAY, EntryCard, MonthCalendar
 from bot_kalung.ui.main_window import VIEW_DETAIL, MainWindow
+
+# The calendar shows one month at a time. Offsetting a few days from the *real*
+# today would, near a month boundary, push demo entries into an adjacent month's
+# grid where the assertions can't see them (e.g. an ETD at today+5 lands in the
+# next month on the 31st). Freeze "today" to a stable mid-month date so every
+# demo entry shares the displayed month whatever the real date is.
+FROZEN_TODAY = date(2026, 6, 15)
+
+
+class _FrozenDate(date):
+    @classmethod
+    def today(cls):
+        return FROZEN_TODAY
+
+
+_shipments_mod.date = _FrozenDate
+_calendar_view_mod.date = _FrozenDate
+_dashboard_mod.date = _FrozenDate
 
 failures = []
 
@@ -28,7 +49,7 @@ def check(label, cond):
 
 
 app = QApplication.instance() or QApplication([])
-TODAY = date.today()
+TODAY = FROZEN_TODAY
 
 
 def iso(offset: int) -> str:

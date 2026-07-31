@@ -30,11 +30,18 @@ from ..core.constants import (
 
 SEQ_PREFIX_RE = re.compile(r"^(\d+)\.")
 
-# Matches the main workbook in any exporter's convention:
+# Matches the main workbook across every exporter's convention seen on Drive:
 #   AMJ23-VGM,SI,Inv,PL.xls        TTJ04-Karachi-VGM,SI,INV,PL.xlsx
-#   NIT15-CHENNAI-VGM,SI,INV,PL.xlsx
+#   NIT15-CHENNAI-VGM,SI,INV,PL.xlsx   AMJ09-VGM,SI,Inv,P.List.xls
+#   LSM01-1x20-VGM,SI,Inv,P.List.xlsx  AMJ18VGM,SI,Inv,PL.xls
+#   AMJ29-Vgm,SI,Inv,PL......xls        GGN-00004-VGM,SI,Inv,PL.xls
+# Tolerates `P.List`/`PList` for `PL`, a missing hyphen before VGM, a hyphen
+# between code and sequence, trailing dots/spaces, and stray spaces around the
+# commas. Deliberately does NOT match copy suffixes like " (1).xlsx", so the
+# real workbook wins over a duplicate.
 MAIN_WORKBOOK_RE = re.compile(
-    r"^(?P<code>[A-Za-z]+)(?P<seq>\d+)(?P<middle>.*?)-VGM,\s*SI,\s*INV,\s*PL(?P<ext>\.xlsx?)$",
+    r"^(?P<code>[A-Za-z]+)-?(?P<seq>\d+)(?P<middle>.*?)-?\s*"
+    r"VGM\s*,\s*SI\s*,\s*INV\s*,\s*(?:P\.?\s*LIST|PL)[.\s]*(?P<ext>\.xlsx?)$",
     re.IGNORECASE,
 )
 
@@ -143,6 +150,27 @@ def latest_shipment_folder(exporter_folder, code: str, year: int,
     return folders[-1] if folders else None
 
 
+def template_source_folder(exporter_folder, code: str, year: int,
+                           destination: str | None,
+                           settings=None) -> Path | None:
+    """The folder to copy as a template for a new shipment.
+
+    Prefer the most recent this-year folder whose name mentions the destination
+    port; otherwise fall back to the last folder overall (the prior behaviour).
+    The match is a case-insensitive substring, mirroring how the app writes
+    folder names ("...-karachi-...").
+    """
+    folders = scan_shipment_folders(exporter_folder, code, year, settings)
+    if not folders:
+        return None
+    dest = (destination or "").strip().lower()
+    if dest:
+        matches = [path for _, path in folders if dest in path.name.lower()]
+        if matches:
+            return matches[-1]
+    return folders[-1][1]
+
+
 def sequence_prefix_width(folder_name: str) -> int:
     """How many digits the folder's numeric prefix uses, e.g. "04." -> 2.
 
@@ -178,11 +206,13 @@ def derive_main_workbook_name(source_folder, new_sequence: int) -> str | None:
         match = MAIN_WORKBOOK_RE.match(entry.name)
         if not match:
             continue
+        # Replace only the sequence characters, so everything else survives
+        # untouched: the code, any hyphen between code and seq (GGN-00004), the
+        # embedded destination, the "P.List" spelling, trailing dots, extension,
+        # and the source's own casing ("Inv,PL" vs "INV,PL").
+        start, end = match.span("seq")
         seq = _renumber(match.group("seq"), new_sequence)
-        # Splice the new sequence into the original name so the trailing
-        # segment keeps the source's own casing ("Inv,PL" vs "INV,PL").
-        head_len = len(match.group("code")) + len(match.group("seq"))
-        return f"{match.group('code')}{seq}{entry.name[head_len:]}"
+        return entry.name[:start] + seq + entry.name[end:]
     return None
 
 
@@ -200,8 +230,9 @@ def derive_invoice_name(source_folder, new_sequence: int) -> str | None:
             continue
         match = INVOICE_RE.match(entry.name)
         if match:
+            start, end = match.span("seq")
             seq = _renumber(match.group("seq"), new_sequence)
-            return f"{match.group('prefix')}{match.group('code')}{seq}{match.group('ext')}"
+            return entry.name[:start] + seq + entry.name[end:]
     return None
 
 

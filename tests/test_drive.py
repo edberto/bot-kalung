@@ -147,6 +147,63 @@ with tempfile.TemporaryDirectory() as tmp:
     check("padding widens correctly at 9 -> 10",
           drive.derive_main_workbook_name(src_ttj, 10) == "TTJ10-Karachi-VGM,SI,INV,PL.xlsx")
 
+    # --- broadened main-workbook matching (real Drive variants) ------------
+    matches = {
+        "AMJ09-VGM,SI,Inv,P.List.xls": ("AMJ", "09"),        # P.List spelling
+        "LSM01-1x20-VGM,SI,Inv,P.List.xlsx": ("LSM", "01"),  # size middle + P.List
+        "AMJ18VGM,SI,Inv,PL.xls": ("AMJ", "18"),             # no hyphen before VGM
+        "AMJ29-Vgm,SI,Inv,PL......xls": ("AMJ", "29"),       # trailing dots
+        "GGN-00004-VGM,SI,Inv,PL.xls": ("GGN", "00004"),     # hyphen code-seq
+        "TTJ04-Karachi-VGM,SI,INV,PL.xlsx": ("TTJ", "04"),   # already worked
+    }
+    for name, (code, seq) in matches.items():
+        m = drive.MAIN_WORKBOOK_RE.match(name)
+        check(f"matches {name}",
+              m is not None and m.group("code") == code and m.group("seq") == seq)
+
+    exclusions = [
+        "VGM I-822-17 PONTIANAK.xls",             # not a main workbook
+        "LJA 01 VGM SS490 20 Apr .xls",           # not a main workbook
+        "VGM,SI,Inv,PL.xls",                      # no code/seq to read
+        "NIT02-Karachi-VGM,SI,INV,PL (1).xlsx",   # a duplicate copy
+    ]
+    for name in exclusions:
+        check(f"does NOT match {name}", drive.MAIN_WORKBOOK_RE.match(name) is None)
+
+    # span-based derive keeps the P.List spelling and renumbers a hyphenated code
+    variants_dir = root / "_variants"
+    variants_dir.mkdir()
+    plist = make(variants_dir, "09.1x40-plistdest", ["AMJ09-VGM,SI,Inv,P.List.xls"])
+    check("P.List workbook renumbers, keeping the P.List spelling",
+          drive.derive_main_workbook_name(plist, 10) == "AMJ10-VGM,SI,Inv,P.List.xls")
+    ggn = make(variants_dir, "04.1x40-ggndest", ["GGN-00004-VGM,SI,Inv,PL.xls"])
+    check("hyphenated code renumbers only the sequence",
+          drive.derive_main_workbook_name(ggn, 5) == "GGN-00005-VGM,SI,Inv,PL.xls")
+
+    # --- template folder chosen by destination ------------------------------
+    tsf = root / "_tsf"
+    tsf_year = tsf / "2026"
+    tsf_year.mkdir(parents=True)
+    make(tsf_year, "01.1x40-karachi-a", ["X01-VGM,SI,INV,PL.xlsx"])
+    make(tsf_year, "02.1x40-chennai-b", ["X02-VGM,SI,INV,PL.xlsx"])
+    make(tsf_year, "03.1x40-karachi-c", ["X03-VGM,SI,INV,PL.xlsx"])
+    make(tsf_year, "04.1x40-dubai-d",   ["X04-VGM,SI,INV,PL.xlsx"])
+    check("destination picks the most recent matching folder, not the last",
+          drive.template_source_folder(tsf, "AMJ", 2026, "KARACHI", s).name
+          == "03.1x40-karachi-c")
+    check("a different destination picks its own folder",
+          drive.template_source_folder(tsf, "AMJ", 2026, "chennai", s).name
+          == "02.1x40-chennai-b")
+    check("no destination match falls back to the last folder",
+          drive.template_source_folder(tsf, "AMJ", 2026, "tokyo", s).name
+          == "04.1x40-dubai-d")
+    check("a blank destination falls back to the last folder",
+          drive.template_source_folder(tsf, "AMJ", 2026, "", s).name
+          == "04.1x40-dubai-d")
+    check("an exporter with no folders yields no template",
+          drive.template_source_folder(root / "_nope", "AMJ", 2026, "karachi", s)
+          is None)
+
     # --- per-exporter subfolders --------------------------------------------
     check("AMJ subfolders read from disk",
           drive.source_subfolders(src_amj)

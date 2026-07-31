@@ -488,6 +488,22 @@ class NewShipmentWizard(QWidget):
             self.carrier_message.show_warning(
                 "Pelayaran tidak dikenali dari dokumen DO. Isi manual di bawah.")
 
+    def _resolve_source_folder(self) -> Path | None:
+        """The template folder to copy, chosen by destination.
+
+        Prefers a this-year folder whose name mentions the destination port,
+        falling back to the last folder. Reads the live destination field so a
+        manual edit re-points the copy source.
+        """
+        folder = drive.resolve_exporter_folder(
+            self.ctx.drive_root, self.exporter, self.ctx.settings)
+        if folder is None:
+            return None
+        year = self.etd_field.date().year()
+        return drive.template_source_folder(
+            folder, self.exporter, year,
+            self.dest_port_field.text(), self.ctx.settings)
+
     def _detect_sequence(self):
         """PRD Section 5 — auto-detect, shown with the folder it came from."""
         folder = drive.resolve_exporter_folder(
@@ -504,16 +520,23 @@ class NewShipmentWizard(QWidget):
         next_sequence = drive.next_sequence_number(
             folder, self.exporter, year, self.ctx.settings)
         self.sequence_field.setValue(next_sequence)
-        self.source_folder = latest[1] if latest else None
         self.sequence_width = (drive.sequence_prefix_width(latest[1].name)
                                if latest else 1)
-        if latest:
-            self.sequence_note.setText(
-                f"Terdeteksi dari folder terakhir {self.exporter}: {latest[0]} "
-                f"({latest[1].name})")
-        else:
+        self.source_folder = self._resolve_source_folder()
+        if not latest:
             self.sequence_note.setText(
                 f"Belum ada folder pengiriman {self.exporter} untuk tahun {year}.")
+            return
+
+        note = f"Nomor urut berikutnya: {next_sequence} (dari {latest[1].name})."
+        src = self.source_folder
+        if src is not None:
+            dest = self.dest_port_field.text().strip()
+            if dest and dest.lower() in src.name.lower():
+                note += f" Menyalin dari folder tujuan {dest}: {src.name}."
+            else:
+                note += f" Menyalin dari folder terakhir: {src.name}."
+        self.sequence_note.setText(note)
 
     def _update_quarantine(self):
         country = self.dest_country_field.text()
@@ -585,6 +608,9 @@ class NewShipmentWizard(QWidget):
         return page
 
     def _populate_step3(self):
+        # Re-pick the copy source from the final destination, in case it was
+        # edited by hand after step 2 first ran.
+        self.source_folder = self._resolve_source_folder()
         etd = self._etd_value()
         folder_name = self._folder_name()
         self.summary.setText(
