@@ -169,14 +169,21 @@ def build_plan(rows, moves: dict[str, int]) -> list[Move]:
             move.new_folder = folder.parent / new_name
 
         # Workbook + invoice: derive the new names from what is actually there.
-        for derive in (drive.derive_main_workbook_name, drive.derive_invoice_name):
-            new_file = derive(folder, new_sequence)
-            if not new_file:
-                continue
-            old_file = _matching_source(folder, derive, new_sequence)
-            if old_file is not None and old_file.name != new_file:
-                move.file_renames.append(
-                    Rename(old_file, old_file.parent / new_file))
+        # The workbook name is canonical and carries the destination; the invoice
+        # keeps its own shape.
+        main_new = drive.derive_main_workbook_name(
+            folder, new_sequence, row["destination_port"])
+        main_old = _matching_source(folder, drive.derive_main_workbook_name,
+                                    new_sequence)
+        if main_new and main_old is not None and main_old.name != main_new:
+            move.file_renames.append(Rename(main_old, main_old.parent / main_new))
+
+        invoice_new = drive.derive_invoice_name(folder, new_sequence)
+        invoice_old = _matching_source(folder, drive.derive_invoice_name,
+                                       new_sequence)
+        if invoice_new and invoice_old is not None and invoice_old.name != invoice_new:
+            move.file_renames.append(
+                Rename(invoice_old, invoice_old.parent / invoice_new))
 
         # Exported PDFs carry the label, e.g. "SI - AMJ23.pdf".
         pdf_dir = folder / "PDF"
@@ -198,14 +205,10 @@ def _matching_source(folder: Path, derive, new_sequence: int) -> Path | None:
         if not entry.is_file():
             continue
         if is_main:
-            if drive.MAIN_WORKBOOK_RE.match(entry.name):
+            if drive.is_main_workbook(entry.name):
                 return entry
-        else:
-            if drive.MAIN_WORKBOOK_RE.match(entry.name):
-                continue
-            if re.search(r"inv", entry.name, re.IGNORECASE) and \
-                    drive.INVOICE_RE.match(entry.name):
-                return entry
+        elif drive.is_invoice(entry.name):
+            return entry
     return None
 
 
@@ -321,7 +324,7 @@ def _rewrite_document_number(folder: Path, move: Move, result: Result) -> None:
     workbook = None
     for entry in sorted(folder.iterdir()):
         # After the rename above the file already carries the new sequence.
-        if entry.is_file() and drive.MAIN_WORKBOOK_RE.match(entry.name):
+        if entry.is_file() and drive.is_main_workbook(entry.name):
             workbook = entry
             break
     if workbook is None:

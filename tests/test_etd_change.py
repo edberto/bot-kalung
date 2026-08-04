@@ -110,7 +110,7 @@ else:
             from bot_kalung.services import drive, excel
 
             workbook = next(p for p in plan.new_folder.iterdir()
-                            if drive.MAIN_WORKBOOK_RE.match(p.name))
+                            if drive.is_main_workbook(p.name))
             with excel.open_book(workbook) as book:
                 vgm = excel.find_sheet(book, "VGM")
                 cell = (excel.find_label(vgm, "NO :", column=2)

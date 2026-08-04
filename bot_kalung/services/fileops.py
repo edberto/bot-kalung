@@ -29,14 +29,22 @@ class ShipmentSetupResult:
 
 
 def _keep(filename: str) -> bool:
-    """PRD 9.2 step 3 — case-insensitive glob against the keep patterns."""
+    """PRD 9.2 step 3 — the main workbook, the invoice and the permits survive.
+
+    The two Excel files are matched by their token set rather than a glob: their
+    filenames vary too much between exporters (`.xls`/`.xlsx`, `PL`/`P.List`,
+    `Inv-…`/`Invoice tagihan …`) for a fixed pattern to catch every one, and a
+    missed file was silently deleted here before the rename step could find it.
+    """
+    if drive.is_main_workbook(filename) or drive.is_invoice(filename):
+        return True
     lowered = filename.lower()
     return any(fnmatch.fnmatch(lowered, pattern.lower())
                for pattern in KEEP_FILE_PATTERNS)
 
 
 def create_shipment_folder(*, source_folder, target_parent, final_folder_name: str,
-                           do_pdf_path, new_sequence: int,
+                           do_pdf_path, new_sequence: int, destination_port: str = "",
                            progress=None) -> ShipmentSetupResult:
     """Run PRD 9.2 steps 1-7 and return what was produced.
 
@@ -61,7 +69,7 @@ def create_shipment_folder(*, source_folder, target_parent, final_folder_name: s
 
     # Derive the new document names before copying anything, so an unsupported
     # exporter layout fails before any filesystem change.
-    main_name = drive.derive_main_workbook_name(source, new_sequence)
+    main_name = drive.derive_main_workbook_name(source, new_sequence, destination_port)
     invoice_name = drive.derive_invoice_name(source, new_sequence)
 
     result = ShipmentSetupResult(destination=final, main_workbook=None,
@@ -110,7 +118,7 @@ def create_shipment_folder(*, source_folder, target_parent, final_folder_name: s
         # 5 — rename the main workbook
         if main_name:
             step("Mengganti nama file Excel...")
-            current = _find_one(staging, drive.MAIN_WORKBOOK_RE)
+            current = _find_one(staging, drive.is_main_workbook)
             if current is None:
                 raise FileOpError(
                     "Tidak menemukan file Excel VGM/SI/Inv/PL di folder baru. "
@@ -158,21 +166,16 @@ def _rollback(staging: Path) -> None:
         shutil.rmtree(staging, ignore_errors=True)
 
 
-def _find_one(folder: Path, pattern) -> Path | None:
+def _find_one(folder: Path, predicate) -> Path | None:
     for entry in sorted(folder.iterdir()):
-        if entry.is_file() and pattern.match(entry.name):
+        if entry.is_file() and predicate(entry.name):
             return entry
     return None
 
 
 def _find_invoice(folder: Path) -> Path | None:
-    import re
-
     for entry in sorted(folder.iterdir()):
-        if not entry.is_file() or drive.MAIN_WORKBOOK_RE.match(entry.name):
-            continue
-        if re.search(r"inv", entry.name, re.IGNORECASE) and \
-                drive.INVOICE_RE.match(entry.name):
+        if entry.is_file() and drive.is_invoice(entry.name):
             return entry
     return None
 

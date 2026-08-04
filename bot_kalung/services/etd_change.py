@@ -117,7 +117,7 @@ def preflight(plan: EtdPlan) -> list[Blocker]:
 
 def _workbook(folder: Path) -> Path | None:
     for entry in sorted(folder.iterdir()):
-        if entry.is_file() and drive.MAIN_WORKBOOK_RE.match(entry.name):
+        if entry.is_file() and drive.is_main_workbook(entry.name):
             return entry
     return None
 

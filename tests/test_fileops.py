@@ -138,7 +138,7 @@ else:
         result = create_shipment_folder(
             source_folder=source, target_parent=tmp / "2026",
             final_folder_name=target_name, do_pdf_path=do_pdf,
-            new_sequence=24, progress=progress.append)
+            new_sequence=24, destination_port="Karachi", progress=progress.append)
 
         dest = result.destination
         check("destination folder created with the PRD name", dest.is_dir()
@@ -151,12 +151,12 @@ else:
         dirs = sorted(p.name for p in dest.iterdir() if p.is_dir())
         print(f" result files: {files}")
 
-        check("main workbook renamed to AMJ24",
-              "AMJ24-VGM,SI,Inv,PL.xls" in files)
+        check("main workbook renamed to the canonical AMJ24 name",
+              "AMJ24 - Karachi - VGM,SI,Inv,PL.xls" in files)
         check("invoice workbook renamed to AMJ24",
               "Invoice tagihan AMJ24.xlsx" in files)
         check("old AMJ23 workbook is gone",
-              "AMJ23-VGM,SI,Inv,PL.xls" not in files)
+              not any("AMJ23" in f for f in files))
         check("import permit kept", any(f.lower().startswith("ip-") for f in files))
         check("DO pdf copied in", do_pdf.name in files)
         check("no stray extra root files", len(files) == 4)
@@ -195,6 +195,55 @@ else:
             check("missing DO refused", True)
         check("failed run created nothing",
               set(p.name for p in (tmp / "2026").iterdir()) == before)
+
+# ---- create works for every managed exporter's naming, offline -----------
+# The live-AMJ block above only exercises AMJ's .xls form (and is skipped when
+# the Drive is offline). These synthetic sources reproduce each managed
+# exporter's real workbook/invoice conventions — including the .xlsx and "Inv-…"
+# forms that the old keep-glob silently deleted, which is what produced the
+# recurring "VGM/SI/Inv/PL file not found" error for the non-AMJ exporters.
+print("\n-- create for every managed exporter --")
+EXPORTER_SOURCES = [
+    # file code, source workbook,                source invoice
+    ("AMJ", "AMJ08-VGM,SI,Inv,PL.xls",          "Invoice tagihan AMJ08.xlsx"),
+    ("TTJ", "TTJ08-Karachi-VGM,SI,INV,PL.xlsx", "Inv-TTJ08.xlsx"),
+    ("NIT", "NIT08-CHENNAI-VGM,SI,INV,PL.xlsx", "Inv-NIT08.xlsx"),
+    ("TSI", "TSI08-Karachi-VGM,SI,INV,PL.xlsx", "Inv-TSI08.xlsx"),
+]
+
+for code, wb, inv in EXPORTER_SOURCES:
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        src = tmp / "2026" / "08.2x40-karachi-old"
+        (src / "PDF").mkdir(parents=True)
+        (src / "Draf").mkdir()
+        (src / "PDF" / "old.pdf").write_text("x", encoding="utf-8")  # emptied step 2
+        (src / wb).write_text("x", encoding="utf-8")
+        (src / inv).write_text("x", encoding="utf-8")
+        (src / "IP-KHI-1.pdf").write_text("x", encoding="utf-8")
+        do = tmp / "DO 999.pdf"
+        do.write_text("x", encoding="utf-8")
+
+        res = create_shipment_folder(
+            source_folder=src, target_parent=tmp / "2026",
+            final_folder_name="09.2x40-karachi-new", do_pdf_path=do,
+            new_sequence=9, destination_port="Karachi")
+
+        files = sorted(p.name for p in res.destination.iterdir() if p.is_file())
+        expected_wb = f"{code}09 - Karachi - VGM,SI,Inv,PL{Path(wb).suffix}"
+        check(f"{code}: workbook survived step 3 and renamed to {expected_wb} {files}",
+              expected_wb in files and res.main_workbook is not None)
+        check(f"{code}: invoice survived step 3 and renamed",
+              res.invoice_workbook is not None and "09" in res.invoice_workbook.name)
+        check(f"{code}: nothing carries the old sequence 08",
+              not any("08" in f for f in files))
+        check(f"{code}: permit kept and DO copied in",
+              "IP-KHI-1.pdf" in files and do.name in files)
+        check(f"{code}: exactly the four expected files (wb, invoice, permit, DO)",
+              len(files) == 4)
+        check(f"{code}: subfolders preserved but emptied",
+              all(not any(d.iterdir())
+                  for d in res.destination.iterdir() if d.is_dir()))
 
 # ---- deleting a shipment folder (to the Recycle Bin) ---------------------
 from bot_kalung.services.fileops import delete_shipment_folder

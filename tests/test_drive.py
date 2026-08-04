@@ -124,61 +124,85 @@ with tempfile.TemporaryDirectory() as tmp:
     check("THREESTAR next sequence is 2",
           drive.next_sequence_number(tsi, "THREESTAR", 2026, s) == 2)
 
-    # --- filename derivation ------------------------------------------------
-    check("AMJ workbook keeps .xls and Inv,PL casing",
-          drive.derive_main_workbook_name(src_amj, 24) == "AMJ24-VGM,SI,Inv,PL.xls")
+    # --- filename derivation (canonical output name) ------------------------
+    # {code}{seq} - {destination} - VGM,SI,Inv,PL{ext}, extension preserved.
+    check("AMJ workbook is canonical and keeps .xls",
+          drive.derive_main_workbook_name(src_amj, 24, "Karachi")
+          == "AMJ24 - Karachi - VGM,SI,Inv,PL.xls")
     check("AMJ invoice keeps 'Invoice tagihan' form",
           drive.derive_invoice_name(src_amj, 24) == "Invoice tagihan AMJ24.xlsx")
 
-    check("TTJ workbook keeps destination, padding and INV,PL casing",
-          drive.derive_main_workbook_name(src_ttj, 5) == "TTJ05-Karachi-VGM,SI,INV,PL.xlsx")
+    check("TTJ workbook is canonical with its destination and padding",
+          drive.derive_main_workbook_name(src_ttj, 5, "Karachi")
+          == "TTJ05 - Karachi - VGM,SI,Inv,PL.xlsx")
     check("TTJ invoice keeps Inv- form and padding",
           drive.derive_invoice_name(src_ttj, 5) == "Inv-TTJ05.xlsx")
 
-    check("NIT workbook keeps uppercase destination",
-          drive.derive_main_workbook_name(src_nit, 16) == "NIT16-CHENNAI-VGM,SI,INV,PL.xlsx")
+    check("NIT workbook takes the destination it is given",
+          drive.derive_main_workbook_name(src_nit, 16, "CHENNAI")
+          == "NIT16 - CHENNAI - VGM,SI,Inv,PL.xlsx")
     check("NIT invoice renumbers", drive.derive_invoice_name(src_nit, 16) == "Inv-NIT16.xlsx")
 
-    check("THREESTAR workbook keeps TSI code and padding",
-          drive.derive_main_workbook_name(src_tsi, 2) == "TSI02-Karachi-VGM,SI,INV,PL.xlsx")
+    check("THREESTAR workbook keeps the TSI code and padding",
+          drive.derive_main_workbook_name(src_tsi, 2, "Karachi")
+          == "TSI02 - Karachi - VGM,SI,Inv,PL.xlsx")
     check("THREESTAR invoice keeps padding",
           drive.derive_invoice_name(src_tsi, 2) == "Inv-TSI02.xlsx")
 
     check("padding widens correctly at 9 -> 10",
-          drive.derive_main_workbook_name(src_ttj, 10) == "TTJ10-Karachi-VGM,SI,INV,PL.xlsx")
+          drive.derive_main_workbook_name(src_ttj, 10, "Karachi")
+          == "TTJ10 - Karachi - VGM,SI,Inv,PL.xlsx")
+    check("a blank destination drops the middle segment",
+          drive.derive_main_workbook_name(src_amj, 24)
+          == "AMJ24 - VGM,SI,Inv,PL.xls")
 
-    # --- broadened main-workbook matching (real Drive variants) ------------
-    matches = {
-        "AMJ09-VGM,SI,Inv,P.List.xls": ("AMJ", "09"),        # P.List spelling
-        "LSM01-1x20-VGM,SI,Inv,P.List.xlsx": ("LSM", "01"),  # size middle + P.List
-        "AMJ18VGM,SI,Inv,PL.xls": ("AMJ", "18"),             # no hyphen before VGM
-        "AMJ29-Vgm,SI,Inv,PL......xls": ("AMJ", "29"),       # trailing dots
-        "GGN-00004-VGM,SI,Inv,PL.xls": ("GGN", "00004"),     # hyphen code-seq
-        "TTJ04-Karachi-VGM,SI,INV,PL.xlsx": ("TTJ", "04"),   # already worked
+    # --- token-based detection (any real Drive variant) --------------------
+    detected = {
+        "AMJ09-VGM,SI,Inv,P.List.xls": 9,          # P.List spelling
+        "LSM01-1x20-VGM,SI,Inv,P.List.xlsx": 1,    # size middle + P.List
+        "AMJ18VGM,SI,Inv,PL.xls": 18,              # no hyphen before VGM
+        "AMJ29-Vgm,SI,Inv,PL......xls": 29,        # trailing dots
+        "GGN-00004-VGM,SI,Inv,PL.xls": 4,          # hyphen code-seq
+        "TTJ04-Karachi-VGM,SI,INV,PL.xlsx": 4,     # already worked
+        "AMJ24 - Karachi - VGM,SI,Inv,PL.xlsx": 24,  # the new canonical name
+        "AMJ23 - Karachi - VGM SI INV PL.xlsx": 23,  # spaces, no commas
     }
-    for name, (code, seq) in matches.items():
-        m = drive.MAIN_WORKBOOK_RE.match(name)
-        check(f"matches {name}",
-              m is not None and m.group("code") == code and m.group("seq") == seq)
+    for name, seq in detected.items():
+        check(f"detects {name}", drive.is_main_workbook(name)
+              and drive.main_workbook_sequence(name) == seq)
 
-    exclusions = [
-        "VGM I-822-17 PONTIANAK.xls",             # not a main workbook
-        "LJA 01 VGM SS490 20 Apr .xls",           # not a main workbook
-        "VGM,SI,Inv,PL.xls",                      # no code/seq to read
+    # A bare workbook is still the workbook (kept + renamed); its sequence just
+    # falls back to the folder prefix.
+    check("a bare workbook is detected", drive.is_main_workbook("VGM,SI,Inv,PL.xlsx"))
+    check("a bare workbook has no sequence in its name",
+          drive.main_workbook_sequence("VGM,SI,Inv,PL.xlsx") is None)
+
+    not_workbooks = [
+        "VGM I-822-17 PONTIANAK.xls",             # VGM only, not a workbook
+        "LJA 01 VGM SS490 20 Apr .xls",           # VGM only
         "NIT02-Karachi-VGM,SI,INV,PL (1).xlsx",   # a duplicate copy
+        "Invoice tagihan AMJ23.xlsx",             # the invoice
+        "Inv-TTJ04.xlsx",                         # the invoice
+        "DO 2503357.pdf",                         # a PDF, not Excel
     ]
-    for name in exclusions:
-        check(f"does NOT match {name}", drive.MAIN_WORKBOOK_RE.match(name) is None)
+    for name in not_workbooks:
+        check(f"not a workbook: {name}", not drive.is_main_workbook(name))
 
-    # span-based derive keeps the P.List spelling and renumbers a hyphenated code
+    check("the invoice is recognised as such", drive.is_invoice("Inv-TTJ04.xlsx"))
+    check("the workbook is not mistaken for an invoice",
+          not drive.is_invoice("TTJ04-Karachi-VGM,SI,INV,PL.xlsx"))
+
+    # derive renumbers regardless of the source shape, always canonical output
     variants_dir = root / "_variants"
     variants_dir.mkdir()
     plist = make(variants_dir, "09.1x40-plistdest", ["AMJ09-VGM,SI,Inv,P.List.xls"])
-    check("P.List workbook renumbers, keeping the P.List spelling",
-          drive.derive_main_workbook_name(plist, 10) == "AMJ10-VGM,SI,Inv,P.List.xls")
+    check("a P.List source produces the canonical name and keeps .xls",
+          drive.derive_main_workbook_name(plist, 10, "Karachi")
+          == "AMJ10 - Karachi - VGM,SI,Inv,PL.xls")
     ggn = make(variants_dir, "04.1x40-ggndest", ["GGN-00004-VGM,SI,Inv,PL.xls"])
-    check("hyphenated code renumbers only the sequence",
-          drive.derive_main_workbook_name(ggn, 5) == "GGN-00005-VGM,SI,Inv,PL.xls")
+    check("a hyphenated code renumbers into the canonical name",
+          drive.derive_main_workbook_name(ggn, 5, "Xiamen")
+          == "GGN00005 - Xiamen - VGM,SI,Inv,PL.xls")
 
     # --- template folder chosen by destination ------------------------------
     tsf = root / "_tsf"

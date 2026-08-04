@@ -122,7 +122,7 @@ else:
               new_folder.is_dir() and not folder.exists())
         names = sorted(p.name for p in new_folder.iterdir() if p.is_file())
         check(f"workbook renamed to AMJ24 {names}",
-              any(n.startswith("AMJ24-") for n in names))
+              any(n.startswith("AMJ24 ") and "VGM,SI,Inv,PL" in n for n in names))
         check("invoice renamed to AMJ24",
               any("AMJ24" in n and "Invoice" in n for n in names))
         check("no AMJ23 files left",
@@ -148,7 +148,7 @@ else:
 
             from bot_kalung.services import excel
             workbook = next(p for p in new_folder.iterdir()
-                            if drive.MAIN_WORKBOOK_RE.match(p.name))
+                            if drive.is_main_workbook(p.name))
             with excel.open_book(workbook) as book:
                 vgm = excel.find_sheet(book, "VGM")
                 cell = (excel.find_label(vgm, "NO :", column=2)

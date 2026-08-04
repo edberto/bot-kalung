@@ -108,13 +108,14 @@ class _CreateWorker(QThread):
     done = pyqtSignal(object, str)  # result | None, error
 
     def __init__(self, *, source_folder, target_parent, folder_name, do_pdf,
-                 sequence, etd, booking, vessel, voyage, quantity, size_short):
+                 sequence, etd, booking, vessel, voyage, quantity, size_short,
+                 destination):
         super().__init__()
         self.args = dict(
             source_folder=source_folder, target_parent=target_parent,
             folder_name=folder_name, do_pdf=do_pdf, sequence=sequence, etd=etd,
             booking=booking, vessel=vessel, voyage=voyage, quantity=quantity,
-            size_short=size_short)
+            size_short=size_short, destination=destination)
 
     def run(self):
         a = self.args
@@ -122,7 +123,8 @@ class _CreateWorker(QThread):
             result = create_shipment_folder(
                 source_folder=a["source_folder"], target_parent=a["target_parent"],
                 final_folder_name=a["folder_name"], do_pdf_path=a["do_pdf"],
-                new_sequence=a["sequence"], progress=self.progress.emit)
+                new_sequence=a["sequence"], destination_port=a["destination"],
+                progress=self.progress.emit)
         except FileOpError as exc:
             self.done.emit(None, str(exc))
             return
@@ -666,7 +668,8 @@ class NewShipmentWizard(QWidget):
             vessel=self.vessel_field.text().strip(),
             voyage=self.voyage_field.text().strip(),
             quantity=self.quantity_field.value(),
-            size_short=self.size_field.text().strip())
+            size_short=self.size_field.text().strip(),
+            destination=self.dest_port_field.text().strip())
         worker.progress.connect(self.create_status.setText)
         worker.warnings.connect(self._on_prefill_warnings)
         worker.done.connect(self._on_create_done)

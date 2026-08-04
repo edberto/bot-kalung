@@ -67,10 +67,11 @@ DB_FILE_NAME = "exportmgr.db"
 # PRD Section 9.2 step 2 — subfolders emptied on a fresh shipment copy.
 SUBFOLDERS_TO_CLEAR = ["Dok kirim", "Draf", "Foto", "Fumi", "PDF", "PEB & NPE"]
 
-# PRD Section 9.2 step 3 — glob patterns for root files that survive the purge.
+# PRD Section 9.2 step 3 — root files that survive the purge. The main workbook
+# and the invoice are kept by content (see fileops.is_main_workbook / is_invoice),
+# since their filenames vary too much between exporters for a glob; these globs
+# cover the import permits.
 KEEP_FILE_PATTERNS = [
-    "*VGM*SI*Inv*PL*.xls",
-    "*Invoice*tagihan*.xlsx",
     "PERMIT-*.pdf",
     "IP-*.pdf",
 ]

@@ -30,20 +30,44 @@ from ..core.constants import (
 
 SEQ_PREFIX_RE = re.compile(r"^(\d+)\.")
 
-# Matches the main workbook across every exporter's convention seen on Drive:
-#   AMJ23-VGM,SI,Inv,PL.xls        TTJ04-Karachi-VGM,SI,INV,PL.xlsx
-#   NIT15-CHENNAI-VGM,SI,INV,PL.xlsx   AMJ09-VGM,SI,Inv,P.List.xls
-#   LSM01-1x20-VGM,SI,Inv,P.List.xlsx  AMJ18VGM,SI,Inv,PL.xls
-#   AMJ29-Vgm,SI,Inv,PL......xls        GGN-00004-VGM,SI,Inv,PL.xls
-# Tolerates `P.List`/`PList` for `PL`, a missing hyphen before VGM, a hyphen
-# between code and sequence, trailing dots/spaces, and stray spaces around the
-# commas. Deliberately does NOT match copy suffixes like " (1).xlsx", so the
-# real workbook wins over a duplicate.
-MAIN_WORKBOOK_RE = re.compile(
-    r"^(?P<code>[A-Za-z]+)-?(?P<seq>\d+)(?P<middle>.*?)-?\s*"
-    r"VGM\s*,\s*SI\s*,\s*INV\s*,\s*(?:P\.?\s*LIST|PL)[.\s]*(?P<ext>\.xlsx?)$",
-    re.IGNORECASE,
-)
+# The main workbook combines the VGM, SI, Invoice and Packing List sheets, but
+# its filename varies wildly across exporters: comma- or space-separated tokens,
+# "PL" or "P.List", .xls or .xlsx, the code before or after the tokens, extra
+# dots. Rather than chase one shape, it is identified by the presence of all four
+# tokens. Every earlier regex was too strict and quietly failed to find (or,
+# worse, deleted) a workbook whose name did not fit.
+_EXCEL_RE = re.compile(r"\.xlsx?$", re.IGNORECASE)
+_PL_RE = re.compile(r"P\.?\s*LIST|PL", re.IGNORECASE)   # PL, P.List, P List…
+_COPY_RE = re.compile(r"\(\s*\d+\s*\)")                 # a " (1)" duplicate copy
+# The exporter code + sequence prefix, when the name has one (AMJ23, GGN-00004).
+_CODE_SEQ_RE = re.compile(r"^(?P<code>[A-Za-z]+)-?(?P<seq>\d+)")
+
+
+def is_main_workbook(name: str) -> bool:
+    """The VGM/SI/Inv/PL workbook, in any exporter's naming.
+
+    All four tokens must be present; a bare `.pdf` or a `" (1)"` duplicate copy
+    is rejected so the real file wins.
+    """
+    if not _EXCEL_RE.search(name) or _COPY_RE.search(name):
+        return False
+    upper = name.upper()
+    return ("VGM" in upper and "SI" in upper and "INV" in upper
+            and _PL_RE.search(name) is not None)
+
+
+def main_workbook_sequence(name: str) -> int | None:
+    """The sequence from a `{code}{seq}` prefix, or None when the name has none
+    (then the caller falls back to the folder's numeric prefix)."""
+    match = _CODE_SEQ_RE.match(name)
+    return int(match.group("seq")) if match else None
+
+
+def is_invoice(name: str) -> bool:
+    """The billing workbook (`Invoice tagihan …` or `Inv-…`), never the main one."""
+    if is_main_workbook(name) or not _EXCEL_RE.search(name):
+        return False
+    return bool(re.search(r"inv", name, re.IGNORECASE) and INVOICE_RE.match(name))
 
 # Matches the billing workbook in either convention:
 #   Invoice tagihan AMJ23.xlsx     Inv-TTJ04.xlsx
@@ -106,20 +130,18 @@ def _sequence_from_documents(folder: Path) -> int | None:
         return None
 
     for entry in entries:
-        if not entry.is_file():
-            continue
-        match = MAIN_WORKBOOK_RE.match(entry.name)
-        if match:
-            return int(match.group("seq"))
+        if entry.is_file() and is_main_workbook(entry.name):
+            sequence = main_workbook_sequence(entry.name)
+            if sequence is not None:
+                return sequence
 
     # INDO has no main workbook; its billing file (Inv-IBR01.xlsx) carries the
     # sequence instead.
     for entry in entries:
-        if not entry.is_file():
-            continue
-        match = INVOICE_RE.match(entry.name)
-        if match:
-            return int(match.group("seq"))
+        if entry.is_file() and is_invoice(entry.name):
+            match = INVOICE_RE.match(entry.name)
+            if match:
+                return int(match.group("seq"))
     return None
 
 
@@ -193,26 +215,26 @@ def _renumber(old_sequence_text: str, new_sequence: int) -> str:
     return str(new_sequence).zfill(len(old_sequence_text))
 
 
-def derive_main_workbook_name(source_folder, new_sequence: int) -> str | None:
-    """New name for the VGM/SI/Inv/PL workbook, shaped like the source's.
+def derive_main_workbook_name(source_folder, new_sequence: int,
+                              destination_port: str = "") -> str | None:
+    """Canonical name for the copied main workbook:
 
-    Preserves extension, embedded destination, letter case, and zero-padding —
-    so `TTJ04-Karachi-VGM,SI,INV,PL.xlsx` becomes `TTJ05-Karachi-...`.
-    Returns None when the exporter has no such workbook (INDO).
+        {code}{seq} - {destination} - VGM,SI,Inv,PL{ext}
+
+    The exporter code, zero-padding and extension come from the source workbook
+    (so an AMJ `.xls` stays `.xls`); only the sequence and destination are
+    written fresh. Returns None when the folder has no main workbook (INDO).
     """
     for entry in sorted(Path(source_folder).iterdir()):
-        if not entry.is_file():
+        if not entry.is_file() or not is_main_workbook(entry.name):
             continue
-        match = MAIN_WORKBOOK_RE.match(entry.name)
-        if not match:
-            continue
-        # Replace only the sequence characters, so everything else survives
-        # untouched: the code, any hyphen between code and seq (GGN-00004), the
-        # embedded destination, the "P.List" spelling, trailing dots, extension,
-        # and the source's own casing ("Inv,PL" vs "INV,PL").
-        start, end = match.span("seq")
-        seq = _renumber(match.group("seq"), new_sequence)
-        return entry.name[:start] + seq + entry.name[end:]
+        prefix = _CODE_SEQ_RE.match(entry.name)
+        code = prefix.group("code") if prefix else ""
+        seq = (_renumber(prefix.group("seq"), new_sequence)
+               if prefix else str(new_sequence))
+        dest = (destination_port or "").strip()
+        middle = f" - {dest}" if dest else ""
+        return f"{code}{seq}{middle} - VGM,SI,Inv,PL{entry.suffix}"
     return None
 
 
@@ -224,7 +246,7 @@ def derive_invoice_name(source_folder, new_sequence: int) -> str | None:
     for entry in sorted(Path(source_folder).iterdir()):
         if not entry.is_file():
             continue
-        if MAIN_WORKBOOK_RE.match(entry.name):
+        if is_main_workbook(entry.name):
             continue  # the main workbook also ends in a code+digits pattern
         if not re.search(r"inv", entry.name, re.IGNORECASE):
             continue

@@ -394,10 +394,10 @@ class ShipmentDetailView(QWidget):
     def _find_workbook(folder: Path | None) -> Path | None:
         if folder is None or not folder.is_dir():
             return None
-        from ..services.drive import MAIN_WORKBOOK_RE
+        from ..services.drive import is_main_workbook
 
         for entry in sorted(folder.iterdir()):
-            if entry.is_file() and MAIN_WORKBOOK_RE.match(entry.name):
+            if entry.is_file() and is_main_workbook(entry.name):
                 return entry
         return None
 
