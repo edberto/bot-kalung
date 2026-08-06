@@ -26,9 +26,44 @@ from .notifications import NotificationStore
 @dataclass
 class Notification:
     kind: str            # "schedule" | "alongside" | "departing"
-    shipment_id: str
+    shipment_id: str | None   # None for a standalone monitored vessel
     title: str
     body: str
+
+
+def build_notes(prev_found: bool, prev_alongside: bool, prev_departing: bool,
+                reading: BnctReading, label: str,
+                shipment_id: str | None) -> list[Notification]:
+    """The notifications a reading newly warrants, given the previous state.
+
+    Shared by the shipment monitor and the standalone vessel monitor so both
+    alert on the same transitions (first seen → alongside → departing). `label`
+    prefixes the message ("AMJ24" for a shipment, "EVER CONCERT 088N" for a
+    vessel); `shipment_id` is None for a standalone vessel.
+    """
+    notes: list[Notification] = []
+    v = reading.vessel
+
+    if reading.found and reading.phase == "schedule" and not prev_found:
+        notes.append(Notification(
+            "schedule", shipment_id, f"{label}: kapal terjadwal di BNCT",
+            f"ETD {v.etd or '-'} · Open Billing {v.open_billing or '-'} · "
+            f"Open Stack {v.open_stacking or '-'}"))
+
+    if reading.phase == "alongside" and not prev_alongside:
+        notes.append(Notification(
+            "alongside", shipment_id, f"{label}: kapal sudah sandar",
+            f"Loading sisa {_fmt(v.loading_remain)} dari "
+            f"{_fmt(v.loading_plan)} · Discharge sisa "
+            f"{_fmt(v.discharge_remain)}"))
+
+    if reading.departing and not prev_departing:
+        notes.append(Notification(
+            "departing", shipment_id, f"{label}: kapal akan berangkat",
+            f"Loading sisa {_fmt(v.loading_remain)} kontainer — bayar LOLO "
+            "penuh ke Indra."))
+
+    return notes
 
 
 class BnctMonitor:
@@ -91,31 +126,11 @@ class BnctMonitor:
         `label` is the shipment's short id (e.g. "AMJ24") for the message text.
         """
         prev = self.latest(shipment_id)
-        notes: list[Notification] = []
-        v = reading.vessel
-
-        was_found = bool(prev and prev["found"])
-        was_alongside = bool(prev and prev["phase"] == "alongside")
-        was_departing = bool(prev and prev["departing"])
-
-        if reading.found and reading.phase == "schedule" and not was_found:
-            notes.append(Notification(
-                "schedule", shipment_id, f"{label}: kapal terjadwal di BNCT",
-                f"ETD {v.etd or '-'} · Open Billing {v.open_billing or '-'} · "
-                f"Open Stack {v.open_stacking or '-'}"))
-
-        if reading.phase == "alongside" and not was_alongside:
-            notes.append(Notification(
-                "alongside", shipment_id, f"{label}: kapal sudah sandar",
-                f"Loading sisa {_fmt(v.loading_remain)} dari "
-                f"{_fmt(v.loading_plan)} · Discharge sisa "
-                f"{_fmt(v.discharge_remain)}"))
-
-        if reading.departing and not was_departing:
-            notes.append(Notification(
-                "departing", shipment_id, f"{label}: kapal akan berangkat",
-                f"Loading sisa {_fmt(v.loading_remain)} kontainer — bayar LOLO "
-                "penuh ke Indra."))
+        notes = build_notes(
+            bool(prev and prev["found"]),
+            bool(prev and prev["phase"] == "alongside"),
+            bool(prev and prev["departing"]),
+            reading, label, shipment_id)
 
         self.record(shipment_id, reading)
         # Persist each transition so it survives the tray toast and drives the

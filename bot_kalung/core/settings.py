@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from .constants import DEFAULT_QUARANTINE_COUNTRIES
+from .constants import DEFAULT_QUARANTINE_COUNTRIES, NTFY_DEFAULT_SERVER
 from .db import Database
 
 # Known keys, with their defaults. Complex values are JSON-encoded per PRD 13.3.
@@ -23,6 +23,10 @@ DEFAULTS: dict[str, Any] = {
     # Exporter code -> Drive folder name. Only AMJ matches its code on the real
     # Drive; the rest are mapped in Settings > General.
     "exporter_folders": json.dumps({}),
+    # ntfy push. The topic is a fixed constant (constants.NTFY_TOPIC), not a
+    # setting; only whether to push and which server are configurable.
+    "ntfy_enabled": "1",
+    "ntfy_server": NTFY_DEFAULT_SERVER,
 }
 
 _JSON_KEYS = {"quarantine_countries", "exporter_full_names", "exporter_folders"}

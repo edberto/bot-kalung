@@ -75,10 +75,10 @@ def table_names(path):
 
 # ---- schema parsing --------------------------------------------------------
 expected = _expected_columns()
-check("all seven tables parsed from SCHEMA",
+check("all eight tables parsed from SCHEMA",
       set(expected) == {"shipments", "workflow_steps", "settings",
                         "message_templates", "bnct_checks", "notifications",
-                        "audit_log"})
+                        "audit_log", "monitored_vessels"})
 check("shipments columns parsed", len(expected["shipments"]) == 19)
 check("shipping_company is expected", "shipping_company" in expected["shipments"])
 check("table constraints are not read as columns",
@@ -148,6 +148,16 @@ with tempfile.TemporaryDirectory() as tmp:
     check("audit_log has its columns",
           {"actor", "action", "shipment_id", "label", "detail"}
           <= columns(path, "audit_log"))
+
+    # The standalone vessel-monitor table (2026-08-06) must also appear on an
+    # existing database, with its previous-reading columns.
+    check("the old database had no monitored_vessels table",
+          "monitored_vessels" not in table_names_before)
+    check("migration creates the monitored_vessels table",
+          "monitored_vessels" in table_names(path))
+    check("monitored_vessels has its columns",
+          {"vessel_name", "voyage", "last_found", "last_phase", "last_departing",
+           "last_summary"} <= columns(path, "monitored_vessels"))
 
     # ---- the operation that used to kill the app ---------------------------
     shipments = Shipments(db)

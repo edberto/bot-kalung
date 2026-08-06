@@ -115,6 +115,17 @@ low = BnctVessel("tpkb", "alongside", "X", "1S", "1N", loading_remain=3,
                  loading_plan=800)
 check("remain below 5 is departing", low.departing)
 
+# ---- shared transition helper (used by both shipment and vessel monitors) --
+from bot_kalung.services.bnct_monitor import build_notes
+
+_sched = bnct.read_for_shipment(allv, "MTT REYA", "123N", now=NOW)
+_notes = build_notes(False, False, False, _sched, "NIT15", "ship-1")
+check("build_notes fires schedule on a first sighting",
+      len(_notes) == 1 and _notes[0].kind == "schedule"
+      and _notes[0].shipment_id == "ship-1")
+check("build_notes stays silent once already found",
+      build_notes(True, False, False, _sched, "NIT15", "ship-1") == [])
+
 # ---- monitor: persistence and transitions ----------------------------------
 with tempfile.TemporaryDirectory() as tmp:
     root = Path(tmp) / "Drive"

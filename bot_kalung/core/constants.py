@@ -6,6 +6,13 @@ themselves stay in English.
 
 APP_NAME = "Bot Kalung"
 
+# ntfy push notifications. The topic is a single fixed value shared by every
+# install, so the whole team subscribes to the one feed
+# (https://ntfy.sh/<topic> in the ntfy app). It is intentionally random and not
+# user-editable; only the enabled toggle and server live in Settings.
+NTFY_TOPIC = "botkalung-lolo-9f0dadc10541b6cebb56"
+NTFY_DEFAULT_SERVER = "https://ntfy.sh"
+
 # PRD Section 1.1 lists six exporters. Two changes confirmed with the user
 # 2026-07-20: TASHA and TTJ are one business sharing a folder and sequence series
 # (every file on disk uses the TTJ prefix), and INDO is out of scope entirely —

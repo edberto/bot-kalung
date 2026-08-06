@@ -30,6 +30,7 @@ from .resequence_dialog import ResequenceDialog
 from .settings_view import SettingsView
 from .shipment_detail import ShipmentDetailView
 from .sidebar import Sidebar
+from .vessel_monitor_view import VesselMonitorView
 
 
 def open_in_explorer(path: str) -> bool:
@@ -56,6 +57,7 @@ VIEW_SETTINGS = 4
 VIEW_NOTIFICATIONS = 5
 VIEW_AUDIT = 6
 VIEW_ALL_SHIPMENTS = 7
+VIEW_VESSEL_MONITOR = 8
 
 
 class MainWindow(QMainWindow):
@@ -123,6 +125,8 @@ class MainWindow(QMainWindow):
 
         self.notifications = NotificationsView(ctx.db)
         self.notifications.open_shipment_requested.connect(self.open_shipment)
+        self.notifications.open_vessel_monitor_requested.connect(
+            self.open_vessel_monitor)
         self.notifications.changed.connect(self._refresh_notification_badge)
         self.stack.addWidget(self.notifications)
 
@@ -133,11 +137,16 @@ class MainWindow(QMainWindow):
         self.all_shipments.shipment_opened.connect(self.open_shipment)
         self.stack.addWidget(self.all_shipments)
 
+        self.vessel_monitor = VesselMonitorView(ctx.db)
+        self.vessel_monitor.vessel_added.connect(self._on_vessel_added)
+        self.stack.addWidget(self.vessel_monitor)
+
         layout.addWidget(self.stack, 1)
         self.setCentralWidget(root)
 
         self.sidebar.notifications_clicked.connect(self.open_notifications)
         self.sidebar.audit_clicked.connect(self.open_audit)
+        self.sidebar.monitor_clicked.connect(self.open_vessel_monitor)
 
         # -- BNCT monitoring (PRD 15) --------------------------------------
         # Clicking a tray toast can only tell us *a* message was clicked, not
@@ -191,9 +200,12 @@ class MainWindow(QMainWindow):
         self._bnct_error = message
 
     def _on_bnct_polled(self):
-        """A poll cycle finished. Only touch the banner for a manual check, so
-        the 5-minute background polls never clear an unrelated message.
+        """A poll cycle finished. Refresh the vessel screen if it is showing, and
+        only touch the banner for a manual check, so the 5-minute background
+        polls never clear an unrelated message.
         """
+        if self.stack.currentIndex() == VIEW_VESSEL_MONITOR:
+            self.vessel_monitor.refresh()
         if not self._bnct_manual_check:
             return
         self._bnct_manual_check = False
@@ -203,16 +215,20 @@ class MainWindow(QMainWindow):
             self.detail.message.show_success("Pemeriksaan BNCT selesai.")
 
     def _on_bnct_notification(self, note):
-        """A monitoring transition — notify natively, and via a dialog for the
-        departure alert since that one demands action (pay LOLO). Both routes
-        deep-link to the shipment the notification is about.
+        """A monitoring transition — notify natively, push to ntfy, and raise a
+        dialog for the departure alert since that one demands action (pay LOLO).
+        A note with no shipment_id is a standalone vessel; those route to the
+        Monitor Kapal screen instead of a shipment.
         """
         self._notified_shipment = note.shipment_id
+        self._push_ntfy(note)                    # additional delivery channel
         # The notification was already persisted by the monitor; reflect it in
         # the sidebar counter and the list if it is on screen.
         self._refresh_notification_badge()
         if self.stack.currentIndex() == VIEW_NOTIFICATIONS:
             self.notifications.refresh()
+        if self.stack.currentIndex() == VIEW_VESSEL_MONITOR:
+            self.vessel_monitor.refresh()
         if self.tray is not None:
             icon = (QSystemTrayIcon.MessageIcon.Critical
                     if note.kind == "departing"
@@ -221,16 +237,40 @@ class MainWindow(QMainWindow):
         if note.kind == "departing":
             box = QMessageBox(QMessageBox.Icon.Warning, note.title, note.body,
                               parent=self)
-            open_btn = box.addButton("Buka Pengiriman",
-                                     QMessageBox.ButtonRole.AcceptRole)
+            open_label = "Buka Pengiriman" if note.shipment_id else "Buka Monitor Kapal"
+            open_btn = box.addButton(open_label, QMessageBox.ButtonRole.AcceptRole)
             box.addButton("Tutup", QMessageBox.ButtonRole.RejectRole)
             box.exec()
             if box.clickedButton() is open_btn:
-                self._focus_shipment(note.shipment_id)
+                if note.shipment_id:
+                    self._focus_shipment(note.shipment_id)
+                else:
+                    self._focus_vessel_monitor()
+
+    def _push_ntfy(self, note):
+        """Fire an ntfy push on a throwaway thread so the UI never blocks."""
+        if not self.ctx.settings.get_bool("ntfy_enabled"):
+            return
+        import threading
+
+        from ..services import ntfy
+        threading.Thread(
+            target=ntfy.publish,
+            args=(self.ctx.settings, note.title, note.body),
+            kwargs={"kind": note.kind}, daemon=True).start()
 
     def _open_notified_shipment(self):
-        """Tray toast was clicked — jump to whichever shipment it was about."""
-        self._focus_shipment(self._notified_shipment)
+        """Tray toast was clicked — jump to whatever it was about."""
+        if self._notified_shipment:
+            self._focus_shipment(self._notified_shipment)
+        else:
+            self._focus_vessel_monitor()
+
+    def _focus_vessel_monitor(self):
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+        self.open_vessel_monitor()
 
     def _focus_shipment(self, shipment_id: str | None):
         if not shipment_id or self.shipments.get(shipment_id) is None:
@@ -364,6 +404,18 @@ class MainWindow(QMainWindow):
         self.sidebar.select_shipment(None)
         self.audit.refresh()
         self._go(VIEW_AUDIT)
+
+    def open_vessel_monitor(self):
+        if not self._leave_wizard_ok():
+            return
+        self.sidebar.select_shipment(None)
+        self.vessel_monitor.refresh()
+        self._go(VIEW_VESSEL_MONITOR)
+
+    def _on_vessel_added(self):
+        """A vessel was just added — check it right away, like a new shipment."""
+        if self._bnct_live:
+            self.bnct.poll_now()
 
     def open_settings(self):
         if not self._leave_wizard_ok():

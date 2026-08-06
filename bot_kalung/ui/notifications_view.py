@@ -81,6 +81,7 @@ class NotificationCard(Panel):
 
 class NotificationsView(QWidget):
     open_shipment_requested = pyqtSignal(str)
+    open_vessel_monitor_requested = pyqtSignal()   # a shipment-less vessel alert
     changed = pyqtSignal()          # read-state changed; refresh the badge
 
     def __init__(self, db):
@@ -144,6 +145,8 @@ class NotificationsView(QWidget):
         self.refresh()
         if shipment_id:
             self.open_shipment_requested.emit(shipment_id)
+        else:
+            self.open_vessel_monitor_requested.emit()
 
     def _mark_all_read(self):
         self.store.mark_all_read()

@@ -87,6 +87,7 @@ class Sidebar(Panel):
     history_clicked = pyqtSignal()
     notifications_clicked = pyqtSignal()
     audit_clicked = pyqtSignal()
+    monitor_clicked = pyqtSignal()
     settings_clicked = pyqtSignal()
     home_clicked = pyqtSignal()
 
@@ -152,6 +153,10 @@ class Sidebar(Panel):
         self.audit_button = self._nav_button("Log Aktivitas")
         self.audit_button.clicked.connect(self.audit_clicked)
         layout.addWidget(self.audit_button)
+
+        self.monitor_button = self._nav_button("Monitor Kapal")
+        self.monitor_button.clicked.connect(self.monitor_clicked)
+        layout.addWidget(self.monitor_button)
 
         self.settings_button = self._nav_button("Pengaturan")
         self.settings_button.clicked.connect(self.settings_clicked)

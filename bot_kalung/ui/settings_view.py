@@ -14,15 +14,16 @@ from . import theme
 
 from pathlib import Path
 
-from PyQt6.QtCore import QThread, pyqtSignal
+from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtWidgets import (
-    QButtonGroup, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout, QLabel,
-    QLineEdit, QListWidget, QListWidgetItem, QRadioButton, QScrollArea,
+    QButtonGroup, QCheckBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout,
+    QLabel, QLineEdit, QListWidget, QListWidgetItem, QRadioButton, QScrollArea,
     QTabWidget, QVBoxLayout, QWidget,
 )
 
 from ..core.constants import (
-    DEFAULT_EXPORTER_FOLDERS, EXPORTERS, WORKER_EMAILS,
+    DEFAULT_EXPORTER_FOLDERS, EXPORTERS, NTFY_DEFAULT_SERVER, NTFY_TOPIC,
+    WORKER_EMAILS,
 )
 from ..services import drive
 from ..services.llm import LLMClient
@@ -169,8 +170,36 @@ class SettingsView(QWidget):
         monitor_layout.addRow("", monitor_note)
         layout.addWidget(monitor_box)
 
+        ntfy_box = QGroupBox("Notifikasi ntfy")
+        ntfy_layout = QFormLayout(ntfy_box)
+        self.ntfy_enabled = QCheckBox("Kirim notifikasi ke HP lewat ntfy")
+        ntfy_layout.addRow("", self.ntfy_enabled)
+        self.ntfy_server_field = QLineEdit()
+        self.ntfy_server_field.textChanged.connect(self._update_ntfy_url)
+        ntfy_layout.addRow("Server", self.ntfy_server_field)
+        self.ntfy_url_label = QLabel()
+        self.ntfy_url_label.setWordWrap(True)
+        self.ntfy_url_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.ntfy_url_label.setStyleSheet(theme.style(
+            "color: #2563eb; font-size: 12px; font-weight: 600;"))
+        ntfy_layout.addRow("Langganan", self.ntfy_url_label)
+        ntfy_note = QLabel(
+            "Berlangganan topik di atas pada aplikasi ntfy (Android/iOS) untuk "
+            "menerima notifikasi kapal di HP walau aplikasi ini tertutup. Topik "
+            "ini sama untuk semua pengguna.")
+        ntfy_note.setWordWrap(True)
+        ntfy_note.setStyleSheet(theme.style("color: #6b7280; font-size: 11px;"))
+        ntfy_layout.addRow("", ntfy_note)
+        layout.addWidget(ntfy_box)
+
         layout.addStretch(1)
         return page
+
+    def _update_ntfy_url(self):
+        server = (self.ntfy_server_field.text().strip()
+                  or NTFY_DEFAULT_SERVER).rstrip("/")
+        self.ntfy_url_label.setText(f"{server}/{NTFY_TOPIC}")
 
     def _pick_drive(self):
         chosen = QFileDialog.getExistingDirectory(
@@ -382,6 +411,11 @@ class SettingsView(QWidget):
             interval = 5
         self.bnct_interval_field.setValue(max(1, interval))
 
+        self.ntfy_enabled.setChecked(settings.get_bool("ntfy_enabled"))
+        self.ntfy_server_field.setText(
+            settings.get("ntfy_server") or NTFY_DEFAULT_SERVER)
+        self._update_ntfy_url()
+
     def save(self):
         settings = self.ctx.settings
 
@@ -404,6 +438,9 @@ class SettingsView(QWidget):
             "google_drive_root": self.drive_field.text().strip(),
             "exporter_folders": mapping,
             "bnct_interval_minutes": str(self.bnct_interval_field.value()),
+            "ntfy_enabled": self.ntfy_enabled.isChecked(),
+            "ntfy_server": self.ntfy_server_field.text().strip()
+                           or NTFY_DEFAULT_SERVER,
             "my_email": self.email_combo.currentData() or "",
             "llm_provider": "anthropic" if self.radio_anthropic.isChecked()
                             else "ollama",

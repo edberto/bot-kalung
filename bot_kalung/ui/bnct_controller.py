@@ -15,6 +15,7 @@ from PyQt6.QtCore import QObject, QThread, QTimer, pyqtSignal
 
 from ..services import bnct
 from ..services.bnct_monitor import BnctMonitor, build_reading
+from ..services.vessel_monitor import VesselMonitor
 
 DEFAULT_INTERVAL_MINUTES = 5
 MIN_INTERVAL_MINUTES = 1
@@ -50,12 +51,14 @@ class _FetchWorker(QThread):
 class BnctController(QObject):
     notified = pyqtSignal(object)       # Notification
     checked = pyqtSignal(str)           # shipment_id whose latest check changed
+    vessel_checked = pyqtSignal(str)    # monitored-vessel id whose check changed
     polled = pyqtSignal()               # a poll cycle completed (any result)
     error = pyqtSignal(str)
 
     def __init__(self, db, settings, client=None, parent=None):
         super().__init__(parent)
         self.monitor = BnctMonitor(db)
+        self.vessels = VesselMonitor(db)
         self.settings = settings
         self.client = client or bnct.HttpBnctClient()
         self._worker: _FetchWorker | None = None
@@ -84,9 +87,8 @@ class BnctController(QObject):
     def poll_now(self):
         if self._worker is not None and self._worker.isRunning():
             return               # a previous fetch is still in flight; skip
-        targets = self.monitor.monitored()
-        if not targets:
-            self.polled.emit()
+        if not self.monitor.monitored() and not self.vessels.monitored():
+            self.polled.emit()   # nothing to watch — no need to hit the portal
             return
         self._worker = _FetchWorker(self.client, self)
         self._worker.done.connect(self._on_fetched)
@@ -97,10 +99,17 @@ class BnctController(QObject):
             self.error.emit(error)
             self.polled.emit()
             return
+        # Shipments and standalone vessels share this one fetch.
         for row in self.monitor.monitored():
             reading = build_reading(row, vessels)
             label = f"{row['exporter_code']}{row['sequence_number']}"
             for note in self.monitor.process(row["id"], label, reading):
                 self.notified.emit(note)
             self.checked.emit(row["id"])
+        for row in self.vessels.monitored():
+            reading = bnct.read_for_shipment(
+                vessels, row["vessel_name"] or "", row["voyage"] or "")
+            for note in self.vessels.process(row["id"], reading):
+                self.notified.emit(note)
+            self.vessel_checked.emit(row["id"])
         self.polled.emit()

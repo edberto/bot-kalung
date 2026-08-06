@@ -119,6 +119,22 @@ CREATE TABLE IF NOT EXISTS audit_log (
     label       TEXT,
     detail      TEXT
 );
+
+-- Vessels monitored on the BNCT portal independently of any shipment (the
+-- "Monitor Kapal" screen). No shipment FK. The last_* columns hold the previous
+-- reading so transitions can be detected without a full history table, and drive
+-- the screen's status display.
+CREATE TABLE IF NOT EXISTS monitored_vessels (
+    id              TEXT PRIMARY KEY,
+    vessel_name     TEXT NOT NULL,
+    voyage          TEXT,
+    created_at      TEXT NOT NULL,
+    last_checked_at TEXT,
+    last_found      INTEGER NOT NULL DEFAULT 0,
+    last_phase      TEXT,
+    last_departing  INTEGER NOT NULL DEFAULT 0,
+    last_summary    TEXT
+);
 """
 
 # Indexes are created AFTER _add_missing_columns, because one references a
@@ -132,6 +148,7 @@ CREATE INDEX IF NOT EXISTS idx_bnct_shipment ON bnct_checks(shipment_id);
 CREATE INDEX IF NOT EXISTS idx_notifications_read ON notifications(read);
 CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at);
 CREATE INDEX IF NOT EXISTS idx_steps_due ON workflow_steps(due_date);
+CREATE INDEX IF NOT EXISTS idx_monitored_created ON monitored_vessels(created_at);
 """
 
 
