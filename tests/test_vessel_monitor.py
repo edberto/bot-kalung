@@ -126,6 +126,53 @@ with tempfile.TemporaryDirectory() as tmp:
     check("processing a removed vessel is a no-op, not a crash",
           monitor.process(vid, schedule_reading()) == [])
 
+
+# ---- the kanban board: bucketing + alphabetical sort -----------------------
+import os
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+from PyQt6.QtWidgets import QApplication
+
+from bot_kalung.ui.vessel_monitor_view import VesselCard, VesselMonitorView
+
+app = QApplication.instance() or QApplication([])
+
+with tempfile.TemporaryDirectory() as tmp:
+    root = Path(tmp) / "Drive"
+    (root / "AMJ").mkdir(parents=True)
+    ctx = AppContext()
+    ctx.create(root)
+    store = MonitoredVessels(ctx.db)
+
+    def set_state(vid, found=0, phase=None, departing=0):
+        ctx.db.execute(
+            "UPDATE monitored_vessels SET last_found=?, last_phase=?, "
+            "last_departing=? WHERE id=?", (found, phase, departing, vid))
+
+    set_state(store.add("Charlie", "3N"), found=1, phase="schedule")
+    set_state(store.add("alpha", "2N"), found=1, phase="schedule")
+    set_state(store.add("alpha", "1N"), found=1, phase="schedule")
+    set_state(store.add("Delta", "9N"), found=1, phase="alongside")
+    set_state(store.add("Echo", "5N"), found=1, phase="alongside", departing=1)
+    store.add("Foxtrot", "6N")           # never checked -> not found
+
+    view = VesselMonitorView(ctx.db)     # __init__ calls refresh()
+
+    def names(key):
+        return [(r["vessel_name"], r["voyage"]) for r in view.columns[key]["rows"]]
+
+    check("scheduled column holds the three scheduled vessels",
+          len(view.columns["scheduled"]["rows"]) == 3)
+    check("scheduled sorted by name then voyage (case-insensitive)",
+          names("scheduled") == [("alpha", "1N"), ("alpha", "2N"), ("Charlie", "3N")])
+    check("berthed column holds the alongside vessel", names("berthed") == [("Delta", "9N")])
+    check("departed column holds the departing vessel", names("departed") == [("Echo", "5N")])
+    check("not-found column holds the unchecked vessel",
+          names("notfound") == [("Foxtrot", "6N")])
+    check("headers carry the count", "(3)" in view.columns["scheduled"]["header"].text())
+    check("every vessel rendered as a card",
+          len(view.findChildren(VesselCard)) == 6)
+
 print()
 if failures:
     print(f"{len(failures)} FAILED: {failures}")

@@ -1,9 +1,9 @@
 """Monitor Kapal — watch any vessel on BNCT by name + voyage, with no shipment.
 
-Uses the same poll and alerts as shipment monitoring (schedule → alongside →
-departing); the shared BNCT controller reads these targets alongside the active
-shipments. State lives entirely in the DB, so the screen is safe to rebuild on a
-theme change — `refresh()` reloads everything.
+A kanban board: each vessel sits in the column for its current BNCT state
+(belum terjadwal → terjadwal → sudah sandar → sudah berangkat), sorted by
+vessel name then voyage. State lives entirely in the DB, so the screen is safe
+to rebuild on a theme change — `refresh()` reloads and re-buckets everything.
 """
 
 from __future__ import annotations
@@ -20,6 +20,25 @@ from PyQt6.QtWidgets import (
 from ..services.vessel_monitor import MonitoredVessels
 from .bnct_display import describe_record
 from .widgets import DangerButton, InlineMessage, Panel, PrimaryButton, format_date_id
+
+# (status key, column title, accent colour) — colours match describe_record.
+COLUMNS = [
+    ("notfound", "Belum Terjadwal", "#6b7280"),
+    ("scheduled", "Terjadwal", "#2563eb"),
+    ("berthed", "Sudah Sandar", "#059669"),
+    ("departed", "Sudah Berangkat", "#b91c1c"),
+]
+
+
+def vessel_status(row) -> str:
+    """Which board column a monitored vessel belongs in."""
+    if row["last_departing"]:
+        return "departed"
+    if row["last_phase"] == "alongside":
+        return "berthed"
+    if row["last_found"]:
+        return "scheduled"
+    return "notfound"
 
 
 def _when(iso: str | None) -> str:
@@ -45,34 +64,19 @@ def _reading(row):
 
 
 class VesselCard(Panel):
-    """One monitored vessel with its latest status, in a large, high-contrast
-    card that mirrors the per-shipment BNCT panel."""
+    """One monitored vessel as a kanban card."""
 
     remove_requested = pyqtSignal(str)         # monitored-vessel id
 
-    def __init__(self, row):
+    def __init__(self, row, accent: str):
         super().__init__()
         self._id = row["id"]
         self.setStyleSheet(theme.style(
-            "background: white; border: 1px solid #e5e7eb; border-radius: 8px;"))
-        outer = QHBoxLayout(self)
-        outer.setContentsMargins(16, 14, 16, 14)
-        outer.setSpacing(12)
-
-        record = _reading(row)
-        if record is not None:
-            color, status_text, detail = describe_record(record)
-        else:
-            color, status_text, detail = "#9ca3af", "Menunggu pemeriksaan pertama…", ""
-
-        dot = QLabel("●")
-        dot.setStyleSheet(theme.style(
-            f"color: {color}; border: none; font-size: 18px;"))
-        dot.setAlignment(Qt.AlignmentFlag.AlignTop)
-        outer.addWidget(dot)
-
-        body = QVBoxLayout()
-        body.setSpacing(4)
+            "background: white; border: 1px solid #e5e7eb; "
+            f"border-left: 4px solid {accent}; border-radius: 8px;"))
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(12, 10, 12, 10)
+        outer.setSpacing(5)
 
         name = row["vessel_name"]
         if row["voyage"]:
@@ -80,44 +84,42 @@ class VesselCard(Panel):
         headline = QLabel(name)
         headline.setWordWrap(True)
         headline.setStyleSheet(theme.style(
-            "border: none; font-size: 16px; font-weight: 700; color: #0f172a;"))
-        body.addWidget(headline)
+            "border: none; font-size: 14px; font-weight: 700; color: #0f172a;"))
+        outer.addWidget(headline)
 
-        status = QLabel(status_text)
-        status.setWordWrap(True)
-        status.setTextFormat(Qt.TextFormat.PlainText)
-        status.setStyleSheet(theme.style(
-            f"border: none; font-size: 14px; font-weight: 600; color: {color};"))
-        body.addWidget(status)
-
+        record = _reading(row)
+        detail = describe_record(record)[2] if record is not None else ""
         if detail:
             detail_label = QLabel(detail)
             detail_label.setWordWrap(True)
             detail_label.setTextFormat(Qt.TextFormat.PlainText)
             detail_label.setStyleSheet(theme.style(
-                "border: none; font-size: 13px; color: #374151;"))
-            body.addWidget(detail_label)
+                "border: none; font-size: 12px; color: #374151;"))
+            outer.addWidget(detail_label)
 
         meta = QLabel(f"Diperiksa: {_when(row['last_checked_at'])}")
         meta.setStyleSheet(theme.style(
-            "border: none; font-size: 12px; color: #6b7280;"))
-        body.addWidget(meta)
+            "border: none; font-size: 11px; color: #9ca3af;"))
+        outer.addWidget(meta)
 
-        outer.addLayout(body, 1)
-
+        actions = QHBoxLayout()
+        actions.addStretch(1)
         remove = DangerButton("Hapus")
+        remove.setMinimumHeight(26)
         remove.clicked.connect(lambda: self.remove_requested.emit(self._id))
-        outer.addWidget(remove, 0, Qt.AlignmentFlag.AlignTop)
+        actions.addWidget(remove)
+        outer.addLayout(actions)
 
 
 class VesselMonitorView(QWidget):
-    """The standalone vessel-monitoring screen."""
+    """The standalone vessel-monitoring board."""
 
     vessel_added = pyqtSignal()                # a vessel was added; trigger a poll
 
     def __init__(self, db):
         super().__init__()
         self.vessels = MonitoredVessels(db)
+        self.columns: dict[str, dict] = {}
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(28, 24, 28, 24)
@@ -157,41 +159,70 @@ class VesselMonitorView(QWidget):
         self.message = InlineMessage()
         outer.addWidget(self.message)
 
-        # -- list ------------------------------------------------------------
-        self.scroll = QScrollArea()
-        self.scroll.setWidgetResizable(True)
-        self.scroll.setFrameShape(QScrollArea.Shape.NoFrame)
-        self.container = QWidget()
-        self.list_layout = QVBoxLayout(self.container)
-        self.list_layout.setContentsMargins(0, 0, 0, 0)
-        self.list_layout.setSpacing(8)
-        self.list_layout.addStretch(1)
-        self.scroll.setWidget(self.container)
-        outer.addWidget(self.scroll, 1)
-
-        self.empty_note = QLabel("Belum ada kapal yang dipantau.")
-        self.empty_note.setStyleSheet(theme.style(
-            "font-size: 13px; color: #9ca3af; padding: 8px;"))
-        outer.addWidget(self.empty_note)
+        # -- board -----------------------------------------------------------
+        board = QHBoxLayout()
+        board.setSpacing(12)
+        for key, col_title, color in COLUMNS:
+            board.addWidget(self._build_column(key, col_title, color), 1)
+        outer.addLayout(board, 1)
 
         self.refresh()
+
+    def _build_column(self, key: str, col_title: str, color: str) -> QWidget:
+        column = QWidget()
+        column.setStyleSheet(theme.style(
+            "background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 10px;"))
+        col_layout = QVBoxLayout(column)
+        col_layout.setContentsMargins(10, 10, 10, 10)
+        col_layout.setSpacing(8)
+
+        header = QLabel(col_title)
+        header.setStyleSheet(theme.style(
+            f"border: none; font-size: 13px; font-weight: 700; color: {color};"))
+        col_layout.addWidget(header)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        scroll.setStyleSheet(theme.style("background: transparent; border: none;"))
+        container = QWidget()
+        container.setStyleSheet(theme.style("background: transparent;"))
+        list_layout = QVBoxLayout(container)
+        list_layout.setContentsMargins(0, 0, 0, 0)
+        list_layout.setSpacing(8)
+        list_layout.addStretch(1)
+        scroll.setWidget(container)
+        col_layout.addWidget(scroll, 1)
+
+        self.columns[key] = {"header": header, "title": col_title, "color": color,
+                             "layout": list_layout, "container": container}
+        return column
 
     # -- data ---------------------------------------------------------------
 
     def refresh(self):
-        while self.list_layout.count() > 1:
-            item = self.list_layout.takeAt(0)
-            if item.widget() is not None:
-                item.widget().deleteLater()
+        buckets: dict[str, list] = {key: [] for key, _, _ in COLUMNS}
+        for row in self.vessels.all():
+            buckets[vessel_status(row)].append(row)
 
-        rows = self.vessels.all()
-        for row in rows:
-            card = VesselCard(row)
-            card.remove_requested.connect(self._remove)
-            self.list_layout.insertWidget(self.list_layout.count() - 1, card)
+        for key, column in self.columns.items():
+            layout = column["layout"]
+            while layout.count() > 1:            # keep the trailing stretch
+                item = layout.takeAt(0)
+                if item.widget() is not None:
+                    item.widget().deleteLater()
 
-        self.empty_note.setVisible(not rows)
-        self.scroll.setVisible(bool(rows))
+            rows = sorted(
+                buckets[key],
+                key=lambda r: ((r["vessel_name"] or "").lower(),
+                               (r["voyage"] or "").lower()))
+            column["rows"] = rows                # ordered, for tests/inspection
+            for row in rows:
+                card = VesselCard(row, column["color"])
+                card.remove_requested.connect(self._remove)
+                layout.insertWidget(layout.count() - 1, card)
+
+            column["header"].setText(f"{column['title']} ({len(rows)})")
 
     def _add(self):
         name = self.name_field.text().strip()
