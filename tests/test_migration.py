@@ -157,7 +157,9 @@ with tempfile.TemporaryDirectory() as tmp:
           "monitored_vessels" in table_names(path))
     check("monitored_vessels has its columns",
           {"vessel_name", "voyage", "last_found", "last_phase", "last_departing",
-           "last_summary"} <= columns(path, "monitored_vessels"))
+           "last_summary", "last_reading"} <= columns(path, "monitored_vessels"))
+    check("bnct_checks gained the Clossing columns",
+          {"clossing", "clossing_reefer"} <= columns(path, "bnct_checks"))
 
     # ---- the operation that used to kill the app ---------------------------
     shipments = Shipments(db)

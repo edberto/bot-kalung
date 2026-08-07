@@ -60,6 +60,8 @@ class BnctVessel:
     etd: str = ""
     open_billing: str = ""
     open_stacking: str = ""
+    clossing: str = ""              # the portal's spelling (double-s)
+    clossing_reefer: str = ""
 
     # alongside phase (Total column of each matrix row)
     atb: str = ""
@@ -190,6 +192,10 @@ def parse_schedule(html: str, site: str) -> list[BnctVessel]:
                 v.open_billing = value
             elif label == "open stack":
                 v.open_stacking = value
+            elif label == "clossing":
+                v.clossing = value
+            elif label == "clossing reefer":
+                v.clossing_reefer = value
         vessels.append(v)
     return vessels
 

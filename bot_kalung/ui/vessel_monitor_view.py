@@ -8,6 +8,8 @@ theme change — `refresh()` reloads everything.
 
 from __future__ import annotations
 
+import json
+
 from . import theme
 
 from PyQt6.QtCore import Qt, pyqtSignal
@@ -16,6 +18,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ..services.vessel_monitor import MonitoredVessels
+from .bnct_display import describe_record
 from .widgets import DangerButton, InlineMessage, Panel, PrimaryButton, format_date_id
 
 
@@ -28,18 +31,22 @@ def _when(iso: str | None) -> str:
     return f"{format_date_id(date)} {time[:5]}"
 
 
-def _phase_color(row) -> str:
-    if row["last_departing"]:
-        return "#dc2626"                       # red — pay LOLO
-    if row["last_phase"] == "alongside":
-        return "#d97706"                       # amber — berthed
-    if row["last_found"]:
-        return "#2563eb"                       # blue — scheduled
-    return "#9ca3af"                           # grey — not seen yet
+def _reading(row):
+    try:
+        raw = row["last_reading"]
+    except (KeyError, IndexError):
+        return None
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except (ValueError, TypeError):
+        return None
 
 
 class VesselCard(Panel):
-    """One monitored vessel with its latest status."""
+    """One monitored vessel with its latest status, in a large, high-contrast
+    card that mirrors the per-shipment BNCT panel."""
 
     remove_requested = pyqtSignal(str)         # monitored-vessel id
 
@@ -49,17 +56,23 @@ class VesselCard(Panel):
         self.setStyleSheet(theme.style(
             "background: white; border: 1px solid #e5e7eb; border-radius: 8px;"))
         outer = QHBoxLayout(self)
-        outer.setContentsMargins(12, 10, 12, 10)
-        outer.setSpacing(10)
+        outer.setContentsMargins(16, 14, 16, 14)
+        outer.setSpacing(12)
+
+        record = _reading(row)
+        if record is not None:
+            color, status_text, detail = describe_record(record)
+        else:
+            color, status_text, detail = "#9ca3af", "Menunggu pemeriksaan pertama…", ""
 
         dot = QLabel("●")
         dot.setStyleSheet(theme.style(
-            f"color: {_phase_color(row)}; border: none; font-size: 14px;"))
+            f"color: {color}; border: none; font-size: 18px;"))
         dot.setAlignment(Qt.AlignmentFlag.AlignTop)
         outer.addWidget(dot)
 
         body = QVBoxLayout()
-        body.setSpacing(2)
+        body.setSpacing(4)
 
         name = row["vessel_name"]
         if row["voyage"]:
@@ -67,19 +80,27 @@ class VesselCard(Panel):
         headline = QLabel(name)
         headline.setWordWrap(True)
         headline.setStyleSheet(theme.style(
-            "border: none; font-size: 13px; font-weight: 600; color: #111827;"))
+            "border: none; font-size: 16px; font-weight: 700; color: #0f172a;"))
         body.addWidget(headline)
 
-        status = QLabel(row["last_summary"] or "Menunggu pemeriksaan pertama…")
+        status = QLabel(status_text)
         status.setWordWrap(True)
         status.setTextFormat(Qt.TextFormat.PlainText)
         status.setStyleSheet(theme.style(
-            "border: none; font-size: 12px; color: #4b5563;"))
+            f"border: none; font-size: 14px; font-weight: 600; color: {color};"))
         body.addWidget(status)
+
+        if detail:
+            detail_label = QLabel(detail)
+            detail_label.setWordWrap(True)
+            detail_label.setTextFormat(Qt.TextFormat.PlainText)
+            detail_label.setStyleSheet(theme.style(
+                "border: none; font-size: 13px; color: #374151;"))
+            body.addWidget(detail_label)
 
         meta = QLabel(f"Diperiksa: {_when(row['last_checked_at'])}")
         meta.setStyleSheet(theme.style(
-            "border: none; font-size: 11px; color: #9ca3af;"))
+            "border: none; font-size: 12px; color: #6b7280;"))
         body.addWidget(meta)
 
         outer.addLayout(body, 1)

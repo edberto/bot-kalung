@@ -13,11 +13,8 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout
 
 from ..services.bnct_monitor import BnctMonitor
+from .bnct_display import describe_record
 from .widgets import Panel, SecondaryButton, format_date_id
-
-
-def _fmt(value) -> str:
-    return "-" if value in (None, "") else str(value)
 
 
 def _checked_at(iso: str) -> str:
@@ -92,40 +89,9 @@ class BnctPanel(Panel):
             self.time_label.setText("")
             return
 
-        color, status, detail = self._describe(check)
+        color, status, detail = describe_record(check)
         self.status_label.setText(status)
         self.status_label.setStyleSheet(theme.style(
             f"font-size: 13px; font-weight: 600; color: {color}; border: none;"))
         self.detail_label.setText(detail)
         self.time_label.setText(f"Diperiksa: {_checked_at(check['checked_at'])}")
-
-    def _describe(self, c) -> tuple[str, str, str]:
-        if not c["found"]:
-            return ("#6b7280", "Kapal belum terjadwal di BNCT.", "")
-
-        if c["phase"] == "schedule":
-            detail = (f"ETD {_fmt(c['etd'])}  ·  Open Billing "
-                      f"{_fmt(c['open_billing'])}  ·  Open Stack "
-                      f"{_fmt(c['open_stacking'])}")
-            return ("#2563eb", "Terjadwal di BNCT", detail)
-
-        # alongside
-        load_pct = _pct(c["loading_actual"], c["loading_plan"])
-        detail = (
-            f"Loading: sisa {_fmt(c['loading_remain'])} dari "
-            f"{_fmt(c['loading_plan'])}{load_pct}\n"
-            f"Discharge: sisa {_fmt(c['discharge_remain'])} dari "
-            f"{_fmt(c['discharge_plan'])}\n"
-            f"Restow: sisa {_fmt(c['restow_remain'])} dari "
-            f"{_fmt(c['restow_plan'])}\n"
-            f"ATB {_fmt(c['atb'])}  ·  ETD {_fmt(c['etd'])}")
-        if c["departing"]:
-            return ("#b91c1c",
-                    "Kapal akan berangkat — bayar LOLO penuh ke Indra.", detail)
-        return ("#059669", "Kapal sudah sandar", detail)
-
-
-def _pct(actual, plan) -> str:
-    if plan in (None, 0) or actual is None:
-        return ""
-    return f"  ({round(max(0, min(actual, plan)) / plan * 100)}% selesai)"

@@ -4,6 +4,7 @@ The MonitoredVessels store and the VesselMonitor transitions, with no shipment
 behind them. Readings are built directly (no network), mirroring test_bnct.
 """
 
+import json
 import sys
 import tempfile
 from datetime import datetime
@@ -19,6 +20,7 @@ from bot_kalung.services.notifications import NotificationStore
 from bot_kalung.services.vessel_monitor import (
     MonitoredVessels, VesselMonitor, summarise,
 )
+from bot_kalung.ui.bnct_display import describe_record
 
 failures = []
 
@@ -36,14 +38,15 @@ def schedule_reading():
     return BnctReading(True, "schedule", NOW, BnctVessel(
         "ptp", "schedule", "MV. EVER CONCERT", "0800-088S", "0800-088N",
         etd="03/08/2026 12:00", open_billing="01/08 07:00",
-        open_stacking="01/08 09:00"))
+        open_stacking="01/08 09:00", clossing="02/08 08:00",
+        clossing_reefer="02/08 10:00"))
 
 
 def alongside_reading(remain=550):
     return BnctReading(True, "alongside", NOW, BnctVessel(
         "tpkb", "alongside", "MV. EVER CONCERT", "0800-088S", "0800-088N",
         loading_plan=800, loading_actual=800 - remain, loading_remain=remain,
-        discharge_remain=10))
+        discharge_plan=700, discharge_remain=20))
 
 
 def notfound_reading():
@@ -77,6 +80,13 @@ with tempfile.TemporaryDirectory() as tmp:
           store.get(vid)["last_found"] == 1
           and store.get(vid)["last_phase"] == "schedule")
 
+    sched_rec = json.loads(store.get(vid)["last_reading"])
+    check("the schedule reading is stored with Clossing",
+          sched_rec["clossing"] == "02/08 08:00"
+          and sched_rec["clossing_reefer"] == "02/08 10:00")
+    check("the card shows Clossing for a scheduled vessel",
+          "Clossing" in describe_record(sched_rec)[2])
+
     check("no repeat while still scheduled",
           monitor.process(vid, schedule_reading()) == [])
 
@@ -84,6 +94,14 @@ with tempfile.TemporaryDirectory() as tmp:
     check("moving alongside notifies", any(n.kind == "alongside" for n in notes))
     check("the alongside summary is stored for the card",
           "sandar" in (store.get(vid)["last_summary"] or "").lower())
+
+    along_rec = json.loads(store.get(vid)["last_reading"])
+    check("Clossing is carried forward once the vessel berths",
+          along_rec["clossing"] == "02/08 08:00")
+    check("alongside adds discharge info", along_rec["discharge_remain"] == 20)
+    detail = describe_record(along_rec)[2]
+    check("the alongside card shows Discharge and the carried-forward Clossing",
+          "Discharge" in detail and "Clossing" in detail)
 
     notes = monitor.process(vid, alongside_reading(remain=2))
     check("crossing the threshold fires the departing alert",

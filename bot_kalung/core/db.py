@@ -82,6 +82,8 @@ CREATE TABLE IF NOT EXISTS bnct_checks (
     etd              TEXT,
     open_billing     TEXT,
     open_stacking    TEXT,
+    clossing         TEXT,
+    clossing_reefer  TEXT,
     atb              TEXT,
     berth            TEXT,
     loading_plan     INTEGER,
@@ -133,7 +135,8 @@ CREATE TABLE IF NOT EXISTS monitored_vessels (
     last_found      INTEGER NOT NULL DEFAULT 0,
     last_phase      TEXT,
     last_departing  INTEGER NOT NULL DEFAULT 0,
-    last_summary    TEXT
+    last_summary    TEXT,
+    last_reading    TEXT
 );
 """
 

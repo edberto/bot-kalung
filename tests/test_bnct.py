@@ -50,6 +50,9 @@ check("open billing parsed", mtt.open_billing == "21/07/2026 07:00")
 check("open stacking parsed", mtt.open_stacking == "21/07/2026 09:00")
 check("a scheduled vessel has no loading numbers", mtt.loading_remain is None)
 check("phase is schedule", mtt.phase == "schedule")
+check("clossing parsed", bool(mtt.clossing) and "/" in mtt.clossing)
+check("clossing reefer parsed",
+      bool(mtt.clossing_reefer) and "/" in mtt.clossing_reefer)
 
 # Voyage numbers can contain a hyphen (EVER CONCERT: "0798-087S - 0798-087N").
 # The in/out separator is " - ", not the first hyphen, so the outbound must be
@@ -123,8 +126,31 @@ _notes = build_notes(False, False, False, _sched, "NIT15", "ship-1")
 check("build_notes fires schedule on a first sighting",
       len(_notes) == 1 and _notes[0].kind == "schedule"
       and _notes[0].shipment_id == "ship-1")
+check("schedule notification body carries Clossing",
+      "Clossing" in _notes[0].body)
 check("build_notes stays silent once already found",
       build_notes(True, False, False, _sched, "NIT15", "ship-1") == [])
+
+# ---- merged_record carries schedule-only fields forward --------------------
+from bot_kalung.services.bnct_monitor import merged_record
+
+_sch_rec = merged_record(BnctReading(True, "schedule", NOW.isoformat(), BnctVessel(
+    "ptp", "schedule", "X", "1S", "1N", etd="ETD1", open_billing="OB1",
+    open_stacking="OS1", clossing="CL1", clossing_reefer="CLR1")), None)
+check("a schedule record keeps its own clossing",
+      _sch_rec["clossing"] == "CL1" and _sch_rec["clossing_reefer"] == "CLR1")
+
+_along_rec = merged_record(BnctReading(True, "alongside", NOW.isoformat(), BnctVessel(
+    "tpkb", "alongside", "X", "1S", "1N", etd="ETD2",
+    loading_plan=800, loading_remain=550,
+    discharge_plan=700, discharge_remain=20)), _sch_rec)
+check("alongside carries clossing/billing/stack forward from the schedule record",
+      _along_rec["clossing"] == "CL1" and _along_rec["open_billing"] == "OB1"
+      and _along_rec["open_stacking"] == "OS1")
+check("alongside keeps its own discharge and loading",
+      _along_rec["discharge_remain"] == 20 and _along_rec["loading_remain"] == 550)
+check("a field the alongside reading has is not overridden by carry-forward",
+      _along_rec["etd"] == "ETD2")
 
 # ---- monitor: persistence and transitions ----------------------------------
 with tempfile.TemporaryDirectory() as tmp:
@@ -182,6 +208,8 @@ with tempfile.TemporaryDirectory() as tmp:
     check("moving alongside notifies", any(n.kind == "alongside" for n in notes))
     check("alongside totals persisted",
           monitor.latest(sid)["loading_remain"] == 550)
+    check("clossing carried forward into the alongside check",
+          bool(monitor.latest(sid)["clossing"]))
 
     # Loading nearly done -> departing alert, once.
     departing_reading = BnctReading(

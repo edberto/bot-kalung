@@ -8,11 +8,12 @@ so transitions are detected without a separate history table.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 
 from ..core.db import Database, new_id
 from .bnct import BnctReading
-from .bnct_monitor import Notification, build_notes
+from .bnct_monitor import Notification, build_notes, merged_record
 from .notifications import NotificationStore
 
 
@@ -50,12 +51,13 @@ class MonitoredVessels:
         self.db.execute("DELETE FROM monitored_vessels WHERE id=?", (vessel_id,))
 
     def record_reading(self, vessel_id: str, reading: BnctReading,
-                       summary: str) -> None:
+                       summary: str, record_json: str) -> None:
         self.db.execute(
             "UPDATE monitored_vessels SET last_checked_at=?, last_found=?, "
-            "last_phase=?, last_departing=?, last_summary=? WHERE id=?",
+            "last_phase=?, last_departing=?, last_summary=?, last_reading=? "
+            "WHERE id=?",
             (reading.checked_at, 1 if reading.found else 0, reading.phase,
-             1 if reading.departing else 0, summary, vessel_id))
+             1 if reading.departing else 0, summary, record_json, vessel_id))
 
 
 def summarise(reading: BnctReading) -> str:
@@ -89,6 +91,7 @@ class VesselMonitor:
         if row is None:
             return []
 
+        prev = _prev_reading(row)
         label = f"{row['vessel_name']} {row['voyage'] or ''}".strip()
         notes = build_notes(
             bool(row["last_found"]),
@@ -96,8 +99,24 @@ class VesselMonitor:
             bool(row["last_departing"]),
             reading, label, shipment_id=None)
 
-        self.vessels.record_reading(vessel_id, reading, summarise(reading))
+        record = merged_record(reading, prev)
+        self.vessels.record_reading(
+            vessel_id, reading, summarise(reading), json.dumps(record))
         for note in notes:
             self.notifications.add(note.kind, None, note.title, note.body,
                                    created_at=reading.checked_at)
         return notes
+
+
+def _prev_reading(row) -> dict | None:
+    """The previous stored reading snapshot for carry-forward, or None."""
+    try:
+        raw = row["last_reading"]
+    except (KeyError, IndexError):
+        return None
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except (ValueError, TypeError):
+        return None

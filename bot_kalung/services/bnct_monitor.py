@@ -47,8 +47,9 @@ def build_notes(prev_found: bool, prev_alongside: bool, prev_departing: bool,
     if reading.found and reading.phase == "schedule" and not prev_found:
         notes.append(Notification(
             "schedule", shipment_id, f"{label}: kapal terjadwal di BNCT",
-            f"ETD {v.etd or '-'} · Open Billing {v.open_billing or '-'} · "
-            f"Open Stack {v.open_stacking or '-'}"))
+            f"ETD {v.etd or '-'} · Clossing {v.clossing or '-'} · "
+            f"Clossing Reefer {v.clossing_reefer or '-'} · Open Billing "
+            f"{v.open_billing or '-'} · Open Stack {v.open_stacking or '-'}"))
 
     if reading.phase == "alongside" and not prev_alongside:
         notes.append(Notification(
@@ -64,6 +65,69 @@ def build_notes(prev_found: bool, prev_alongside: bool, prev_departing: bool,
             "penuh ke Indra."))
 
     return notes
+
+
+# The value columns of a stored check (id/shipment_id/checked_at are separate),
+# in a stable order so the INSERT and the JSON snapshot agree.
+CHECK_KEYS = (
+    "found", "phase", "site", "etd", "open_billing", "open_stacking",
+    "clossing", "clossing_reefer", "atb", "berth",
+    "loading_plan", "loading_actual", "loading_remain",
+    "discharge_plan", "discharge_actual", "discharge_remain",
+    "restow_plan", "restow_actual", "restow_remain", "departing", "note",
+)
+
+# Fields only the schedule card carries. The alongside card omits them, so they
+# are inherited from the previous record — "don't override, append".
+_CARRY_KEYS = ("etd", "open_billing", "open_stacking", "clossing", "clossing_reefer")
+
+
+def _prev_get(prev, key):
+    if prev is None:
+        return None
+    try:
+        return prev[key]
+    except (KeyError, IndexError):
+        return None      # an older row/snapshot predates this column
+
+
+def merged_record(reading: BnctReading, prev=None) -> dict:
+    """The values to store for this reading, keyed like the bnct_checks columns.
+
+    Any blank schedule-only field inherits the previous record's value, so a
+    berthed vessel keeps the Clossing/Open-Billing/etc. seen while it was
+    scheduled. `prev` may be a bnct_checks row or a decoded JSON snapshot.
+    """
+    v = reading.vessel
+    record = {
+        "found": 1 if reading.found else 0,
+        "phase": reading.phase,
+        "site": v.site if v else None,
+        "etd": (v.etd if v else "") or "",
+        "open_billing": (v.open_billing if v else "") or "",
+        "open_stacking": (v.open_stacking if v else "") or "",
+        "clossing": (v.clossing if v else "") or "",
+        "clossing_reefer": (v.clossing_reefer if v else "") or "",
+        "atb": (v.atb if v else "") or "",
+        "berth": (v.berth if v else "") or "",
+        "loading_plan": v.loading_plan if v else None,
+        "loading_actual": v.loading_actual if v else None,
+        "loading_remain": v.loading_remain if v else None,
+        "discharge_plan": v.discharge_plan if v else None,
+        "discharge_actual": v.discharge_actual if v else None,
+        "discharge_remain": v.discharge_remain if v else None,
+        "restow_plan": v.restow_plan if v else None,
+        "restow_actual": v.restow_actual if v else None,
+        "restow_remain": v.restow_remain if v else None,
+        "departing": 1 if reading.departing else 0,
+        "note": reading.note,
+    }
+    for key in _CARRY_KEYS:
+        if not record[key]:
+            carried = _prev_get(prev, key)
+            if carried:
+                record[key] = carried
+    return record
 
 
 class BnctMonitor:
@@ -98,26 +162,15 @@ class BnctMonitor:
 
     # -- writes ------------------------------------------------------------
 
-    def record(self, shipment_id: str, reading: BnctReading) -> None:
-        v = reading.vessel
+    def record(self, shipment_id: str, reading: BnctReading, prev=None) -> None:
+        record = merged_record(reading, prev)
+        columns = ", ".join(CHECK_KEYS)
+        placeholders = ", ".join("?" for _ in CHECK_KEYS)
         self.db.execute(
-            "INSERT INTO bnct_checks (id, shipment_id, checked_at, found, phase, "
-            "site, etd, open_billing, open_stacking, atb, berth, loading_plan, "
-            "loading_actual, loading_remain, discharge_plan, discharge_actual, "
-            "discharge_remain, restow_plan, restow_actual, restow_remain, "
-            "departing, note) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            (new_id(), shipment_id, reading.checked_at, 1 if reading.found else 0,
-             reading.phase, v.site if v else None,
-             v.etd if v else None, v.open_billing if v else None,
-             v.open_stacking if v else None, v.atb if v else None,
-             v.berth if v else None,
-             v.loading_plan if v else None, v.loading_actual if v else None,
-             v.loading_remain if v else None,
-             v.discharge_plan if v else None, v.discharge_actual if v else None,
-             v.discharge_remain if v else None,
-             v.restow_plan if v else None, v.restow_actual if v else None,
-             v.restow_remain if v else None,
-             1 if reading.departing else 0, reading.note))
+            f"INSERT INTO bnct_checks (id, shipment_id, checked_at, {columns}) "
+            f"VALUES (?, ?, ?, {placeholders})",
+            (new_id(), shipment_id, reading.checked_at,
+             *(record[key] for key in CHECK_KEYS)))
 
     def process(self, shipment_id: str, label: str,
                 reading: BnctReading) -> list[Notification]:
@@ -132,7 +185,7 @@ class BnctMonitor:
             bool(prev and prev["departing"]),
             reading, label, shipment_id)
 
-        self.record(shipment_id, reading)
+        self.record(shipment_id, reading, prev)
         # Persist each transition so it survives the tray toast and drives the
         # in-app notification centre. Done here, with the check, so only the
         # app instance that actually detects the transition writes it.
