@@ -51,13 +51,13 @@ class MonitoredVessels:
         self.db.execute("DELETE FROM monitored_vessels WHERE id=?", (vessel_id,))
 
     def record_reading(self, vessel_id: str, reading: BnctReading,
-                       summary: str, record_json: str) -> None:
+                       summary: str, record_json: str, departed: bool) -> None:
         self.db.execute(
             "UPDATE monitored_vessels SET last_checked_at=?, last_found=?, "
             "last_phase=?, last_departing=?, last_summary=?, last_reading=? "
             "WHERE id=?",
             (reading.checked_at, 1 if reading.found else 0, reading.phase,
-             1 if reading.departing else 0, summary, record_json, vessel_id))
+             1 if departed else 0, summary, record_json, vessel_id))
 
 
 def summarise(reading: BnctReading) -> str:
@@ -99,9 +99,15 @@ class VesselMonitor:
             bool(row["last_departing"]),
             reading, label, shipment_id=None)
 
+        # A vessel that had berthed (or already sailed) and is no longer on BNCT
+        # has departed — keep it in "Sudah Berangkat" rather than dropping it back
+        # to "Belum Terjadwal". Sticky: once departed it stays departed.
+        was_berthed = row["last_phase"] == "alongside" or bool(row["last_departing"])
+        departed = reading.departing or (was_berthed and not reading.found)
+
         record = merged_record(reading, prev)
         self.vessels.record_reading(
-            vessel_id, reading, summarise(reading), json.dumps(record))
+            vessel_id, reading, summarise(reading), json.dumps(record), departed)
         for note in notes:
             self.notifications.add(note.kind, None, note.title, note.body,
                                    created_at=reading.checked_at)

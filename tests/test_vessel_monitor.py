@@ -126,6 +126,29 @@ with tempfile.TemporaryDirectory() as tmp:
     check("processing a removed vessel is a no-op, not a crash",
           monitor.process(vid, schedule_reading()) == [])
 
+    # ---- a berthed vessel that vanishes from BNCT has departed -------------
+    from bot_kalung.ui.vessel_monitor_view import vessel_status
+
+    gone = store.add("GONE SHIP", "7N")
+    monitor.process(gone, schedule_reading())
+    monitor.process(gone, alongside_reading())
+    check("a berthed vessel buckets as berthed",
+          vessel_status(store.get(gone)) == "berthed")
+    monitor.process(gone, notfound_reading())          # vanishes from BNCT
+    check("a berthed vessel gone from BNCT is marked departed",
+          bool(store.get(gone)["last_departing"]))
+    check("it buckets into 'sudah berangkat'",
+          vessel_status(store.get(gone)) == "departed")
+    monitor.process(gone, notfound_reading())
+    check("departed stays sticky across further empty polls",
+          vessel_status(store.get(gone)) == "departed")
+
+    never = store.add("NEVER BERTH", "8N")
+    monitor.process(never, schedule_reading())
+    monitor.process(never, notfound_reading())         # gone before berthing
+    check("a scheduled vessel that vanishes (never berthed) is NOT departed",
+          vessel_status(store.get(never)) == "notfound")
+
 
 # ---- the kanban board: bucketing + alphabetical sort -----------------------
 import os
