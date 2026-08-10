@@ -1,9 +1,10 @@
-"""Monitor Kapal — watch any vessel on BNCT by name + voyage, with no shipment.
+"""Monitor Kapal — watch vessels on BNCT across a rolling 3-voyage window.
 
-A kanban board: each vessel sits in the column for its current BNCT state
-(belum terjadwal → terjadwal → sudah sandar → sudah berangkat), sorted by
-vessel name then voyage. State lives entirely in the DB, so the screen is safe
-to rebuild on a theme change — `refresh()` reloads and re-buckets everything.
+A kanban board: each voyage sits in the column for its current BNCT state
+(belum terjadwal → terjadwal → sudah sandar → sudah berangkat), sorted by vessel
+name then voyage. Vessels are added and removed through the "Kelola Kapal"
+dialog; the board itself is read-only. State lives in the DB, so the screen is
+safe to rebuild on a theme change — `refresh()` reloads and re-buckets.
 """
 
 from __future__ import annotations
@@ -14,12 +15,13 @@ from . import theme
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
-    QHBoxLayout, QLabel, QLineEdit, QScrollArea, QVBoxLayout, QWidget,
+    QHBoxLayout, QLabel, QScrollArea, QVBoxLayout, QWidget,
 )
 
-from ..services.vessel_monitor import MonitoredVessels
+from ..services.vessel_monitor import MonitoredVessels, state_of
 from .bnct_display import describe_record
-from .widgets import DangerButton, InlineMessage, Panel, PrimaryButton, format_date_id
+from .vessel_manager_dialog import VesselManagerDialog
+from .widgets import Panel, PrimaryButton, format_date_id
 
 # (status key, column title, accent colour) — colours match describe_record.
 COLUMNS = [
@@ -31,14 +33,8 @@ COLUMNS = [
 
 
 def vessel_status(row) -> str:
-    """Which board column a monitored vessel belongs in."""
-    if row["last_departing"]:
-        return "departed"
-    if row["last_phase"] == "alongside":
-        return "berthed"
-    if row["last_found"]:
-        return "scheduled"
-    return "notfound"
+    """Which board column a monitored voyage belongs in (its strict state)."""
+    return state_of(row)
 
 
 def _when(iso: str | None) -> str:
@@ -64,13 +60,10 @@ def _reading(row):
 
 
 class VesselCard(Panel):
-    """One monitored vessel as a kanban card."""
-
-    remove_requested = pyqtSignal(str)         # monitored-vessel id
+    """One monitored voyage as a read-only kanban card."""
 
     def __init__(self, row, accent: str):
         super().__init__()
-        self._id = row["id"]
         self.setStyleSheet(theme.style(
             "background: white; border: 1px solid #e5e7eb; "
             f"border-left: 4px solid {accent}; border-radius: 8px;"))
@@ -102,22 +95,15 @@ class VesselCard(Panel):
             "border: none; font-size: 11px; color: #9ca3af;"))
         outer.addWidget(meta)
 
-        actions = QHBoxLayout()
-        actions.addStretch(1)
-        remove = DangerButton("Hapus")
-        remove.setMinimumHeight(26)
-        remove.clicked.connect(lambda: self.remove_requested.emit(self._id))
-        actions.addWidget(remove)
-        outer.addLayout(actions)
-
 
 class VesselMonitorView(QWidget):
     """The standalone vessel-monitoring board."""
 
-    vessel_added = pyqtSignal()                # a vessel was added; trigger a poll
+    vessel_added = pyqtSignal()                # vessels changed; trigger a poll
 
     def __init__(self, db):
         super().__init__()
+        self.db = db
         self.vessels = MonitoredVessels(db)
         self.columns: dict[str, dict] = {}
 
@@ -125,41 +111,24 @@ class VesselMonitorView(QWidget):
         outer.setContentsMargins(28, 24, 28, 24)
         outer.setSpacing(12)
 
+        header = QHBoxLayout()
         title = QLabel("Monitor Kapal")
         title.setStyleSheet(theme.style(
             "font-size: 22px; font-weight: 700; color: #111827;"))
-        outer.addWidget(title)
+        header.addWidget(title)
+        header.addStretch(1)
+        manage = PrimaryButton("Kelola Kapal")
+        manage.clicked.connect(self._open_manager)
+        header.addWidget(manage)
+        outer.addLayout(header)
 
         subtitle = QLabel(
-            "Pantau kapal di BNCT dengan nama dan voyage, tanpa perlu terkait "
-            "pengiriman. Notifikasi sama seperti pemantauan pengiriman.")
+            "Pantau kapal di BNCT — tiap kapal dipantau untuk 3 voyage ke depan. "
+            "Notifikasi sama seperti pemantauan pengiriman.")
         subtitle.setWordWrap(True)
         subtitle.setStyleSheet(theme.style("font-size: 12px; color: #6b7280;"))
         outer.addWidget(subtitle)
 
-        # -- add form --------------------------------------------------------
-        form = QHBoxLayout()
-        form.setSpacing(8)
-        self.name_field = QLineEdit()
-        self.name_field.setPlaceholderText("Nama kapal")
-        self.name_field.setMinimumHeight(34)
-        self.voyage_field = QLineEdit()
-        self.voyage_field.setPlaceholderText("Voyage")
-        self.voyage_field.setMinimumHeight(34)
-        self.voyage_field.setMaximumWidth(160)
-        add_button = PrimaryButton("Tambah")
-        add_button.clicked.connect(self._add)
-        self.name_field.returnPressed.connect(self._add)
-        self.voyage_field.returnPressed.connect(self._add)
-        form.addWidget(self.name_field, 1)
-        form.addWidget(self.voyage_field)
-        form.addWidget(add_button)
-        outer.addLayout(form)
-
-        self.message = InlineMessage()
-        outer.addWidget(self.message)
-
-        # -- board -----------------------------------------------------------
         board = QHBoxLayout()
         board.setSpacing(12)
         for key, col_title, color in COLUMNS:
@@ -218,24 +187,16 @@ class VesselMonitorView(QWidget):
                                (r["voyage"] or "").lower()))
             column["rows"] = rows                # ordered, for tests/inspection
             for row in rows:
-                card = VesselCard(row, column["color"])
-                card.remove_requested.connect(self._remove)
-                layout.insertWidget(layout.count() - 1, card)
+                layout.insertWidget(layout.count() - 1,
+                                    VesselCard(row, column["color"]))
 
             column["header"].setText(f"{column['title']} ({len(rows)})")
 
-    def _add(self):
-        name = self.name_field.text().strip()
-        if not name:
-            self.message.show_error("Isi nama kapal terlebih dahulu.")
-            return
-        self.vessels.add(name, self.voyage_field.text().strip())
-        self.name_field.clear()
-        self.voyage_field.clear()
-        self.message.show_info(f"Memantau {name}. Memeriksa BNCT…")
-        self.refresh()
-        self.vessel_added.emit()
+    def _open_manager(self):
+        dialog = VesselManagerDialog(self.db, self)
+        dialog.changed.connect(self._on_managed)
+        dialog.exec()
 
-    def _remove(self, vessel_id: str):
-        self.vessels.delete(vessel_id)
+    def _on_managed(self):
         self.refresh()
+        self.vessel_added.emit()               # poll BNCT for any new voyages

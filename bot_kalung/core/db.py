@@ -136,7 +136,8 @@ CREATE TABLE IF NOT EXISTS monitored_vessels (
     last_phase      TEXT,
     last_departing  INTEGER NOT NULL DEFAULT 0,
     last_summary    TEXT,
-    last_reading    TEXT
+    last_reading    TEXT,
+    state           TEXT
 );
 """
 

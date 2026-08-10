@@ -18,7 +18,8 @@ from bot_kalung.core.context import AppContext
 from bot_kalung.services.bnct import BnctReading, BnctVessel
 from bot_kalung.services.notifications import NotificationStore
 from bot_kalung.services.vessel_monitor import (
-    MonitoredVessels, VesselMonitor, summarise,
+    MonitoredVessels, VesselMonitor, _voyage_int, advance_state, next_voyage,
+    state_of, summarise,
 )
 from bot_kalung.ui.bnct_display import describe_record
 
@@ -51,6 +52,35 @@ def alongside_reading(remain=550):
 
 def notfound_reading():
     return BnctReading(False, None, NOW, None, note="belum terjadwal")
+
+
+# ---- voyage increment (pure) ----------------------------------------------
+check("next_voyage: N379 -> N380", next_voyage("N379") == "N380")
+check("next_voyage: 182E -> 183E", next_voyage("182E") == "183E")
+check("next_voyage: 123N -> 124N", next_voyage("123N") == "124N")
+check("next_voyage: increments the last run only (26RY123N)",
+      next_voyage("26RY123N") == "26RY124N")
+check("next_voyage: preserves zero-padding", next_voyage("N009") == "N010")
+check("next_voyage: no digits is unchanged", next_voyage("ABC") == "ABC")
+check("_voyage_int reads the last run", _voyage_int("26RY123N") == 123)
+
+# ---- strict state machine (pure) — jump forward, never backward ------------
+check("notfound + schedule -> scheduled",
+      advance_state("notfound", schedule_reading()) == "scheduled")
+check("notfound seen already alongside jumps to berthed",
+      advance_state("notfound", alongside_reading()) == "berthed")
+check("scheduled + alongside -> berthed",
+      advance_state("scheduled", alongside_reading()) == "berthed")
+check("scheduled that vanishes stays scheduled (never regresses)",
+      advance_state("scheduled", notfound_reading()) == "scheduled")
+check("berthed that vanishes -> departed",
+      advance_state("berthed", notfound_reading()) == "departed")
+check("berthed seeing schedule again stays berthed (never regresses)",
+      advance_state("berthed", schedule_reading()) == "berthed")
+check("departed is terminal",
+      advance_state("departed", notfound_reading()) == "departed")
+check("a departing reading -> departed",
+      advance_state("berthed", alongside_reading(remain=2)) == "departed")
 
 
 with tempfile.TemporaryDirectory() as tmp:
@@ -121,8 +151,8 @@ with tempfile.TemporaryDirectory() as tmp:
           "Belum ditemukan" in summarise(notfound_reading()))
 
     # ---- removal -----------------------------------------------------------
-    store.delete(vid)
-    check("vessel removed from the list", store.all() == [])
+    store.delete_vessel("EVER CONCERT")   # clears the voyage + any rolled-in ones
+    check("removing a vessel clears all its voyages", store.all() == [])
     check("processing a removed vessel is a no-op, not a crash",
           monitor.process(vid, schedule_reading()) == [])
 
@@ -136,7 +166,7 @@ with tempfile.TemporaryDirectory() as tmp:
           vessel_status(store.get(gone)) == "berthed")
     monitor.process(gone, notfound_reading())          # vanishes from BNCT
     check("a berthed vessel gone from BNCT is marked departed",
-          bool(store.get(gone)["last_departing"]))
+          state_of(store.get(gone)) == "departed")
     check("it buckets into 'sudah berangkat'",
           vessel_status(store.get(gone)) == "departed")
     monitor.process(gone, notfound_reading())
@@ -146,8 +176,8 @@ with tempfile.TemporaryDirectory() as tmp:
     never = store.add("NEVER BERTH", "8N")
     monitor.process(never, schedule_reading())
     monitor.process(never, notfound_reading())         # gone before berthing
-    check("a scheduled vessel that vanishes (never berthed) is NOT departed",
-          vessel_status(store.get(never)) == "notfound")
+    check("a scheduled vessel that vanishes stays scheduled (never regresses)",
+          vessel_status(store.get(never)) == "scheduled")
 
 
 # ---- the kanban board: bucketing + alphabetical sort -----------------------
@@ -195,6 +225,55 @@ with tempfile.TemporaryDirectory() as tmp:
     check("headers carry the count", "(3)" in view.columns["scheduled"]["header"].text())
     check("every vessel rendered as a card",
           len(view.findChildren(VesselCard)) == 6)
+
+
+# ---- rolling 3-voyage window ------------------------------------------------
+with tempfile.TemporaryDirectory() as tmp:
+    root = Path(tmp) / "Drive"
+    (root / "AMJ").mkdir(parents=True)
+    ctx = AppContext()
+    ctx.create(root)
+    store = MonitoredVessels(ctx.db)
+    monitor = VesselMonitor(ctx.db)
+
+    def voyages(name):
+        return sorted(r["voyage"] for r in store._group_rows(name))
+
+    def row_for(name, voy):
+        return next(r for r in store._group_rows(name) if r["voyage"] == voy)
+
+    def non_departed(name):
+        return sum(1 for r in store._group_rows(name) if state_of(r) != "departed")
+
+    store.add_vessel("WAN HAI 101", "N379")
+    check("adding a vessel fills a 3-voyage window",
+          voyages("WAN HAI 101") == ["N379", "N380", "N381"])
+
+    n379 = row_for("WAN HAI 101", "N379")["id"]
+    monitor.process(n379, schedule_reading())
+    monitor.process(n379, alongside_reading())
+    monitor.process(n379, alongside_reading(remain=2))       # N379 departs
+    check("a departed voyage rolls the next one in (N382)",
+          voyages("WAN HAI 101") == ["N379", "N380", "N381", "N382"])
+    check("the departed voyage stays as history",
+          state_of(row_for("WAN HAI 101", "N379")) == "departed")
+    check("the window keeps 3 non-departed voyages", non_departed("WAN HAI 101") == 3)
+
+    store.delete(row_for("WAN HAI 101", "N381")["id"])
+    store.ensure_window("WAN HAI 101")
+    check("deleting a non-departed voyage refills to 3",
+          non_departed("WAN HAI 101") == 3)
+
+    store.add_vessel("INTEGRA", "182E")
+    check("a numeric-prefix voyage rolls too (182E/183E/184E)",
+          voyages("INTEGRA") == ["182E", "183E", "184E"])
+    check("the two vessels are grouped separately",
+          set(store.groups()) == {"WAN HAI 101", "INTEGRA"})
+
+    store.delete_vessel("WAN HAI 101")
+    check("delete_vessel removes every voyage of that vessel",
+          store._group_rows("WAN HAI 101") == [])
+    check("the other vessel is untouched", voyages("INTEGRA") == ["182E", "183E", "184E"])
 
 print()
 if failures:
