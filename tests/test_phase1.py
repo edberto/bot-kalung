@@ -115,6 +115,22 @@ bootstrap.write_drive_root(Path(sandbox.BOOTSTRAP_HOME) / "fake")
 check("writing a root does not touch the real pointer",
       (before.stat().st_mtime if before.exists() else None) == stamp)
 
+# Belt-and-suspenders (2026-08-08 incident): even without the sandbox override,
+# write_drive_root must refuse to repoint the real pointer at a temp dir.
+import tempfile as _tempfile
+
+check("with the sandbox override, a temp root is allowed",
+      not bootstrap._would_clobber_real(Path(sandbox.BOOTSTRAP_HOME) / "Drive"))
+_saved_home = os.environ.pop(bootstrap.HOME_ENV_VAR, None)
+try:
+    check("without the override, a temp-dir root is refused",
+          bootstrap._would_clobber_real(Path(_tempfile.gettempdir()) / "x" / "Drive"))
+    check("a real (non-temp) drive path is always allowed",
+          not bootstrap._would_clobber_real(Path("C:/") / "BotKalungRealDrive"))
+finally:
+    if _saved_home is not None:
+        os.environ[bootstrap.HOME_ENV_VAR] = _saved_home
+
 print()
 if failures:
     print(f"{len(failures)} FAILED: {failures}")
