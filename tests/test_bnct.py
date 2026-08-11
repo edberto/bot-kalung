@@ -118,6 +118,31 @@ low = BnctVessel("tpkb", "alongside", "X", "1S", "1N", loading_remain=3,
                  loading_plan=800)
 check("remain below 5 is departing", low.departing)
 
+# ---- a vessel at both terminals is combined (real EVER CONCERT 088N) --------
+# ptp handles discharge only (loading 0); tpkb handles loading only (discharge 0).
+ptp = BnctVessel("ptp", "alongside", "EVER CONCERT (S978)", "0800-088S", "0800-088N",
+                 loading_plan=0, loading_actual=0, loading_remain=0,
+                 discharge_plan=406, discharge_actual=82, discharge_remain=324,
+                 atb="10/08/2026 15:15", etd="12/08/2026 05:00")
+tpkb = BnctVessel("tpkb", "alongside", "MV. EVER CONCERT", "0800-088S", "0800-088N",
+                  loading_plan=399, loading_actual=0, loading_remain=399,
+                  discharge_plan=0, discharge_actual=0, discharge_remain=0,
+                  atb="10/08/2026 15:08", etd="12/08/2026 05:00")
+check("the discharge-only terminal alone would look departing", ptp.departing)
+combined = bnct.match_vessel([ptp, tpkb], "EVER CONCERT", "088N")
+check("loading numbers come from the loading terminal",
+      combined.loading_plan == 399 and combined.loading_remain == 399)
+check("discharge numbers come from the discharge terminal",
+      combined.discharge_plan == 406 and combined.discharge_remain == 324)
+check("the combined vessel is NOT falsely departing", not combined.departing)
+check("a single match is returned unchanged (identity)",
+      bnct.match_vessel([ptp], "EVER CONCERT", "088N") is ptp)
+r_both = bnct.read_for_shipment([ptp, tpkb], "EVER CONCERT", "088N", now=NOW)
+check("read_for_shipment combines both terminals",
+      r_both.found and not r_both.departing
+      and r_both.vessel.loading_remain == 399
+      and r_both.vessel.discharge_remain == 324)
+
 # ---- shared transition helper (used by both shipment and vessel monitors) --
 from bot_kalung.services.bnct_monitor import build_notes
 

@@ -166,7 +166,8 @@ class VesselManagerDialog(QDialog):
         if not name or not voyage:
             self.message.show_error("Isi nama kapal dan voyage awal.")
             return
-        self.vessels.add_vessel(name, voyage)
+        if not self._safely(lambda: self.vessels.add_vessel(name, voyage)):
+            return
         self.name_field.clear()
         self.voyage_field.clear()
         self.message.show_success(f"Memantau {name} mulai voyage {voyage}.")
@@ -174,14 +175,26 @@ class VesselManagerDialog(QDialog):
         self.changed.emit()
 
     def _delete_voyage(self, name: str, vessel_id: str):
-        self.vessels.delete(vessel_id)
-        # Refill the window if a non-departed voyage was removed.
-        self.vessels.ensure_window(name)
+        def run():
+            self.vessels.delete(vessel_id)
+            self.vessels.ensure_window(name)   # refill if a live voyage was removed
+        if not self._safely(run):
+            return
         self.refresh()
         self.changed.emit()
 
     def _delete_vessel(self, name: str):
-        self.vessels.delete_vessel(name)
+        if not self._safely(lambda: self.vessels.delete_vessel(name)):
+            return
         self.message.show_info(f"{name} dihapus dari pemantauan.")
         self.refresh()
         self.changed.emit()
+
+    def _safely(self, action) -> bool:
+        """Run a DB mutation without letting an error escape the Qt slot."""
+        try:
+            action()
+            return True
+        except Exception as exc:      # noqa: BLE001 - surfaced, never crashes
+            self.message.show_error(f"Gagal menyimpan: {exc}")
+            return False

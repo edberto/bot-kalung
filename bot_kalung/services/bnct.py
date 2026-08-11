@@ -294,10 +294,42 @@ def _voyage_matches(app_voyage: str, portal_voyage: str) -> bool:
     return a == b or a.endswith(b) or b.endswith(a) or a in b or b in a
 
 
+_MERGE_SCALARS = ("etb", "etd", "open_billing", "open_stacking", "clossing",
+                  "clossing_reefer", "atb", "berth")
+_MERGE_MATRICES = ("loading", "discharge", "restow")
+
+
+def combine_vessels(hits: list[BnctVessel]) -> BnctVessel:
+    """Merge the entries of one vessel+voyage that appears at both BNCT terminals.
+
+    A vessel can berth at both terminals at once — one handling loading, the
+    other discharge — so each operation's numbers are taken from the terminal
+    actually performing it (the one with the larger plan). This keeps the
+    departure signal (loading remain) tied to the loading terminal instead of
+    reading 0 from the discharge-only terminal.
+    """
+    alongside = [v for v in hits if v.phase == "alongside"]
+    primary = alongside[0] if alongside else hits[0]
+    merged = BnctVessel(
+        site=primary.site, phase="alongside" if alongside else primary.phase,
+        name=primary.name, voyage_in=primary.voyage_in,
+        voyage_out=primary.voyage_out, agent=primary.agent)
+    for field in _MERGE_SCALARS:
+        for v in hits:
+            if getattr(v, field):
+                setattr(merged, field, getattr(v, field))
+                break
+    for op in _MERGE_MATRICES:
+        best = max(hits, key=lambda v: (getattr(v, f"{op}_plan") or -1))
+        for part in ("plan", "actual", "remain"):
+            setattr(merged, f"{op}_{part}", getattr(best, f"{op}_{part}"))
+    return merged
+
+
 def match_vessel(vessels: list[BnctVessel], vessel_name: str,
                  voyage: str) -> BnctVessel | None:
     """Find the vessel whose name AND voyage both match. Alongside wins over
-    schedule when the same vessel appears in both (it is the later phase).
+    schedule; multiple terminal entries for the same vessel are combined.
     """
     hits = [
         v for v in vessels
@@ -307,8 +339,9 @@ def match_vessel(vessels: list[BnctVessel], vessel_name: str,
     ]
     if not hits:
         return None
-    hits.sort(key=lambda v: 0 if v.phase == "alongside" else 1)
-    return hits[0]
+    if len(hits) == 1:
+        return hits[0]
+    return combine_vessels(hits)
 
 
 # -- fetching ----------------------------------------------------------------

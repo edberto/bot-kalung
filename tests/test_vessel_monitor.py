@@ -270,6 +270,15 @@ with tempfile.TemporaryDirectory() as tmp:
     check("the two vessels are grouped separately",
           set(store.groups()) == {"WAN HAI 101", "INTEGRA"})
 
+    # a poll self-heals a window that was left short (issue: future voyages
+    # missing) — any process() tops the vessel back up to 3 non-departed.
+    store.delete(row_for("INTEGRA", "184E")["id"])
+    check("window temporarily short after a raw delete",
+          len(store._group_rows("INTEGRA")) == 2)
+    monitor.process(row_for("INTEGRA", "182E")["id"], notfound_reading())
+    check("a poll tops the window back up to 3",
+          non_departed("INTEGRA") == 3)
+
     store.delete_vessel("WAN HAI 101")
     check("delete_vessel removes every voyage of that vessel",
           store._group_rows("WAN HAI 101") == [])

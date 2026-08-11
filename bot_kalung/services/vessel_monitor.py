@@ -110,23 +110,30 @@ class MonitoredVessels:
 
     def ensure_window(self, vessel_name: str, target: int = 3) -> None:
         """Top up to `target` non-departed voyages by adding the next voyage(s)
-        above the group's current highest. Deleting/departing a voyage refills."""
-        rows = self._group_rows(vessel_name)
-        voyages = [r["voyage"] for r in rows if r["voyage"]]
-        if not voyages:
+        above the group's current highest. Deleting/departing a voyage refills.
+
+        Never raises: a transient DB error just leaves the window short, and the
+        next poll tops it up again.
+        """
+        try:
+            rows = self._group_rows(vessel_name)
+            voyages = [r["voyage"] for r in rows if r["voyage"]]
+            if not voyages:
+                return
+            non_departed = sum(1 for r in rows if state_of(r) != "departed")
+            seen = {v.upper() for v in voyages}
+            guard = 0
+            while non_departed < target and guard < 2 * target + 4:
+                guard += 1
+                nxt = next_voyage(max(voyages, key=_voyage_int))
+                if not nxt or nxt.upper() in seen:
+                    break                  # no digits / would duplicate
+                self.add(vessel_name.strip(), nxt)
+                voyages.append(nxt)
+                seen.add(nxt.upper())
+                non_departed += 1
+        except Exception:                  # noqa: BLE001 - monitoring must not crash
             return
-        non_departed = sum(1 for r in rows if state_of(r) != "departed")
-        seen = {v.upper() for v in voyages}
-        guard = 0
-        while non_departed < target and guard < 2 * target + 4:
-            guard += 1
-            nxt = next_voyage(max(voyages, key=_voyage_int))
-            if not nxt or nxt.upper() in seen:
-                break                      # no digits / would duplicate
-            self.add(vessel_name.strip(), nxt)
-            voyages.append(nxt)
-            seen.add(nxt.upper())
-            non_departed += 1
 
     def all(self) -> list:
         return self.db.query(
@@ -218,9 +225,10 @@ class VesselMonitor:
         self.vessels.record_reading(
             vessel_id, reading, summarise(reading), json.dumps(record), new_state)
 
-        # A voyage that has just departed rolls the next one into the window.
-        if new_state == "departed" and old_state != "departed":
-            self.vessels.ensure_window(row["vessel_name"])
+        # Keep the vessel's 3-voyage window topped up on every poll: it rolls the
+        # next voyage in after a departure and self-heals a window left short
+        # (e.g. an add that failed mid-way).
+        self.vessels.ensure_window(row["vessel_name"])
 
         for note in notes:
             self.notifications.add(note.kind, None, note.title, note.body,
