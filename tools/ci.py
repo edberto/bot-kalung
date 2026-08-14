@@ -228,8 +228,26 @@ def _snapshot(path) -> dict:
         conn.close()
 
 
+def _clear_stale_exe() -> None:
+    """Remove a previous dist exe so PyInstaller can overwrite it. Windows
+    Defender briefly locks a freshly-scanned binary, so retry past that.
+    """
+    import time
+
+    exe = ROOT / "dist" / "Bot Kalung.exe"
+    for _ in range(12):
+        if not exe.exists():
+            return
+        try:
+            exe.unlink()
+            return
+        except OSError:
+            time.sleep(0.5)
+
+
 def stage_build() -> bool:
     header("build (PyInstaller + selftest)")
+    _clear_stale_exe()
     build = subprocess.run(
         [PYTHON, "-m", "PyInstaller", "bot_kalung.spec", "--noconfirm"],
         cwd=ROOT, capture_output=True, text=True)

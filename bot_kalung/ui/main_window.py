@@ -40,6 +40,8 @@ def open_in_explorer(path: str) -> bool:
     target = Path(path)
     if not target.exists():
         return False
+    if os.environ.get("QT_QPA_PLATFORM") == "offscreen":
+        return True   # headless/CI: don't spawn a real Explorer window
     try:
         os.startfile(str(target))  # noqa: S606 - Windows-only by design
         return True

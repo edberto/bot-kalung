@@ -486,14 +486,19 @@ def prefill_workbook(book, *, sequence: int, etd: date, booking_number: str,
 # -- opening a workbook without leaking an Excel process -------------------
 
 @contextmanager
-def open_book(path):
+def open_book(path, *, hidden: bool = False):
     """Yield the workbook at `path`, reusing an already-open copy if there is one.
 
     `xw.Book(path)` looks like "attach if open, else open", but when no Excel is
     running it *starts* one and leaves it running with the file locked. So the
-    three cases are handled explicitly: reuse a book the user already has open
-    (and leave it exactly as found), open into a running Excel (and close just
-    the book), or start our own hidden Excel (and quit it).
+    cases are handled explicitly: reuse a book the user already has open (and
+    leave it exactly as found), open into a running Excel (and close just the
+    book), or start our own hidden Excel (and quit it).
+
+    `hidden=True` (used by the folder scan, which reads many workbooks in the
+    background) never opens into the user's visible Excel — it always spins a
+    dedicated invisible instance, so scanning does not pop a pile of workbook
+    windows in front of whatever the user is doing.
     """
     import xlwings as xw
 
@@ -514,7 +519,7 @@ def open_book(path):
 
     try:
         if book is None:
-            if len(xw.apps) > 0:
+            if not hidden and len(xw.apps) > 0:
                 book = xw.apps.active.books.open(str(target), update_links=False)
                 close_book = True
             else:
@@ -714,7 +719,9 @@ def read_shipment_fields(folder) -> ShipmentFields:
         return fields
     fields.workbook = workbook.name
     try:
-        with open_book(workbook) as book:
+        # hidden=True: the scan reads in the background and must not pop workbook
+        # windows into the user's Excel.
+        with open_book(workbook, hidden=True) as book:
             si = find_sheet(book, "SI")
             if si is not None:
                 _read_si(si, fields)

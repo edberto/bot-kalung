@@ -39,8 +39,16 @@ from .widgets import (
 )
 
 
+def _headless() -> bool:
+    """Tests/CI run with the offscreen Qt platform; never spawn a real Explorer,
+    browser, or Excel window there (they pile up and never close)."""
+    return os.environ.get("QT_QPA_PLATFORM") == "offscreen"
+
+
 def open_path_or_url(target: str) -> bool:
     """Open an external link in the default browser."""
+    if _headless():
+        return True
     import webbrowser
 
     try:
@@ -54,6 +62,8 @@ def open_path(path: str | Path) -> bool:
     target = Path(path)
     if not target.exists():
         return False
+    if _headless():
+        return True
     try:
         os.startfile(str(target))  # noqa: S606 - Windows-only by design
         return True
