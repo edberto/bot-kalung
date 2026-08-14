@@ -29,6 +29,7 @@ from .all_shipments import AllShipmentsView
 from .audit_view import AuditView
 from .notifications_view import NotificationsView
 from .resequence_dialog import ResequenceDialog
+from .search_dialog import SearchDialog
 from .settings_view import SettingsView
 from .shipment_detail import ShipmentDetailView
 from .sidebar import Sidebar
@@ -86,6 +87,7 @@ class MainWindow(QMainWindow):
         self.sidebar = Sidebar()
         self.sidebar.new_shipment_clicked.connect(self.open_wizard)
         self.sidebar.shipment_selected.connect(self.open_shipment)
+        self.sidebar.search_clicked.connect(self.open_search)
         self.sidebar.history_clicked.connect(self.open_history)
         self.sidebar.all_shipments_clicked.connect(self.open_all_shipments)
         self.sidebar.settings_clicked.connect(self.open_settings)
@@ -142,6 +144,7 @@ class MainWindow(QMainWindow):
 
         self.vessel_monitor = VesselMonitorView(ctx.db)
         self.vessel_monitor.vessel_added.connect(self._on_vessel_added)
+        self.vessel_monitor.shipment_opened.connect(self.open_shipment)
         self.stack.addWidget(self.vessel_monitor)
 
         # A splitter makes the sidebar drag-resizable; it cannot be collapsed to
@@ -415,6 +418,12 @@ class MainWindow(QMainWindow):
         self.open_shipment(shipment_id)
         if item_id:
             self.detail.focus_item(item_id)
+
+    def open_search(self):
+        """Search active shipments by container number or party size."""
+        dialog = SearchDialog(self.ctx.db, self)
+        dialog.shipment_opened.connect(self.open_shipment)
+        dialog.exec()
 
     def open_resequence(self):
         """Change a shipment's sequence number (folder, files, Excel, PDFs)."""

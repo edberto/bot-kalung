@@ -14,6 +14,18 @@ from ..core.constants import APP_NAME, EXPORTER_COLORS
 from .widgets import Panel, PrimaryButton, days_until, format_date_id
 
 
+def _nav_style(color: str = "#374151", weight: str = "600") -> str:
+    """Nav items read as buttons: a white fill on the grey sidebar, not a flat
+    transparent link."""
+    return theme.style(f"""
+        QPushButton {{ background: #ffffff; border: 1px solid #e5e7eb;
+            text-align: left; padding: 7px 10px; border-radius: 6px;
+            color: {color}; font-size: 13px; font-weight: {weight}; }}
+        QPushButton:hover {{ background: #eef2ff; border-color: #c7d2fe; }}
+        QPushButton:pressed {{ background: #e0e7ff; }}
+    """)
+
+
 def _see_all_button() -> QPushButton:
     """Link-styled 'see all' under the active list."""
     # Plain text, no arrow glyph — the font may not have one (the ◀/▶ month
@@ -84,6 +96,7 @@ class Sidebar(Panel):
     new_shipment_clicked = pyqtSignal()
     shipment_selected = pyqtSignal(str)
     all_shipments_clicked = pyqtSignal()
+    search_clicked = pyqtSignal()
     history_clicked = pyqtSignal()
     notifications_clicked = pyqtSignal()
     audit_clicked = pyqtSignal()
@@ -145,6 +158,10 @@ class Sidebar(Panel):
         layout.addWidget(self._divider())
         layout.addWidget(self._section_label("NAVIGASI"))
 
+        self.search_button = self._nav_button("Cari")
+        self.search_button.clicked.connect(self.search_clicked)
+        layout.addWidget(self.search_button)
+
         self.history_button = self._nav_button("Riwayat")
         self.history_button.clicked.connect(self.history_clicked)
         layout.addWidget(self.history_button)
@@ -182,13 +199,8 @@ class Sidebar(Panel):
 
     def _nav_button(self, text: str) -> QPushButton:
         button = QPushButton(text)
-        button.setFlat(True)
         button.setCursor(Qt.CursorShape.PointingHandCursor)
-        button.setStyleSheet(theme.style("""
-            QPushButton { border: none; text-align: left; padding: 7px 8px;
-                          border-radius: 6px; color: #374151; font-size: 13px; }
-            QPushButton:hover { background: #eef2ff; }
-        """))
+        button.setStyleSheet(_nav_style())
         return button
 
     # -- state ------------------------------------------------------------
@@ -265,19 +277,10 @@ class Sidebar(Panel):
         if count > 0:
             label = f"Notifikasi  ({count})" if count < 100 else "Notifikasi  (99+)"
             self.notifications_button.setText(label)
-            self.notifications_button.setStyleSheet(theme.style("""
-                QPushButton { border: none; text-align: left; padding: 7px 8px;
-                              border-radius: 6px; color: #b91c1c; font-size: 13px;
-                              font-weight: 700; }
-                QPushButton:hover { background: #eef2ff; }
-            """))
+            self.notifications_button.setStyleSheet(_nav_style("#b91c1c", "700"))
         else:
             self.notifications_button.setText("Notifikasi")
-            self.notifications_button.setStyleSheet(theme.style("""
-                QPushButton { border: none; text-align: left; padding: 7px 8px;
-                              border-radius: 6px; color: #374151; font-size: 13px; }
-                QPushButton:hover { background: #eef2ff; }
-            """))
+            self.notifications_button.setStyleSheet(_nav_style())
 
     def _on_item_clicked(self, item: QListWidgetItem):
         self.shipment_selected.emit(item.data(Qt.ItemDataRole.UserRole))

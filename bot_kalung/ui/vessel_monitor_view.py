@@ -15,14 +15,15 @@ from . import theme
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
-    QHBoxLayout, QLabel, QScrollArea, QVBoxLayout, QWidget,
+    QHBoxLayout, QLabel, QPushButton, QScrollArea, QSizePolicy, QVBoxLayout,
+    QWidget,
 )
 
 from ..services.shipments import Shipments
 from ..services.vessel_monitor import MonitoredVessels, state_of
 from .bnct_display import describe_record
 from .vessel_manager_dialog import VesselManagerDialog
-from .widgets import Panel, PrimaryButton, format_date_id
+from .widgets import FlowLayout, Panel, PrimaryButton, format_date_id
 
 # (status key, column title, accent colour) — colours match describe_record.
 COLUMNS = [
@@ -61,10 +62,20 @@ def _reading(row):
 
 
 class VesselCard(Panel):
-    """One monitored voyage as a read-only kanban card."""
+    """One monitored voyage as a kanban card. Its shipment chips are clickable."""
 
-    def __init__(self, row, accent: str, shipment_labels: list[str] | None = None):
+    shipment_clicked = pyqtSignal(str)     # shipment_id
+
+    def __init__(self, row, accent: str, shipments_on_voyage=None):
         super().__init__()
+        # Never let the card's own content force it wider than the column: it
+        # takes whatever width the column gives and wraps inside (chips flow,
+        # text word-wraps), so nothing spills off the right edge.
+        self.setMinimumWidth(0)
+        policy = QSizePolicy(QSizePolicy.Policy.Ignored,
+                             QSizePolicy.Policy.Minimum)
+        policy.setHeightForWidth(True)   # let a column grow the card for wrapped chips
+        self.setSizePolicy(policy)
         self.setStyleSheet(theme.style(
             "background: white; border: 1px solid #e5e7eb; "
             f"border-left: 4px solid {accent}; border-radius: 8px;"))
@@ -81,13 +92,32 @@ class VesselCard(Panel):
             "border: none; font-size: 14px; font-weight: 700; color: #0f172a;"))
         outer.addWidget(headline)
 
-        # {exporter}{seq} of any active shipment riding this voyage (live join).
-        if shipment_labels:
-            chips = QLabel("📦 " + "  ".join(shipment_labels))
-            chips.setWordWrap(True)
-            chips.setStyleSheet(theme.style(
-                "border: none; font-size: 11px; font-weight: 600; color: #1d4ed8;"))
-            outer.addWidget(chips)
+        # {exporter}{seq} of any active shipment riding this voyage (live join),
+        # each a chip that opens that shipment's detail page. A flow layout wraps
+        # the chips onto new lines instead of letting them spill off the card.
+        if shipments_on_voyage:
+            chip_host = QWidget()
+            chip_host.setStyleSheet(theme.style(
+                "background: transparent; border: none;"))
+            policy = chip_host.sizePolicy()
+            policy.setHeightForWidth(True)
+            chip_host.setSizePolicy(policy)
+            flow = FlowLayout(chip_host)
+            icon = QLabel("📦")
+            icon.setStyleSheet(theme.style("border: none; font-size: 11px;"))
+            flow.addWidget(icon)
+            for label, shipment_id in shipments_on_voyage:
+                chip = QPushButton(label)
+                chip.setCursor(Qt.CursorShape.PointingHandCursor)
+                chip.setStyleSheet(theme.style(
+                    "QPushButton { border: 1px solid #bfdbfe; background: #eff6ff;"
+                    " color: #1d4ed8; border-radius: 4px; padding: 1px 8px;"
+                    " font-size: 11px; font-weight: 700; }"
+                    "QPushButton:hover { background: #dbeafe; }"))
+                chip.clicked.connect(
+                    lambda _, sid=shipment_id: self.shipment_clicked.emit(sid))
+                flow.addWidget(chip)
+            outer.addWidget(chip_host)
 
         record = _reading(row)
         detail = describe_record(record)[2] if record is not None else ""
@@ -109,6 +139,7 @@ class VesselMonitorView(QWidget):
     """The standalone vessel-monitoring board."""
 
     vessel_added = pyqtSignal()                # vessels changed; trigger a poll
+    shipment_opened = pyqtSignal(str)          # a voyage chip was clicked
 
     def __init__(self, db):
         super().__init__()
@@ -163,6 +194,8 @@ class VesselMonitorView(QWidget):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)   # never spill sideways
         scroll.setStyleSheet(theme.style("background: transparent; border: none;"))
         container = QWidget()
         container.setStyleSheet(theme.style("background: transparent;"))
@@ -198,10 +231,11 @@ class VesselMonitorView(QWidget):
             column["rows"] = rows                # ordered, for tests/inspection
             for row in rows:
                 matches = self.shipments.for_voyage(row["vessel_name"], row["voyage"])
-                labels = [f"{m['exporter_code']}{m['sequence_number']}"
-                          for m in matches]
-                layout.insertWidget(layout.count() - 1,
-                                    VesselCard(row, column["color"], labels))
+                pairs = [(f"{m['exporter_code']}{m['sequence_number']}", m["id"])
+                         for m in matches]
+                card = VesselCard(row, column["color"], pairs)
+                card.shipment_clicked.connect(self.shipment_opened)
+                layout.insertWidget(layout.count() - 1, card)
 
             column["header"].setText(f"{column['title']} ({len(rows)})")
 
