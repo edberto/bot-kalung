@@ -22,7 +22,7 @@ from .bnct_controller import BnctController
 from .dashboard import DashboardView
 from .history import HistoryView
 from ..services.notifications import NotificationStore
-from .new_shipment import NewShipmentWizard
+from .scan_view import ScanView
 from .all_shipments import AllShipmentsView
 from .audit_view import AuditView
 from .notifications_view import NotificationsView
@@ -98,11 +98,9 @@ class MainWindow(QMainWindow):
         self.dashboard.calendar_range_requested.connect(self._load_calendar)
         self.stack.addWidget(self.dashboard)
 
-        self.wizard = NewShipmentWizard(ctx)
-        # The wizard's own Batal button already confirms, so skip the guard.
-        self.wizard.cancelled.connect(self._on_wizard_cancelled)
-        self.wizard.created.connect(self._on_shipment_created)
-        self.wizard.open_folder_requested.connect(open_in_explorer)
+        # Placeholder for the folder-scan screen (built in a later phase). Named
+        # `wizard` for now so the view slot and teardown hooks stay stable.
+        self.wizard = ScanView()
         self.stack.addWidget(self.wizard)
 
         self.detail = ShipmentDetailView(ctx.db, ctx.settings)
@@ -283,15 +281,9 @@ class MainWindow(QMainWindow):
     # -- navigation ------------------------------------------------------
 
     def _leave_wizard_ok(self) -> bool:
-        """PRD 2.3 — confirm before discarding an in-progress wizard."""
-        if self.stack.currentIndex() != VIEW_WIZARD:
-            return True
-        answer = QMessageBox.question(
-            self, "Batalkan pengaturan pengiriman?",
-            "Pengaturan pengiriman yang belum disimpan akan hilang. Lanjutkan?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No)
-        return answer == QMessageBox.StandardButton.Yes
+        # The creation wizard is gone; the scan placeholder has nothing to lose,
+        # so leaving is always fine. Retained because every open_* still calls it.
+        return True
 
     def _go(self, index: int):
         if index != self.stack.currentIndex():

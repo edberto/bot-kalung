@@ -25,6 +25,10 @@ datas += collect_data_files("xlwings")
 
 hiddenimports = []
 hiddenimports += collect_submodules("anthropic")
+# The folder scanner reads a shipment's BL PDF to detect completion. pdfplumber
+# used to be pulled in transitively by the (now-removed) DO parser; import it
+# explicitly so the static scan keeps it in the bundle.
+hiddenimports += collect_submodules("pdfplumber")
 hiddenimports += [
     "win32com.client",
     "win32com.shell",   # SHFileOperation, used to delete folders to the Recycle Bin

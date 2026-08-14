@@ -88,8 +88,7 @@ def _certifi_bundle() -> str:
 def _app_modules() -> str:
     from bot_kalung.core import constants, db, settings  # noqa: F401
     from bot_kalung.services import (  # noqa: F401
-        carrier, do_parser, drive, excel, fileops, messaging, naming, printing,
-        shipments, whatsapp,
+        drive, excel, fileops, messaging, naming, printing, shipments, whatsapp,
     )
     from bot_kalung.ui import main_window, theme  # noqa: F401
 

@@ -18,22 +18,6 @@ MONTHS_ABBR = ["jan", "feb", "mar", "apr", "may", "jun",
                "jul", "aug", "sep", "oct", "nov", "dec"]
 
 
-def container_size_short(size_raw: str | None) -> str:
-    """PRD 8.3 — truncate at the first character after the foot mark.
-
-    "40' HI-CUBE" -> "40'".  Falls back to the leading digits when the source
-    has no foot mark ("40 HC" -> "40'").
-    """
-    if not size_raw:
-        return ""
-    text = size_raw.strip()
-    mark = text.find("'")
-    if mark != -1:
-        return text[:mark + 1]
-    digits = re.match(r"\s*(\d+)", text)
-    return f"{digits.group(1)}'" if digits else text
-
-
 def is_quarantine_required(country: str | None, quarantine_countries) -> bool:
     """PRD 8.3 — destination country membership test, case-insensitive."""
     if not country:
@@ -81,35 +65,6 @@ def si_title(sequence: int, etd: date) -> str:
 def etd_long(etd: date) -> str:
     """PRD 10.2 — the SI ETD cell, e.g. "03 AUGUST 2026"."""
     return f"{etd.day:02d} {MONTHS_EN[etd.month - 1]} {etd.year}"
-
-
-def vessel_title(vessel_name: str | None) -> str:
-    """Title case for the folder name — "EVER CONCERT" -> "Ever Concert".
-
-    Confirmed with the user 2026-07-20: always the full name from the DO.
-    """
-    return " ".join(word.capitalize() for word in (vessel_name or "").split())
-
-
-def folder_name(*, sequence: int, container_quantity: int, size_short: str,
-                destination_port: str, booking_number: str, vessel_name: str,
-                voyage: str, etd: date, sequence_width: int = 1) -> str:
-    """PRD 9.3, used verbatim per the user's 2026-07-20 decision:
-
-    {seq}.{qty}x{size_short}-{dest_lower}-{booking_no}-{vessel_title} {voyage}-{dd} {mmm_lower}
-
-    `sequence_width` reproduces the zero-padding the exporter already uses on
-    disk: TTJ numbers its folders "01." to "04.", THREESTAR uses "1.", AMJ "23.".
-    Taking it from the previous folder keeps the new one consistent with its
-    neighbours instead of imposing one exporter's habit on another.
-    """
-    return (
-        f"{sequence:0{max(1, sequence_width)}d}.{container_quantity}x{size_short}"
-        f"-{(destination_port or '').strip().lower()}"
-        f"-{(booking_number or '').strip()}"
-        f"-{vessel_title(vessel_name)} {(voyage or '').strip()}"
-        f"-{etd.day:02d} {MONTHS_ABBR[etd.month - 1]}"
-    )
 
 
 def parse_iso_date(value: str | None) -> date | None:

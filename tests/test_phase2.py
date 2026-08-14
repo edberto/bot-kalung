@@ -1,4 +1,4 @@
-"""Phase 2 checks: settings, LLM JSON parsing, setup wizard (headless Qt).
+"""Phase 2 checks: settings, LLM connection, setup wizard (headless Qt).
 
 Drive scanning and filename derivation are covered in test_drive.py.
 """
@@ -16,7 +16,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from bot_kalung.core.db import Database, db_path_for
 from bot_kalung.core.settings import Settings
 from bot_kalung.services import drive
-from bot_kalung.services.llm import LLMClient, LLMError, _parse_json
+from bot_kalung.services.llm import LLMClient
 
 failures = []
 
@@ -44,22 +44,7 @@ with tempfile.TemporaryDirectory() as tmp:
     check("validation honors the override", ok and set(codes) == {"AMJ", "NIT"})
 
 
-# ---- LLM JSON parsing -----------------------------------------------------
-check("parses bare JSON", _parse_json('{"a": 1}') == {"a": 1})
-check("parses fenced JSON", _parse_json('```json\n{"a": 1}\n```') == {"a": 1})
-check("parses JSON embedded in prose",
-      _parse_json('Here you go:\n{"a": 1}\nHope that helps') == {"a": 1})
-try:
-    _parse_json("not json at all")
-    check("rejects non-JSON", False)
-except LLMError:
-    check("rejects non-JSON", True)
-try:
-    _parse_json("[1, 2, 3]")
-    check("rejects a JSON array", False)
-except LLMError:
-    check("rejects a JSON array", True)
-
+# ---- LLM connection checks ------------------------------------------------
 client = LLMClient("anthropic", api_key="")
 ok, msg = client.test_connection()
 check("missing API key fails gracefully in Indonesian",
