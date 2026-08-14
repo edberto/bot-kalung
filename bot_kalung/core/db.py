@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS shipments (
     folder_path           TEXT,
     do_pdf_filename       TEXT,
     shipping_company      TEXT,
+    notes                 TEXT,
     status                TEXT NOT NULL DEFAULT 'active',
     created_at            TEXT NOT NULL,
     completed_at          TEXT
@@ -156,6 +157,23 @@ CREATE TABLE IF NOT EXISTS scanned_shipments (
     imported_at     TEXT NOT NULL,
     UNIQUE (exporter_code, sequence_number)
 );
+
+-- Per-shipment action items (folder-scan tracker) — the documents/tasks that
+-- replace the fixed A1..E6 workflow_steps. Seeded on import from the shipment's
+-- destination + exporter, plus any ad-hoc items; each carries a status rather
+-- than a done flag.
+CREATE TABLE IF NOT EXISTS action_items (
+    id           TEXT PRIMARY KEY,
+    shipment_id  TEXT NOT NULL REFERENCES shipments(id) ON DELETE CASCADE,
+    code         TEXT NOT NULL,
+    title        TEXT NOT NULL,
+    status       TEXT NOT NULL DEFAULT 'pending',
+    position     REAL,
+    is_custom    INTEGER NOT NULL DEFAULT 0,
+    due_date     TEXT,
+    created_at   TEXT NOT NULL,
+    updated_at   TEXT
+);
 """
 
 # Indexes are created AFTER _add_missing_columns, because one references a
@@ -171,6 +189,8 @@ CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at);
 CREATE INDEX IF NOT EXISTS idx_steps_due ON workflow_steps(due_date);
 CREATE INDEX IF NOT EXISTS idx_monitored_created ON monitored_vessels(created_at);
 CREATE INDEX IF NOT EXISTS idx_scanned_shipment ON scanned_shipments(shipment_id);
+CREATE INDEX IF NOT EXISTS idx_action_items_shipment ON action_items(shipment_id);
+CREATE INDEX IF NOT EXISTS idx_action_items_due ON action_items(due_date);
 """
 
 

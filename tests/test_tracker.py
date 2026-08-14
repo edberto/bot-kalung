@@ -94,6 +94,13 @@ with tempfile.TemporaryDirectory() as tmp:
                      (amj2["id"],))
     check("no legacy workflow steps are seeded", len(steps) == 0)
 
+    # ...they seed action items instead (fake_fields -> Pakistan, so the
+    # quarantine trio is present).
+    item_codes = {r["code"] for r in db.query(
+        "SELECT code FROM action_items WHERE shipment_id=?", (amj2["id"],))}
+    check("import seeds action items",
+          {"si_vgm", "fumi", "phyto", "coo", "bl", "dok_kirim"} <= item_codes)
+
     # Registry holds every handled (code, seq): imported + done.
     keys = tracker.ScannedRegistry(db).registered_keys()
     check("registry records imported and done alike",

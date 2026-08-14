@@ -16,6 +16,7 @@ from datetime import date, datetime
 from ..core.constants import DEFAULT_QUARANTINE_COUNTRIES
 from ..core.db import Database, new_id
 from . import excel, naming, scanner
+from .action_items import ActionItems
 from .shipments import Shipments
 
 
@@ -78,6 +79,7 @@ def run_scan(db: Database, drive_root, *, year: int | None = None, settings=None
     year = year or date.today().year
     registry = ScannedRegistry(db)
     shipments = Shipments(db)
+    action_items = ActionItems(db)
     quarantine = (settings.get("quarantine_countries") if settings else None) \
         or DEFAULT_QUARANTINE_COUNTRIES
 
@@ -107,6 +109,7 @@ def run_scan(db: Database, drive_root, *, year: int | None = None, settings=None
             "quarantine_required": naming.is_quarantine_required(
                 fields.destination_country, quarantine),
         }, seed_steps=False)
+        action_items.seed(shipment_id, candidate.code, fields.destination_country)
         registry.record(candidate.code, candidate.sequence, str(candidate.folder),
                         done=False, shipment_id=shipment_id)
         result.imported.append(candidate.label)

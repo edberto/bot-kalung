@@ -99,6 +99,43 @@ KEEP_FILE_PATTERNS = [
 # PRD Section 5 / 11 Tab 5 — default quarantine list, editable in Settings.
 DEFAULT_QUARANTINE_COUNTRIES = ["PAKISTAN"]
 
+# Action items (folder-scan tracker). Replace the fixed A1..E6 workflow_steps:
+# a scanned shipment gets a short list of documents/tasks, each with a status
+# instead of a done/pending checkbox. Statuses are listed in workflow order; the
+# ID labels are what the UI shows.
+ACTION_STATUSES = ["pending", "in_progress", "draft_received", "draft_revision",
+                   "draft_ok", "final"]
+ACTION_STATUS_LABELS = {
+    "pending": "Pending",
+    "in_progress": "Dikerjakan",
+    "draft_received": "Draft diterima",
+    "draft_revision": "Revisi draft",
+    "draft_ok": "Draft OK",
+    "final": "Final",
+}
+ACTION_STATUS_DONE = "final"        # the status that counts an item complete
+
+# The action items seeded on import, in order: (code, title). Which ones apply to
+# a given shipment is decided from its destination country and exporter code —
+# see services/action_items.should_seed. Ad-hoc items can be added on top.
+ACTION_ITEM_SEEDS = [
+    ("si_vgm", "SI / VGM / INV / PL"),
+    ("fumi", "Fumi"),
+    ("phyto", "Phyto"),
+    ("coo", "COO"),
+    ("peb_npe", "PEB & NPE"),
+    ("bl", "BL"),
+    ("dok_kirim", "Dok Kirim"),
+    ("marking", "Marking"),
+    ("dg", "DG"),
+]
+# Fumi is required for Pakistan/Philippines/India; Phyto and COO for Pakistan/
+# Philippines only. Compared case-insensitively against the destination country.
+FUMI_COUNTRIES = {"PAKISTAN", "PHILIPPINES", "INDIA"}
+PHYTO_COO_COUNTRIES = {"PAKISTAN", "PHILIPPINES"}
+# Marking and DG (dangerous goods) apply only to HOPSON (code HAI) and JMI.
+DG_MARKING_CODES = {"HAI", "JMI"}
+
 # PRD Section 6.3 — full workflow definition. Phase 2 steps are listed so the
 # checklist shows the whole process, but they render disabled.
 WORKFLOW_PHASES = [
