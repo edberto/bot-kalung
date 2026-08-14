@@ -69,10 +69,11 @@ class SettingsView(QWidget):
         outer.addLayout(header)
 
         self.tabs = QTabWidget()
-        self.tabs.addTab(self._build_general(), "Umum")
-        self.tabs.addTab(self._build_llm(), "LLM")
-        self.tabs.addTab(self._build_templates(), "Subjek Email")
-        self.tabs.addTab(self._build_quarantine(), "Negara Karantina")
+        self.tabs.addTab(self._scroll_wrap(self._build_general()), "Umum")
+        self.tabs.addTab(self._scroll_wrap(self._build_llm()), "LLM")
+        self.tabs.addTab(self._scroll_wrap(self._build_templates()), "Subjek Email")
+        self.tabs.addTab(self._scroll_wrap(self._build_quarantine()),
+                         "Negara Karantina")
         outer.addWidget(self.tabs, 1)
 
         self.message = InlineMessage()
@@ -86,6 +87,19 @@ class SettingsView(QWidget):
         outer.addLayout(footer)
 
         self.load()
+
+    @staticmethod
+    def _scroll_wrap(page: QWidget) -> QScrollArea:
+        """Put a tab page in a vertical scroll area so a tall tab (the General
+        one) is fully reachable instead of being clipped by the tab height.
+        """
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setWidget(page)
+        return scroll
 
     # -- Tab 1: General ----------------------------------------------------
 

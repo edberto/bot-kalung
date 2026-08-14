@@ -1,9 +1,9 @@
-"""Action items for a scanned shipment.
+"""Action items and notes for a scanned shipment.
 
 Replaces the boolean workflow checklist: one row per action item (document or
 task), each with a status dropdown instead of a done/pending checkbox, an
-optional due date, and a delete button. A free-text notes box for the whole
-shipment sits at the bottom. Ad-hoc items are added with the button.
+optional due date, and a delete button. Ad-hoc items are added with the button.
+The shipment's free-text notes live in a separate NotesPanel beside the list.
 """
 
 from __future__ import annotations
@@ -101,18 +101,16 @@ class ActionItemRow(Panel):
 
 
 class ActionItemsView(QWidget):
-    """The action-item list + notes box for one shipment, rebuilt per shipment."""
+    """The action-item list for one shipment, rebuilt per shipment."""
 
     status_changed = pyqtSignal(str, str)     # item id, status
     add_requested = pyqtSignal()
     delete_requested = pyqtSignal(str)        # item id
     date_edit_requested = pyqtSignal(str)     # item id
-    notes_edited = pyqtSignal(str)            # full notes text
 
     def __init__(self):
         super().__init__()
         self.rows: dict[str, ActionItemRow] = {}
-        self._notes_original = ""
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -133,30 +131,9 @@ class ActionItemsView(QWidget):
         self.list_layout.setContentsMargins(0, 0, 0, 0)
         self.list_layout.setSpacing(6)
         layout.addLayout(self.list_layout)
-
-        notes_label = QLabel("Catatan")
-        notes_label.setStyleSheet(theme.style(
-            "font-size: 13px; font-weight: 700; color: #111827; margin-top: 8px;"))
-        layout.addWidget(notes_label)
-
-        self.notes = QTextEdit()
-        self.notes.setPlaceholderText("Catatan bebas untuk pengiriman ini…")
-        self.notes.setFixedHeight(90)
-        self.notes.setStyleSheet(theme.style(
-            "background: white; border: 1px solid #e5e7eb; border-radius: 8px;"
-            "font-size: 12px; color: #374151; padding: 6px;"))
-        layout.addWidget(self.notes)
-
-        save = QHBoxLayout()
-        save.addStretch(1)
-        self.save_notes_button = SecondaryButton("Simpan Catatan")
-        self.save_notes_button.clicked.connect(self._commit_notes)
-        save.addWidget(self.save_notes_button)
-        layout.addLayout(save)
-
         layout.addStretch(1)
 
-    def apply(self, items, notes: str | None):
+    def apply(self, items):
         while self.list_layout.count():
             taken = self.list_layout.takeAt(0)
             if taken.widget() is not None:
@@ -171,11 +148,46 @@ class ActionItemsView(QWidget):
             self.rows[item.id] = row
             self.list_layout.addWidget(row)
 
-        self._notes_original = notes or ""
-        self.notes.setPlainText(self._notes_original)
 
-    def _commit_notes(self):
+class NotesPanel(QWidget):
+    """The shipment's free-text notes, saved on button press."""
+
+    notes_edited = pyqtSignal(str)
+
+    def __init__(self):
+        super().__init__()
+        self._original = ""
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+
+        title = QLabel("Catatan")
+        title.setStyleSheet(theme.style(
+            "font-size: 14px; font-weight: 700; color: #111827;"))
+        layout.addWidget(title)
+
+        self.notes = QTextEdit()
+        self.notes.setPlaceholderText("Catatan bebas untuk pengiriman ini…")
+        self.notes.setMinimumHeight(140)
+        self.notes.setStyleSheet(theme.style(
+            "background: white; border: 1px solid #e5e7eb; border-radius: 8px;"
+            "font-size: 12px; color: #374151; padding: 6px;"))
+        layout.addWidget(self.notes, 1)
+
+        save = QHBoxLayout()
+        save.addStretch(1)
+        self.save_button = SecondaryButton("Simpan Catatan")
+        self.save_button.clicked.connect(self._commit)
+        save.addWidget(self.save_button)
+        layout.addLayout(save)
+
+    def set_notes(self, notes: str | None):
+        self._original = notes or ""
+        self.notes.setPlainText(self._original)
+
+    def _commit(self):
         text = self.notes.toPlainText().strip()
-        if text != self._notes_original:
+        if text != self._original:
             self.notes_edited.emit(text)
-            self._notes_original = text
+            self._original = text

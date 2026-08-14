@@ -28,7 +28,8 @@ def _pct(actual, plan) -> str:
 
 def _schedule_line(record) -> list[str]:
     """ETD / Clossing / Clossing Reefer / Open Billing / Open Stack, blanks
-    omitted. Shown for a scheduled vessel and carried forward once it berths."""
+    omitted, one field per line. Shown for a scheduled vessel and carried
+    forward once it berths."""
     pairs = [
         ("ETD", _get(record, "etd")),
         ("Clossing", _get(record, "clossing")),
@@ -36,8 +37,7 @@ def _schedule_line(record) -> list[str]:
         ("Open Billing", _get(record, "open_billing")),
         ("Open Stack", _get(record, "open_stacking")),
     ]
-    shown = [f"{label} {value}" for label, value in pairs if value]
-    return ["  ·  ".join(shown)] if shown else []
+    return [f"{label}: {value}" for label, value in pairs if value]
 
 
 def describe_record(record) -> tuple[str, str, str]:

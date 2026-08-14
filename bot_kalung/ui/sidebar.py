@@ -1,4 +1,4 @@
-"""Left navigation panel (PRD Section 2.4). Fixed 250 px."""
+"""Left navigation panel (PRD Section 2.4). Resizable via the window splitter."""
 
 from __future__ import annotations
 
@@ -75,7 +75,7 @@ class ShipmentEntry(Panel):
             f"font-size: 11px; color: {'#dc2626' if urgent else '#6b7280'};"))
         layout.addWidget(etd)
 
-        progress = QLabel(f"{done} / {total} langkah selesai")
+        progress = QLabel(f"{done} / {total} item final")
         progress.setStyleSheet(theme.style("font-size: 11px; color: #6b7280;"))
         layout.addWidget(progress)
 
@@ -93,7 +93,10 @@ class Sidebar(Panel):
 
     def __init__(self):
         super().__init__()
-        self.setFixedWidth(250)
+        # Resizable: a floor keeps the shipment cards legible, a ceiling stops it
+        # eating the whole window; the splitter in MainWindow sets the start size.
+        self.setMinimumWidth(200)
+        self.setMaximumWidth(520)
         self.setStyleSheet(theme.style("background: #f9fafb; border-right: 1px solid #e5e7eb;"))
 
         layout = QVBoxLayout(self)
@@ -190,26 +193,58 @@ class Sidebar(Panel):
 
     # -- state ------------------------------------------------------------
 
+    @staticmethod
+    def _etd_key(shipment):
+        # ISO dates sort chronologically; a shipment with no ETD sorts last.
+        etd = shipment["etd_belawan"]
+        return (etd is None, etd or "")
+
+    def _group_header(self, code: str, count: int) -> QLabel:
+        header = QLabel(f"{code}  ·  {count}")
+        header.setStyleSheet(theme.style(
+            f"color: {EXPORTER_COLORS.get(code, '#6b7280')}; font-size: 11px;"
+            "font-weight: 800; letter-spacing: 1px; padding: 6px 4px 2px 4px;"))
+        return header
+
     def refresh(self, shipments, progress_lookup):
         self.shipment_list.clear()
         # The row must fit the sidebar width so the hover highlight fills it and
         # the wrapped vessel name is measured correctly. viewport().width() can
-        # be unset before the first show, so fall back to the fixed geometry.
+        # be unset before the first show, so fall back to a sane default.
         width = self.shipment_list.viewport().width()
         if width < 50:
-            width = 226   # 250px sidebar minus its layout margins
+            width = 226
+
+        # Group by exporter; sort each group by nearest ETD, and order the groups
+        # by their earliest ETD so the most urgent exporter sits on top.
+        groups: dict[str, list] = {}
         for shipment in shipments:
-            done, total = progress_lookup(shipment["id"])
-            item = QListWidgetItem(self.shipment_list)
-            item.setData(Qt.ItemDataRole.UserRole, shipment["id"])
-            widget = ShipmentEntry(shipment, done, total)
-            # Width 0 lets the item fill the viewport; the height comes from the
-            # wrapped content at that width so nothing is clipped vertically.
-            height = (widget.heightForWidth(width)
-                      if widget.hasHeightForWidth() else widget.sizeHint().height())
-            item.setSizeHint(QSize(0, height))
-            self.shipment_list.addItem(item)
-            self.shipment_list.setItemWidget(item, widget)
+            groups.setdefault(shipment["exporter_code"], []).append(shipment)
+        for rows in groups.values():
+            rows.sort(key=self._etd_key)
+        ordered = sorted(
+            groups.items(),
+            key=lambda kv: (min((self._etd_key(s) for s in kv[1])), kv[0]))
+
+        for code, rows in ordered:
+            header = self._group_header(code, len(rows))
+            head_item = QListWidgetItem(self.shipment_list)
+            head_item.setFlags(Qt.ItemFlag.NoItemFlags)   # non-selectable label
+            head_item.setSizeHint(QSize(0, header.sizeHint().height()))
+            self.shipment_list.addItem(head_item)
+            self.shipment_list.setItemWidget(head_item, header)
+
+            for shipment in rows:
+                done, total = progress_lookup(shipment["id"])
+                item = QListWidgetItem(self.shipment_list)
+                item.setData(Qt.ItemDataRole.UserRole, shipment["id"])
+                widget = ShipmentEntry(shipment, done, total)
+                height = (widget.heightForWidth(width)
+                          if widget.hasHeightForWidth()
+                          else widget.sizeHint().height())
+                item.setSizeHint(QSize(0, height))
+                self.shipment_list.addItem(item)
+                self.shipment_list.setItemWidget(item, widget)
 
         has_any = bool(shipments)
         self.shipment_list.setVisible(has_any)

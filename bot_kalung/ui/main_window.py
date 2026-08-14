@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from . import theme
 
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
-    QHBoxLayout, QMainWindow, QMessageBox, QStackedWidget, QSystemTrayIcon,
-    QWidget,
+    QHBoxLayout, QMainWindow, QMessageBox, QSplitter, QStackedWidget,
+    QSystemTrayIcon, QWidget,
 )
 
 import os
@@ -88,7 +88,6 @@ class MainWindow(QMainWindow):
         self.sidebar.all_shipments_clicked.connect(self.open_all_shipments)
         self.sidebar.settings_clicked.connect(self.open_settings)
         self.sidebar.home_clicked.connect(self.open_dashboard)
-        layout.addWidget(self.sidebar)
 
         self.stack = QStackedWidget()
         self.stack.setStyleSheet(theme.style("background: #ffffff;"))
@@ -111,6 +110,7 @@ class MainWindow(QMainWindow):
         self.detail.completed.connect(self._on_shipment_completed)
         self.detail.deleted.connect(self._on_shipment_deleted)
         self.detail.bnct_refresh_requested.connect(self._bnct_poll_now)
+        self.detail.open_vessel_monitor_requested.connect(self.open_vessel_monitor)
         self.stack.addWidget(self.detail)
 
         self.history = HistoryView(ctx.db)
@@ -142,7 +142,17 @@ class MainWindow(QMainWindow):
         self.vessel_monitor.vessel_added.connect(self._on_vessel_added)
         self.stack.addWidget(self.vessel_monitor)
 
-        layout.addWidget(self.stack, 1)
+        # A splitter makes the sidebar drag-resizable; it cannot be collapsed to
+        # zero, and starts at 250px with the stack taking the rest.
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.addWidget(self.sidebar)
+        splitter.addWidget(self.stack)
+        splitter.setCollapsible(0, False)
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setHandleWidth(4)
+        splitter.setSizes([250, 850])
+        layout.addWidget(splitter)
         self.setCentralWidget(root)
 
         self.sidebar.notifications_clicked.connect(self.open_notifications)

@@ -151,8 +151,36 @@ def palette() -> QPalette:
     return p
 
 
+def _scrollbar_qss() -> str:
+    """A thin, rounded, arrow-less scrollbar — applied app-wide so every scroll
+    area looks modern instead of the chunky native Fusion bar."""
+    handle, hover, track = (color("border_strong"), color("text_faint"),
+                            color("track"))
+    return f"""
+    QScrollBar:vertical {{ background: {track}; width: 12px; margin: 0;
+        border: none; border-radius: 6px; }}
+    QScrollBar::handle:vertical {{ background: {handle}; border-radius: 4px;
+        min-height: 28px; margin: 2px; }}
+    QScrollBar::handle:vertical:hover {{ background: {hover}; }}
+    QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0;
+        background: transparent; }}
+    QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
+        background: transparent; }}
+    QScrollBar:horizontal {{ background: {track}; height: 12px; margin: 0;
+        border: none; border-radius: 6px; }}
+    QScrollBar::handle:horizontal {{ background: {handle}; border-radius: 4px;
+        min-width: 28px; margin: 2px; }}
+    QScrollBar::handle:horizontal:hover {{ background: {hover}; }}
+    QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ width: 0;
+        background: transparent; }}
+    QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{
+        background: transparent; }}
+    """
+
+
 def apply(qt_app, name_: str = "light") -> None:
     """Set the theme and push its palette onto the running application."""
     set_theme(name_)
     qt_app.setStyle("Fusion")
     qt_app.setPalette(palette())
+    qt_app.setStyleSheet(_scrollbar_qss())

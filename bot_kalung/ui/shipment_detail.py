@@ -30,7 +30,7 @@ from ..services.bnct import LOGIN_URL
 from ..services.containers import Containers
 from ..services.naming import parse_iso_date
 from ..services.shipments import Shipments
-from .action_items_view import ActionItemsView
+from .action_items_view import ActionItemsView, NotesPanel
 from .bnct_panel import BnctPanel
 from .containers_panel import ContainersPanel
 from .widgets import (
@@ -170,7 +170,8 @@ class ShipmentDetailView(QWidget):
     changed = pyqtSignal()          # something changed; sidebar/dashboard reload
     completed = pyqtSignal(str)     # shipment marked complete, carries its label
     deleted = pyqtSignal(str)       # shipment removed; carries a note to show
-    bnct_refresh_requested = pyqtSignal()   # "Periksa Sekarang" pressed
+    bnct_refresh_requested = pyqtSignal()   # kept for the window's connection
+    open_vessel_monitor_requested = pyqtSignal()  # "Buka Monitor Kapal" pressed
 
     def __init__(self, db, settings=None):
         super().__init__()
@@ -273,10 +274,6 @@ class ShipmentDetailView(QWidget):
         self.quarantine_banner = InlineMessage()
         outer.addWidget(self.quarantine_banner)
 
-        # -- BNCT monitoring status ----------------------------------------
-        self.bnct_panel = BnctPanel(db, on_refresh=self.bnct_refresh_requested.emit)
-        outer.addWidget(self.bnct_panel)
-
         self.message = InlineMessage()
         outer.addWidget(self.message)
 
@@ -285,7 +282,7 @@ class ShipmentDetailView(QWidget):
         divider.setStyleSheet(theme.style("color: #e5e7eb;"))
         outer.addWidget(divider)
 
-        # -- containers + action items + notes (one scroll area) -----------
+        # -- scroll area: [items | notes] over [vessel | containers] -------
         self.items_scroll = QScrollArea()
         self.items_scroll.setWidgetResizable(True)
         self.items_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
@@ -293,19 +290,36 @@ class ShipmentDetailView(QWidget):
         scroll_content = QWidget()
         scroll_layout = QVBoxLayout(scroll_content)
         scroll_layout.setContentsMargins(0, 0, 0, 0)
-        scroll_layout.setSpacing(14)
+        scroll_layout.setSpacing(16)
 
-        self.containers_panel = ContainersPanel()
-        self.containers_panel.open_bnct.connect(self._open_bnct_container)
-        scroll_layout.addWidget(self.containers_panel)
-
+        # Top row: action items (left) + notes (right).
+        top_row = QHBoxLayout()
+        top_row.setSpacing(16)
         self.items_view = ActionItemsView()
         self.items_view.status_changed.connect(self._on_status_changed)
         self.items_view.add_requested.connect(self._on_add_item)
         self.items_view.delete_requested.connect(self._on_delete_item)
         self.items_view.date_edit_requested.connect(self._on_item_date)
-        self.items_view.notes_edited.connect(self._on_notes_edited)
-        scroll_layout.addWidget(self.items_view, 1)
+        top_row.addWidget(self.items_view, 3)
+
+        self.notes_panel = NotesPanel()
+        self.notes_panel.notes_edited.connect(self._on_notes_edited)
+        top_row.addWidget(self.notes_panel, 2)
+        scroll_layout.addLayout(top_row)
+
+        # Bottom row: vessel tracking (left) + container tracking (right).
+        bottom_row = QHBoxLayout()
+        bottom_row.setSpacing(16)
+        self.bnct_panel = BnctPanel(db)
+        self.bnct_panel.open_monitor_requested.connect(
+            self.open_vessel_monitor_requested)
+        bottom_row.addWidget(self.bnct_panel, 1)
+
+        self.containers_panel = ContainersPanel()
+        self.containers_panel.open_bnct.connect(self._open_bnct_containers)
+        bottom_row.addWidget(self.containers_panel, 1)
+        scroll_layout.addLayout(bottom_row)
+        scroll_layout.addStretch(1)
 
         self.items_scroll.setWidget(scroll_content)
         outer.addWidget(self.items_scroll, 1)
@@ -359,6 +373,7 @@ class ShipmentDetailView(QWidget):
 
         self.bnct_panel.load(shipment_id)
         self.containers_panel.apply(self.container_store.for_shipment(shipment_id))
+        self.notes_panel.set_notes(row["notes"])
         self._refresh_items()
 
     def refresh_bnct(self, shipment_id: str):
@@ -371,18 +386,27 @@ class ShipmentDetailView(QWidget):
             self.containers_panel.apply(
                 self.container_store.for_shipment(shipment_id))
 
-    def _open_bnct_container(self, container_no: str):
-        """Copy the container number and open the BNCT portal — the portal has no
-        URL pre-fill, so the worker pastes it into the container search.
+    def _open_bnct_containers(self):
+        """Copy every container number and open the BNCT portal — the portal has
+        no URL pre-fill, so the worker pastes each into the container search (the
+        card shows which terminal to look at).
         """
         from PyQt6.QtWidgets import QApplication
 
+        if self.shipment_id is None:
+            return
+        numbers = [c.container_no
+                   for c in self.container_store.for_shipment(self.shipment_id)]
         clipboard = QApplication.clipboard()
-        if clipboard is not None:
-            clipboard.setText(container_no)
+        if clipboard is not None and numbers:
+            clipboard.setText("\n".join(numbers))
         open_path_or_url(LOGIN_URL)
-        self.message.show_success(
-            f"Nomor {container_no} disalin. Tempel di pencarian kontainer BNCT.")
+        if numbers:
+            self.message.show_success(
+                f"{len(numbers)} nomor kontainer disalin (satu per baris). "
+                "Tempel di pencarian kontainer BNCT.")
+        else:
+            self.message.show_info("Membuka portal BNCT.")
 
     @staticmethod
     def _find_workbook(folder: Path | None) -> Path | None:
@@ -400,9 +424,7 @@ class ShipmentDetailView(QWidget):
     def _refresh_items(self):
         if self.shipment_id is None:
             return
-        row = self.shipments.get(self.shipment_id)
-        self.items_view.apply(self.items.list(self.shipment_id),
-                              row["notes"] if row is not None else None)
+        self.items_view.apply(self.items.list(self.shipment_id))
         done, total = self.items.progress(self.shipment_id)
         self.progress_label.setText(f"{done} dari {total} item final")
         self.progress_bar.setRange(0, max(total, 1))

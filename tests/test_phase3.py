@@ -34,6 +34,16 @@ def check(label, cond):
 
 app = QApplication.instance() or QApplication([])
 
+
+def sidebar_entries(window):
+    """The ShipmentEntry rows in the sidebar, skipping the exporter headers."""
+    from bot_kalung.ui.sidebar import ShipmentEntry
+
+    lst = window.sidebar.shipment_list
+    widgets = [lst.itemWidget(lst.item(i)) for i in range(lst.count())]
+    return [w for w in widgets if isinstance(w, ShipmentEntry)]
+
+
 # ---- date helpers ---------------------------------------------------------
 check("date formats in Indonesian",
       format_date_id("2026-08-03") == "3 Agustus 2026")
@@ -122,11 +132,10 @@ with tempfile.TemporaryDirectory() as tmp:
           overdue == len(phase1_steps))
 
     window.refresh()
-    check("sidebar lists both shipments", window.sidebar.shipment_list.count() == 2)
+    check("sidebar lists both shipments", len(sidebar_entries(window)) == 2)
     check("sidebar hides the empty note", window.sidebar.empty_note.isHidden())
 
-    entry = window.sidebar.shipment_list.itemWidget(
-        window.sidebar.shipment_list.item(0))
+    entry = sidebar_entries(window)[0]
     check("sidebar entry shows a clickable cursor",
           entry.cursor().shape() == Qt.CursorShape.PointingHandCursor)
     # Hover draws an outline (like the dashboard cards); the entry stays
@@ -197,7 +206,7 @@ with tempfile.TemporaryDirectory() as tmp:
     check("completed shipment appears in history",
           len(shipments.completed()) == 1)
     check("sidebar drops the completed shipment",
-          window.sidebar.shipment_list.count() == 1)
+          len(sidebar_entries(window)) == 1)
     check("completed-this-month counter picks it up",
           shipments.count_completed_this_month() == 1)
     check("overdue count drops with it", shipments.count_overdue_steps() == 0)
