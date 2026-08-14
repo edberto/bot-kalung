@@ -311,6 +311,22 @@ def normalize_voyage(voyage: str) -> str:
     return re.sub(r"[^A-Z0-9]", "", (voyage or "").upper())
 
 
+def etd_to_iso(value: str) -> str | None:
+    """BNCT dates read 'DD/MM/YYYY HH:MM' — return the ISO date, or None.
+
+    Used to converge a shipment's stored ETD onto BNCT's (authoritative) schedule
+    so every shipment on one voyage shares the vessel's real departure date.
+    """
+    match = re.match(r"\s*(\d{1,2})/(\d{1,2})/(\d{4})", value or "")
+    if not match:
+        return None
+    try:
+        return datetime(int(match.group(3)), int(match.group(2)),
+                        int(match.group(1))).date().isoformat()
+    except ValueError:
+        return None
+
+
 def _name_matches(app_name: str, portal_name: str) -> bool:
     a, b = normalize_name(app_name), normalize_name(portal_name)
     if not a or not b:

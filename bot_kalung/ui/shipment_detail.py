@@ -24,7 +24,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ..core.constants import EXPORTER_COLORS
-from ..services import etd_change, fileops
+from ..services import fileops
 from ..services.action_items import ActionItems
 from ..services.bnct import LOGIN_URL
 from ..services.containers import Containers
@@ -84,8 +84,9 @@ class _EtdDialog(QDialog):
         form = QFormLayout(self)
 
         note = QLabel(
-            "Mengubah ETD juga mengganti akhiran tanggal pada nama folder dan "
-            "memperbarui nomor dokumen, tanggal VGM, dan ETD di sheet SI.")
+            "ETD berlaku untuk seluruh voyage — semua pengiriman pada kapal & "
+            "voyage yang sama ikut diperbarui. Hanya di aplikasi; folder dan "
+            "Excel di Google Drive tidak diubah.")
         note.setWordWrap(True)
         note.setStyleSheet(theme.style("font-size: 11px; color: #6b7280;"))
         form.addRow(note)
@@ -444,8 +445,9 @@ class ShipmentDetailView(QWidget):
     # -- ETD ---------------------------------------------------------------
 
     def _on_edit_etd(self):
-        """Change the ETD, updating the folder's date suffix and the Excel
-        cells that derive from it. Check-then-run, like the resequence flow.
+        """Change the ETD for the whole voyage — a voyage is one departure, so
+        every shipment on this vessel+voyage shares it. Database only; nothing on
+        the Drive (folders/Excel) is touched.
         """
         row = self.shipments.get(self.shipment_id)
         if row is None:
@@ -454,39 +456,19 @@ class ShipmentDetailView(QWidget):
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         new_etd = dialog.value()
-        if new_etd is None or new_etd.isoformat() == (row["etd_belawan"] or ""):
+        if new_etd is None:
             return
+        iso = new_etd.isoformat()
 
-        plan = etd_change.build_plan(row, new_etd)
-        blockers = etd_change.preflight(plan)
-        if blockers:
-            QMessageBox.warning(
-                self, "Tutup berkas dulu",
-                "Tutup berkas berikut lalu coba lagi:\n\n"
-                + "\n".join(f"  • {b.path} — {b.reason}" for b in blockers))
-            return
-
-        summary = [f"ETD {format_date_id(row['etd_belawan'])} → "
-                   f"{format_date_id(new_etd.isoformat())}"]
-        if plan.new_folder is not None:
-            summary.append(f"Folder → {plan.new_folder.name}")
-        if plan.document_number_changes:
-            summary.append(f"Nomor dokumen {plan.old_document_number} → "
-                           f"{plan.new_document_number}")
-        summary.append(f"VGM DATE → {plan.new_vgm_date}")
-        summary.append(f"ETD di SI → {plan.new_si_etd}")
-        answer = QMessageBox.question(
-            self, "Ubah ETD?", "\n".join(summary) + "\n\nLanjutkan?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No)
-        if answer != QMessageBox.StandardButton.Yes:
-            return
-
-        result = etd_change.execute(self.db, plan)
-        if result.ok:
-            self.message.show_success("; ".join(result.changed))
+        vessel, voyage = row["vessel_name"], row["voyage"]
+        if vessel and voyage:
+            count = self.shipments.set_voyage_etd(vessel, voyage, iso)
+            self.message.show_success(
+                f"ETD {format_date_id(iso)} diterapkan ke {count} pengiriman "
+                f"pada voyage {vessel} {voyage}.")
         else:
-            self.message.show_error("; ".join(result.failed))
+            self.shipments.set_etd(self.shipment_id, iso)
+            self.message.show_success(f"ETD diubah ke {format_date_id(iso)}.")
         self.load(self.shipment_id)
         self.changed.emit()
 

@@ -430,6 +430,32 @@ class Shipments:
             "UPDATE shipments SET notes=? WHERE id=?",
             ((notes or "").strip() or None, shipment_id))
 
+    def set_etd(self, shipment_id: str, iso: str | None) -> None:
+        """Set the shipment's ETD (database only — never touches folder/Excel)."""
+        self.db.execute("UPDATE shipments SET etd_belawan=? WHERE id=?",
+                        (iso or None, shipment_id))
+
+    def set_voyage_etd(self, vessel_name: str | None, voyage: str | None,
+                       iso: str | None) -> int:
+        """Set the ETD for every active shipment on this vessel+voyage — a
+        voyage is one departure, so its shipments share one ETD. Database only,
+        no folder/Excel. Returns how many shipments were updated.
+        """
+        from .bnct import _name_matches, _voyage_matches
+
+        if not vessel_name or not voyage:
+            return 0
+        rows = self.db.query(
+            "SELECT id, vessel_name, voyage FROM shipments WHERE status='active' "
+            "AND vessel_name IS NOT NULL AND voyage IS NOT NULL")
+        ids = [r["id"] for r in rows
+               if _name_matches(vessel_name, r["vessel_name"] or "")
+               and _voyage_matches(voyage, r["voyage"] or "")]
+        for shipment_id in ids:
+            self.db.execute("UPDATE shipments SET etd_belawan=? WHERE id=?",
+                            (iso or None, shipment_id))
+        return len(ids)
+
     def mark_complete(self, shipment_id: str) -> None:
         row = self.get(shipment_id)
         self.db.execute(

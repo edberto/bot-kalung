@@ -186,6 +186,7 @@ class BnctMonitor:
             reading, label, shipment_id)
 
         self.record(shipment_id, reading, prev)
+        self._sync_etd(shipment_id, reading, prev)
         # Persist each transition so it survives the tray toast and drives the
         # in-app notification centre. Done here, with the check, so only the
         # app instance that actually detects the transition writes it.
@@ -193,6 +194,17 @@ class BnctMonitor:
             self.notifications.add(note.kind, shipment_id, note.title,
                                    note.body, created_at=reading.checked_at)
         return notes
+
+    def _sync_etd(self, shipment_id: str, reading: BnctReading, prev) -> None:
+        """Converge the shipment's stored ETD onto BNCT's schedule — the
+        authoritative departure date, so all shipments on a voyage line up.
+        """
+        if not reading.found:
+            return
+        iso = bnct.etd_to_iso(merged_record(reading, prev)["etd"])
+        if iso:
+            self.db.execute("UPDATE shipments SET etd_belawan=? WHERE id=?",
+                            (iso, shipment_id))
 
 
 def _fmt(value) -> str:
