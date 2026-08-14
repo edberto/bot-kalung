@@ -31,12 +31,11 @@ def make_shipment(parent: Path, folder_name: str, code_seq: str):
     return folder
 
 
-def add_bl_scan(folder: Path) -> Path:
+def mark_done(folder: Path) -> None:
+    """Put an export document in the send folder so the shipment reads as done."""
     dok = folder / "Dok kirim"
     dok.mkdir(exist_ok=True)
-    pdf = dok / "SCAN BL.pdf"
-    pdf.write_text("x", encoding="utf-8")
-    return pdf
+    (dok / "NIT-Karachi-INV.pdf").write_text("x", encoding="utf-8")
 
 
 def fake_fields(folder):
@@ -61,16 +60,13 @@ with tempfile.TemporaryDirectory() as tmp:
     amj1 = make_shipment(amj, "1.5x40-karachi", "AMJ01")
     make_shipment(amj, "2.5x40-karachi", "AMJ02")
     make_shipment(amj, "3.5x40-karachi", "AMJ03")
-    bl = add_bl_scan(amj1)                       # AMJ1 already has its BL -> done
+    mark_done(amj1)                              # AMJ1 has its export docs -> done
     make_shipment(root / "NMEHMOOD & CV.Hassan" / "2026", "1.k", "NIT01")
-
-    reader = lambda p: "BILL OF LADING" if str(p) == str(bl) else "PL"
 
     db = Database(db_path_for(root))
     db.initialize()
 
-    result = tracker.run_scan(db, root, year=2026, read_fields=fake_fields,
-                              page1_text=reader)
+    result = tracker.run_scan(db, root, year=2026, read_fields=fake_fields)
 
     imported = set(result.imported)
     check("imports the in-run, not-done shipments",
@@ -104,16 +100,14 @@ with tempfile.TemporaryDirectory() as tmp:
           {("AMJ", 1), ("AMJ", 2), ("AMJ", 3), ("NIT", 1)} <= keys)
 
     # ---- delta: a second scan imports nothing new -------------------------
-    again = tracker.run_scan(db, root, year=2026, read_fields=fake_fields,
-                             page1_text=reader)
+    again = tracker.run_scan(db, root, year=2026, read_fields=fake_fields)
     check("a rescan imports nothing new", again.imported == [])
     check("a rescan does not duplicate rows",
           len(db.query("SELECT id FROM shipments")) == 3)
 
     # ---- a new in-sequence folder appears ---------------------------------
     make_shipment(amj, "4.5x40-karachi", "AMJ04")
-    third = tracker.run_scan(db, root, year=2026, read_fields=fake_fields,
-                             page1_text=reader)
+    third = tracker.run_scan(db, root, year=2026, read_fields=fake_fields)
     check("a newly-added in-sequence folder is imported", third.imported == ["AMJ4"])
 
 

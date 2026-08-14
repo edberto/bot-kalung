@@ -1,8 +1,9 @@
 """Folder-scan tracker: series discovery, done-detection, contiguous run, delta.
 
 Builds a synthetic Drive tree mirroring the live layouts (flat, year subfolder,
-nested year, three sibling brands, a no-workbook series) and drives the scanner
-with an injected PDF reader so no real PDFs or Excel are needed.
+nested year, three sibling brands, a no-workbook series). Done-detection is
+filename-based (an export document in the send folder), so no real PDFs or Excel
+are needed.
 """
 
 import sys
@@ -122,37 +123,39 @@ with tempfile.TemporaryDirectory() as tmp:
     check("on a tie the more recent block wins",
           scanner.contiguous_run({1, 2, 5, 6}) == {5, 6})
 
-    # ==== done-detection (real BL naming: BL/OBL token, image scans) ========
-    bl_img = add_file(amj01 / "Dok kirim", "AMJ1-OBL.pdf")   # scanned image, no text
-    coo = add_file(amj02 / "Dok kirim", "AMJ2-COO.pdf")      # non-BL doc only
+    # ==== done-detection (export docs in the send folder) ===================
+    # amj1: a commercial invoice in the send folder -> done.
+    add_file(amj01 / "Dok kirim", "AMJ1-Karachi-INV.pdf")
+    # amj2: only a Fumi certificate -> still active (early step).
+    add_file(amj02 / "Dok kirim", "AMJ2-Fumi.pdf")
+    # amj3: no send folder at all -> active (left untouched).
     # Out-of-run folders (beyond the gap at 4) used only for is_done unit checks.
-    linebreak = make_shipment(amj, "8.linebreak", "AMJ08")
-    bl_txt = add_file(linebreak / "Dok kirim", "AMJ8-BL.pdf")   # marker wraps a line
-    notbl = make_shipment(amj, "9.notbl", "AMJ09")
-    bl_fake = add_file(notbl / "Dok kirim", "AMJ9-BL.pdf")      # BL name, no marker
+    coo_alt = make_shipment(amj, "8.coo", "AMJ08")
+    add_file(coo_alt / "Doc Kirim", "AMJ8 COO 2026.pdf")        # 'Doc Kirim' spelling
+    bl_num = make_shipment(amj, "9.bl", "AMJ09")
+    add_file(bl_num / "Dok kirim", "OOLU2322056310-OBL.pdf")    # BL named by number
+    empty = make_shipment(amj, "11.empty", "AMJ11")
+    (empty / "Dok kirim").mkdir()                               # empty send folder
+    phyto = make_shipment(amj, "12.phyto", "AMJ12")
+    add_file(phyto / "Dok kirim", "PHYTO 010226.pdf")           # phyto cert only
 
-    texts = {str(bl_img): "", str(coo): "CERTIFICATE OF ORIGIN",
-             str(bl_txt): "SHIPPER\nBILL OF\nLADING\nno 5",
-             str(bl_fake): "SOME UNRELATED DOCUMENT"}
-    reader = lambda p: texts.get(str(p), "")
-
-    check("a scanned-image BL (no text) is done by its BL name",
-          scanner.is_done(amj01, page1_text=reader))
-    check("a send folder with no BL document is not done",
-          not scanner.is_done(amj02, page1_text=reader))
-    check("a BL marker split across lines is detected",
-          scanner.is_done(linebreak, page1_text=reader))
-    check("a BL-named PDF whose text lacks the marker is not done",
-          not scanner.is_done(notbl, page1_text=reader))
+    check("an invoice in the send folder marks done", scanner.is_done(amj01))
+    check("a Fumi certificate alone is not done", not scanner.is_done(amj02))
+    check("no send folder is not done", not scanner.is_done(amj03))
+    check("a COO in a 'Doc Kirim' (alternate spelling) folder marks done",
+          scanner.is_done(coo_alt))
+    check("a BL/OBL document marks done", scanner.is_done(bl_num))
+    check("an empty send folder is not done", not scanner.is_done(empty))
+    check("a Phyto certificate alone is not done", not scanner.is_done(phyto))
 
     # ==== the scan plan =====================================================
-    result = scanner.scan(root, 2026, set(), page1_text=reader)
+    result = scanner.scan(root, 2026, set())
     imported = {c.label for c in result.to_import}
     done = {c.label for c in result.done}
 
     # Labels follow the app's convention of an unpadded integer sequence
     # ({exporter_code}{sequence_number}), so folder "1.5x40" -> "AMJ1".
-    check("AMJ1 (has a BL scan) is reported done", "AMJ1" in done)
+    check("AMJ1 (invoice filed) is reported done", "AMJ1" in done)
     check("AMJ1 is not imported", "AMJ1" not in imported)
     check("AMJ2 and AMJ3 (in-run, not done) are imported",
           {"AMJ2", "AMJ3"} <= imported)
@@ -171,7 +174,7 @@ with tempfile.TemporaryDirectory() as tmp:
           any("Ismeth" in note and "dilewati" in note for note in result.report))
 
     # ==== delta (registry) ==================================================
-    delta = scanner.scan(root, 2026, {("AMJ", 2), ("NIT", 1)}, page1_text=reader)
+    delta = scanner.scan(root, 2026, {("AMJ", 2), ("NIT", 1)})
     delta_imported = {c.label for c in delta.to_import}
     check("an already-registered shipment is not re-imported",
           "AMJ2" not in delta_imported and "NIT1" not in delta_imported)

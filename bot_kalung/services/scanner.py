@@ -8,8 +8,9 @@ ui/scan_controller.py). Keeping the plan pure makes the discovery, done-
 detection and contiguous-run rules testable without a database or Excel.
 
 Rules (confirmed with the user, 2026-08):
-* Done — a folder whose "Dok kirim" subfolder holds a Bill of Lading scan is
-  complete and is never imported.
+* Done — a shipment whose "send" subfolder ("Dok kirim" / "Doc Kirim") holds an
+  export document (invoice, packing list, COO, or BL/waybill) is complete and is
+  never imported. See is_done for why the BL itself is not detected directly.
 * In sequence — only the largest unbroken run of sequences is eligible, so a
   stray outlier (an old folder far below, or a folder jumped ahead of the run)
   is skipped. Sequences come from the folder's numeric prefix (the source of
@@ -26,14 +27,21 @@ from pathlib import Path
 
 from . import drive
 
-# The completed Bill of Lading lands in this subfolder (spelling is stable
-# across exporters, but the case is not). The real files are named with a BL/OBL
-# token — "NIT01-OBL.pdf", "CKJ15-BL.pdf", "BL ORIGINAL ....pdf" — never the
-# "SCAN" the spec first assumed (confirmed against the live Drive, 2026-08).
-_DOK_KIRIM = "dok kirim"
-# BL, or O/M/H-BL (Original / Master / House), as a standalone token.
-_BL_NAME = re.compile(r"\b[OMH]?BL\b", re.IGNORECASE)
-_BL_PAGE_MARKER = "BILL OF LADING"
+# A completed shipment's export documents land in its "send" subfolder — the
+# spelling and case both vary ("Dok kirim", "Doc Kirim").
+_SEND_FOLDERS = ("dok kirim", "doc kirim")
+# The Bill of Lading itself is named too many ways to detect — OBL/OHBL/SWB,
+# named by the carrier's BL number (OOLU…, BLW…, MEDU…), and usually an image
+# scan with no text layer. So completion is read from the export documents that
+# are always co-filed with it. Any one of these marks the shipment done; a Fumi
+# or Phyto certificate alone is an early step and does not (confirmed with the
+# user against NIT, 2026-08).
+_EXPORT_DOC = re.compile(
+    r"\binv(oice)?\b"                                   # commercial invoice
+    r"|\bpl\b|\bp\.?\s*list\b|packing"                  # packing list
+    r"|\bcoo\b|certificate of origin|\bform\s*[dea]\b"  # certificate of origin
+    r"|\b[omh]*bl\b|\bswb\b|waybill|telex",             # bill of lading / waybill
+    re.IGNORECASE)
 
 
 @dataclass
@@ -58,57 +66,28 @@ class ScanResult:
 
 # -- done-detection (Bill of Lading scan) --------------------------------
 
-def _looks_like_bl(name: str) -> bool:
-    """A PDF whose name marks it as the Bill of Lading."""
-    if not name.lower().endswith(".pdf"):
-        return False
-    upper = name.upper()
-    return bool(_BL_NAME.search(upper)) or _BL_PAGE_MARKER in upper
-
-
-def _has_bl_marker(text: str) -> bool:
-    """Whitespace-tolerant — the marker often wraps as "BILL OF\\nLADING"."""
-    return _BL_PAGE_MARKER in re.sub(r"\s+", " ", text).upper()
-
-
-def _default_page1_text(path: Path) -> str:
-    """First-page text of a PDF, or "" on any failure. Never raises."""
-    try:
-        import pdfplumber
-        with pdfplumber.open(str(path)) as pdf:
-            if not pdf.pages:
-                return ""
-            return pdf.pages[0].extract_text() or ""
-    except Exception:      # noqa: BLE001 - a scan must never crash a poll
-        return ""
-
-
-def _find_subfolder(folder: Path, name_lower: str) -> Path | None:
-    for entry in drive._safe_iterdir(folder):
-        if entry.is_dir() and entry.name.strip().lower() == name_lower:
+def _find_send_folder(folder: Path) -> Path | None:
+    for entry in drive._safe_iterdir(Path(folder)):
+        if entry.is_dir() and entry.name.strip().lower() in _SEND_FOLDERS:
             return entry
     return None
 
 
-def is_done(folder, *, page1_text=_default_page1_text) -> bool:
-    """True when the shipment's Bill of Lading has arrived.
+def is_done(folder) -> bool:
+    """True when the shipment's send folder holds an export document.
 
-    A PDF in the (case-insensitive) "Dok kirim" subfolder whose name carries a
-    BL/OBL token. When the PDF has a text layer we confirm the "BILL OF LADING"
-    page-1 marker (so a BL-named non-BL PDF does not count); a scanned-image BL
-    has no text, so the name in the send folder is taken as enough. `page1_text`
-    is injectable so the rule can be tested without real PDFs.
+    The BL is filed under a dozen different names and is often an image scan with
+    no text, so rather than identify it we take any of the export documents that
+    are co-filed with it at completion — the commercial invoice, packing list,
+    COO, or a recognisable BL/waybill. A Fumi or Phyto certificate alone is an
+    early step and does not count; an empty send folder is an active shipment.
+    Purely filename-based, so a scan opens no PDFs.
     """
-    dok = _find_subfolder(Path(folder), _DOK_KIRIM)
-    if dok is None:
+    send = _find_send_folder(folder)
+    if send is None:
         return False
-    for entry in drive._safe_iterdir(dok):
-        if not (entry.is_file() and _looks_like_bl(entry.name)):
-            continue
-        text = page1_text(entry)
-        if not text.strip() or _has_bl_marker(text):
-            return True
-    return False
+    return any(entry.is_file() and _EXPORT_DOC.search(entry.name)
+               for entry in drive._safe_iterdir(send))
 
 
 # -- contiguous-run gate -------------------------------------------------
@@ -139,12 +118,11 @@ def contiguous_run(present: set[int]) -> set[int]:
 # -- the scan ------------------------------------------------------------
 
 def scan(drive_root, year: int, registered: set[tuple[str, int]],
-         settings=None, *, page1_text=_default_page1_text) -> ScanResult:
+         settings=None) -> ScanResult:
     """Plan a scan of the Drive: which folders to import, which are done.
 
     `registered` is the set of `(code, seq)` the tracker already knows; those are
-    skipped so a scan only adds newly-eligible folders. `page1_text` is threaded
-    to `is_done` for testing.
+    skipped so a scan only adds newly-eligible folders.
     """
     result = ScanResult()
 
@@ -174,7 +152,7 @@ def scan(drive_root, year: int, registered: set[tuple[str, int]],
             if (code, seq) in registered:
                 continue
             candidate = slot[seq]
-            if is_done(candidate.folder, page1_text=page1_text):
+            if is_done(candidate.folder):
                 result.done.append(candidate)
             else:
                 result.to_import.append(candidate)

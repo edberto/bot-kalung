@@ -68,13 +68,12 @@ class ScanApplyResult:
 
 
 def run_scan(db: Database, drive_root, *, year: int | None = None, settings=None,
-             read_fields=excel.read_shipment_fields,
-             page1_text=scanner._default_page1_text) -> ScanApplyResult:
+             read_fields=excel.read_shipment_fields) -> ScanApplyResult:
     """Scan the Drive and import every newly-eligible shipment.
 
-    `read_fields` and `page1_text` are injectable so the whole import can be
-    driven in tests without Excel or real PDFs. Never raises for a single bad
-    shipment — its problem lands in `warnings` and the scan continues.
+    `read_fields` is injectable so the whole import can be driven in tests without
+    Excel. Never raises for a single bad shipment — its problem lands in
+    `warnings` and the scan continues.
     """
     year = year or date.today().year
     registry = ScannedRegistry(db)
@@ -82,8 +81,7 @@ def run_scan(db: Database, drive_root, *, year: int | None = None, settings=None
     quarantine = (settings.get("quarantine_countries") if settings else None) \
         or DEFAULT_QUARANTINE_COUNTRIES
 
-    plan = scanner.scan(drive_root, year, registry.registered_keys(), settings,
-                        page1_text=page1_text)
+    plan = scanner.scan(drive_root, year, registry.registered_keys(), settings)
     result = ScanApplyResult(report=plan.report)
 
     for candidate in plan.to_import:
