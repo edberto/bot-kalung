@@ -19,12 +19,15 @@ by the live Drive layout:
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from pathlib import Path
 
 from ..core.constants import (
+    DB_FOLDER_NAME,
     DEFAULT_EXPORTER_FOLDERS,
     DEFAULT_FILE_CODES,
     DEFAULT_SHIPMENT_SUBPATH,
+    EXCLUDED_SCAN_FOLDERS,
     EXPORTERS,
 )
 
@@ -61,6 +64,22 @@ def main_workbook_sequence(name: str) -> int | None:
     (then the caller falls back to the folder's numeric prefix)."""
     match = _CODE_SEQ_RE.match(name)
     return int(match.group("seq")) if match else None
+
+
+def main_workbook_code_seq(name: str) -> tuple[str, int] | None:
+    """The (exporter code, sequence) from a `{code}{seq}` main-workbook prefix.
+
+    "HAI26-2 iso-Katt-VGM,SI,Inv,P.List.xlsx" -> ("HAI", 26)
+    "NIT01-Karachi-VGM,SI,INV,PL.xlsx"        -> ("NIT", 1)
+
+    None when the name carries no code+digits prefix. Drives the folder-scan
+    tracker, where the exporter code is the shipment's identity rather than a
+    fixed per-folder mapping.
+    """
+    match = _CODE_SEQ_RE.match(name)
+    if not match:
+        return None
+    return match.group("code").upper(), int(match.group("seq"))
 
 
 def is_invoice(name: str) -> bool:
@@ -170,6 +189,119 @@ def latest_shipment_folder(exporter_folder, code: str, year: int,
                            settings=None) -> tuple[int, Path] | None:
     folders = scan_shipment_folders(exporter_folder, code, year, settings)
     return folders[-1] if folders else None
+
+
+# -- shipment-series discovery (folder-scan tracker) --------------------
+#
+# The tracker discovers active shipments by walking every exporter folder rather
+# than the fixed EXPORTERS list, so it must find where each business keeps its
+# numbered folders without a per-exporter subpath table. A "series directory" is
+# simply one that directly holds `\d+.`-prefixed folders. Three layouts occur on
+# the live Drive (confirmed 2026-08):
+#   * flat        — the exporter folder itself holds them (Three star-waleed,
+#                   Ismeth); tracked whole, as these keep no year subdivision.
+#   * year        — a "{year}"/"{year} Tasha" dir one level down (AMJ, HOPSON,
+#                   and TASHA-HUSSAIN-MAJEED's three brand folders).
+#   * nested year — a "{year}" dir two levels down (CV.Hassan, itself under
+#                   NMEHMOOD & CV.Hassan).
+
+
+@dataclass
+class SeriesDir:
+    """A directory holding a run of numbered shipment folders."""
+    path: Path
+    label: str          # human-readable, e.g. "HOPSON / 2026", for the report
+
+
+def _safe_iterdir(path: Path) -> list[Path]:
+    try:
+        return sorted(path.iterdir())
+    except OSError:
+        return []
+
+
+def _has_numbered_children(path: Path) -> bool:
+    """True when `path` directly contains a `\\d+.`-prefixed subfolder."""
+    return any(e.is_dir() and SEQ_PREFIX_RE.match(e.name)
+               for e in _safe_iterdir(path))
+
+
+def numbered_folders(directory) -> list[Path]:
+    """The `\\d+.`-prefixed shipment folders directly inside a series directory."""
+    return [e for e in _safe_iterdir(Path(directory))
+            if e.is_dir() and SEQ_PREFIX_RE.match(e.name)]
+
+
+def _excluded_scan_names(settings=None) -> set[str]:
+    names = list(EXCLUDED_SCAN_FOLDERS)
+    if settings is not None:
+        names += settings.get("excluded_scan_folders") or []
+    names.append(DB_FOLDER_NAME)      # never scan the database folder
+    return {n.strip().upper() for n in names}
+
+
+def discover_series(drive_root, year: int, settings=None) -> list[SeriesDir]:
+    """Every current-year shipment-series directory under the Drive root.
+
+    Only current-year series are returned (a directory whose name contains the
+    year, or a flat exporter root), so prior-year archives are ignored.
+    """
+    root = Path(drive_root)
+    if not root.is_dir():
+        return []
+    excluded = _excluded_scan_names(settings)
+    token = str(year)
+    series: list[SeriesDir] = []
+
+    for top in _safe_iterdir(root):
+        if not top.is_dir() or top.name.strip().upper() in excluded:
+            continue
+        # Flat layout: numbered folders sit directly in the exporter folder.
+        if _has_numbered_children(top):
+            series.append(SeriesDir(top, top.name))
+            continue
+        # Otherwise look for current-year series one or two levels down.
+        for sub in _safe_iterdir(top):
+            if not sub.is_dir():
+                continue
+            if token in sub.name and _has_numbered_children(sub):
+                series.append(SeriesDir(sub, f"{top.name} / {sub.name}"))
+                continue
+            for subsub in _safe_iterdir(sub):
+                if (subsub.is_dir() and token in subsub.name
+                        and _has_numbered_children(subsub)):
+                    series.append(SeriesDir(
+                        subsub, f"{top.name} / {sub.name} / {subsub.name}"))
+    return series
+
+
+def shipment_identity(folder: Path) -> tuple[str, int] | None:
+    """Identify a numbered shipment folder as (exporter_code, sequence).
+
+    The **sequence is the folder's own numeric prefix** — the source of truth,
+    per the user (2026-08): a workbook filename is often misnumbered (an `AMJ04`
+    workbook sits in a `40.1x40-Faizal` folder, and a copied "23.PENDING" folder
+    still carries an `AMJ22` workbook). Taking the sequence from the folder makes
+    that stray sort as AMJ40 (excluded by the run gate) and keeps the PENDING
+    folder distinct instead of colliding on a duplicate workbook number.
+
+    The **exporter code still comes from the main workbook**, since the folder
+    name does not carry one; only its digits are unreliable, not its letters. A
+    folder with no main workbook has no code and is skipped (Ismeth's loose-PDF
+    shipments). Note this deliberately inverts the legacy `_sequence_from_
+    documents`, which the kept resequence/etd_change features still rely on.
+    """
+    folder = Path(folder)
+    prefix = SEQ_PREFIX_RE.match(folder.name)
+    if not prefix:
+        return None
+    sequence = int(prefix.group(1))
+    for entry in _safe_iterdir(folder):
+        if entry.is_file() and is_main_workbook(entry.name):
+            identity = main_workbook_code_seq(entry.name)
+            if identity is not None:
+                return identity[0], sequence   # code: workbook; sequence: folder
+    return None
 
 
 def template_source_folder(exporter_folder, code: str, year: int,

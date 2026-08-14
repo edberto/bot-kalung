@@ -198,7 +198,7 @@ class Shipments:
 
     # -- writes ---------------------------------------------------------
 
-    def create(self, values: dict[str, Any]) -> str:
+    def create(self, values: dict[str, Any], *, seed_steps: bool = True) -> str:
         shipment_id = values.get("id") or new_id()
         self.db.execute(
             "INSERT INTO shipments ("
@@ -228,7 +228,8 @@ class Shipments:
                 datetime.now().isoformat(timespec="seconds"),
             ),
         )
-        self._seed_steps(shipment_id)
+        if seed_steps:
+            self._seed_steps(shipment_id)
         vessel = f"{values.get('vessel_name') or ''} " \
                  f"{values.get('voyage') or ''}".strip()
         self.audit.record(CREATED, shipment_id=shipment_id,

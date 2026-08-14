@@ -22,6 +22,7 @@ from .bnct_controller import BnctController
 from .dashboard import DashboardView
 from .history import HistoryView
 from ..services.notifications import NotificationStore
+from .scan_controller import ScanController
 from .scan_view import ScanView
 from .all_shipments import AllShipmentsView
 from .audit_view import AuditView
@@ -161,14 +162,25 @@ class MainWindow(QMainWindow):
         self.bnct.polled.connect(self._on_bnct_polled)
         self.settings.saved.connect(self.bnct.apply_interval)
 
-        # Whether this process may reach the live BNCT portal. Offscreen
-        # means tests/headless, where a network call would hang the run.
+        # -- folder-scan tracker -------------------------------------------
+        # Discovers active shipments by scanning the Drive on a timer; the
+        # ScanView drives a manual scan and shows the report.
+        self.scan = ScanController(ctx.db, ctx.settings, ctx.drive_root)
+        self.wizard.scan_requested.connect(self.scan.scan_now)
+        self.scan.started.connect(lambda: self.wizard.set_scanning(True))
+        self.scan.scanned.connect(self._on_scanned)
+        self.scan.error.connect(self.wizard.show_error)
+        self.settings.saved.connect(self.scan.apply_interval)
+
+        # Whether this process may reach the live BNCT portal / Drive. Offscreen
+        # means tests/headless, where a network call or Drive walk would hang.
         self._bnct_live = os.environ.get("QT_QPA_PLATFORM") != "offscreen"
 
         self.refresh()
         self._refresh_notification_badge()
         if self._bnct_live:
             self.bnct.start()
+            self.scan.start()
 
     # -- BNCT ------------------------------------------------------------
 
@@ -301,9 +313,16 @@ class MainWindow(QMainWindow):
     def open_wizard(self):
         self.current_shipment_id = None
         self.sidebar.select_shipment(None)
-        # The wizard is long-lived, so clear the previous run before showing it.
+        # The scan screen is long-lived, so clear the previous run before showing.
         self.wizard.reset()
         self._go(VIEW_WIZARD)
+
+    def _on_scanned(self, result):
+        """A folder scan finished — show its report and refresh the shipment set."""
+        self.wizard.show_result(result)
+        self.refresh()
+        if self.stack.currentIndex() == VIEW_ALL_SHIPMENTS:
+            self.all_shipments.refresh()
 
     def _on_shipment_completed(self, label: str):
         """PRD 6.4 — completing a shipment returns to the dashboard."""
@@ -426,6 +445,7 @@ class MainWindow(QMainWindow):
         # Let in-flight extraction / permit / connection checks finish so no
         # file stays locked and no worker outlives its receiver.
         self.bnct.stop()
+        self.scan.stop()
         self.detail.shutdown()
         self.wizard.shutdown()
         self.settings.shutdown()

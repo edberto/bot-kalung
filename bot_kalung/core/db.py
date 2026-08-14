@@ -139,6 +139,23 @@ CREATE TABLE IF NOT EXISTS monitored_vessels (
     last_reading    TEXT,
     state           TEXT
 );
+
+-- Registry for the folder-scan tracker (post-refactor). One row per
+-- {exporter_code}{sequence} the scan has handled, so delta scans only add newly
+-- eligible folders and never re-import. `done` marks a folder that already had
+-- its Bill of Lading scan (complete, never imported); `shipment_id` links the
+-- ones that were imported, and survives as a tombstone (SET NULL) if the user
+-- later deletes the shipment, so it is not re-imported.
+CREATE TABLE IF NOT EXISTS scanned_shipments (
+    id              TEXT PRIMARY KEY,
+    exporter_code   TEXT NOT NULL,
+    sequence_number INTEGER NOT NULL,
+    folder_path     TEXT,
+    done            INTEGER NOT NULL DEFAULT 0,
+    shipment_id     TEXT REFERENCES shipments(id) ON DELETE SET NULL,
+    imported_at     TEXT NOT NULL,
+    UNIQUE (exporter_code, sequence_number)
+);
 """
 
 # Indexes are created AFTER _add_missing_columns, because one references a
@@ -153,6 +170,7 @@ CREATE INDEX IF NOT EXISTS idx_notifications_read ON notifications(read);
 CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at);
 CREATE INDEX IF NOT EXISTS idx_steps_due ON workflow_steps(due_date);
 CREATE INDEX IF NOT EXISTS idx_monitored_created ON monitored_vessels(created_at);
+CREATE INDEX IF NOT EXISTS idx_scanned_shipment ON scanned_shipments(shipment_id);
 """
 
 

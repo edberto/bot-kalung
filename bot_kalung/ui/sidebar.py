@@ -109,7 +109,7 @@ class Sidebar(Panel):
         title.clicked.connect(self.home_clicked)
         layout.addWidget(title)
 
-        new_button = PrimaryButton("+  Pengiriman Baru")
+        new_button = PrimaryButton("⟳  Pindai Folder")
         new_button.clicked.connect(self.new_shipment_clicked)
         layout.addWidget(new_button)
 

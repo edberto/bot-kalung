@@ -16,10 +16,10 @@ from __future__ import annotations
 import re
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
-from . import naming
+from . import drive, naming
 
 
 # Identifies a container row by its reference back to the VGM sheet, e.g.
@@ -534,3 +534,197 @@ def open_book(path):
                 app.quit()
             except Exception:
                 pass
+
+
+# -- reading a shipment's fields (folder-scan tracker) --------------------
+#
+# The tracker imports shipments straight off the Drive, so it reads what a
+# shipment already knows from its own SI/VGM workbook rather than from a DO. The
+# label positions are the same ones prefill_* writes to (confirmed against the
+# live NIT01 workbook, 2026-08):
+#   SI  — "Port of Discharge" -> "KARACHI, PAKISTAN", "ETD" -> "27 JANUARY 2026",
+#         "Party" -> "5 X 40'HC".
+#   VGM — "VESSEL NAME" (col E) -> "INTEGRA-162E", "BOOKING NO" (col E), and the
+#         container table under "CONTAINER NO" (col D holds the numbers).
+# The VGM's own "DATE" cell is unreliable (it read 2025 for a 2026 ETD), so the
+# ETD is always taken from the SI.
+
+
+@dataclass
+class ShipmentFields:
+    """What the scanner can read off a shipment's main workbook. Everything is
+    optional — a partially-filled workbook still imports with what it has.
+    """
+    destination_port: str | None = None
+    destination_country: str | None = None
+    etd: date | None = None
+    vessel_name: str | None = None
+    voyage: str | None = None
+    booking_number: str | None = None
+    container_quantity: int | None = None
+    container_size_short: str | None = None
+    containers: list[str] = field(default_factory=list)  # container numbers
+    workbook: str | None = None
+    warnings: list[str] = field(default_factory=list)
+
+
+def find_main_workbook(folder) -> Path | None:
+    """The VGM/SI/Inv/PL workbook in a shipment folder, or None."""
+    try:
+        entries = sorted(Path(folder).iterdir())
+    except OSError:
+        return None
+    for entry in entries:
+        if entry.is_file() and drive.is_main_workbook(entry.name):
+            return entry
+    return None
+
+
+def _split_destination(value) -> tuple[str | None, str | None]:
+    """"KARACHI, PAKISTAN" -> ("Karachi", "Pakistan")."""
+    if not isinstance(value, str) or not value.strip():
+        return None, None
+    parts = [p.strip() for p in value.split(",", 1)]
+    port = parts[0].title() or None
+    country = parts[1].title() if len(parts) == 2 and parts[1] else None
+    return port, country
+
+
+def _parse_long_date(value) -> date | None:
+    """A date cell that may arrive as a real date or as "27 JANUARY 2026"."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    match = re.match(r"(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})", str(value).strip())
+    if not match:
+        return None
+    try:
+        month = naming.MONTHS_EN.index(match.group(2).upper()) + 1
+        return date(int(match.group(3)), month, int(match.group(1)))
+    except (ValueError, IndexError):
+        return None
+
+
+def _parse_party(value) -> tuple[int | None, str | None]:
+    """"5 X 40'HC" -> (5, "40'HC")."""
+    if not isinstance(value, str):
+        return None, None
+    match = re.match(r"\s*(\d+)\s*[Xx]\s*(.+)", value)
+    if not match:
+        return None, None
+    return int(match.group(1)), match.group(2).strip() or None
+
+
+def _split_vessel_voyage(value) -> tuple[str | None, str | None]:
+    """Split the VGM's combined "VESSEL NAME" cell into (vessel, voyage).
+
+    The voyage is the trailing token after the last space/hyphen, but only when
+    it carries both a letter and a digit — that tells a real voyage ("162E",
+    "021N", "N375") apart from a number that is part of the vessel's own name
+    ("WAN HAI 101"). Formats seen live: "INTEGRA-162E", "WAN HAI 101-N375",
+    "MAO GANG GUANG ZHOU 021N".
+    """
+    if not isinstance(value, str) or not value.strip():
+        return None, None
+    text = value.strip()
+    match = re.match(r"^(?P<vessel>.*\S)[\s\-]+(?P<voyage>\S+)$", text)
+    if match:
+        voyage = match.group("voyage")
+        if re.search(r"[A-Za-z]", voyage) and re.search(r"\d", voyage):
+            return match.group("vessel").strip(), voyage.upper()
+    return text, None
+
+
+def _clean_booking(value) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    text = str(value).strip()
+    return text or None
+
+
+def _read_si(sheet, fields: ShipmentFields) -> None:
+    # Most exporters label it "Port of Discharge"; AMJ uses "Destination".
+    for label in ("PORT OF DISCHARGE", "DESTINATION"):
+        pod = find_label(sheet, label)
+        if not pod:
+            continue
+        raw = sheet.range((pod[0], value_column_after(sheet, *pod))).value
+        port, country = _split_destination(raw)
+        if port:
+            fields.destination_port, fields.destination_country = port, country
+            break
+
+    etd = find_label(sheet, "ETD", exact=True)
+    if etd:
+        raw = sheet.range((etd[0], value_column_after(sheet, *etd))).value
+        fields.etd = _parse_long_date(raw)
+
+    party = find_label(sheet, "Party", exact=True)
+    if party:
+        raw = sheet.range((party[0], value_column_after(sheet, *party))).value
+        fields.container_quantity, fields.container_size_short = _parse_party(raw)
+
+
+def _read_vgm(sheet, fields: ShipmentFields) -> None:
+    # VGM label sits in column B; its value is in column E across every exporter
+    # (the same cell prefill writes to).
+    vessel = find_label(sheet, "VESSEL NAME", column=2)
+    if vessel:
+        fields.vessel_name, fields.voyage = _split_vessel_voyage(
+            sheet.range((vessel[0], 5)).value)
+
+    booking = find_label(sheet, "BOOKING NO", column=2)
+    if booking:
+        fields.booking_number = _clean_booking(sheet.range((booking[0], 5)).value)
+
+    try:
+        _, rows = vgm_container_rows(sheet)
+    except ExcelError:
+        fields.warnings.append("Tabel kontainer VGM tidak ditemukan.")
+        return
+    numbers = []
+    for row in rows:
+        value = sheet.range((row, 4)).value      # column D — container number
+        if isinstance(value, str) and value.strip():
+            numbers.append(value.strip().upper())
+    fields.containers = numbers
+    # The container-row count is the party size; trust it when the SI had no
+    # "Party" cell, and take the size from the first row likewise.
+    if fields.container_quantity is None and rows:
+        fields.container_quantity = len(rows)
+    if fields.container_size_short is None and rows:
+        size = sheet.range((rows[0], 3)).value
+        if isinstance(size, str) and size.strip():
+            fields.container_size_short = size.strip()
+
+
+def read_shipment_fields(folder) -> ShipmentFields:
+    """Read destination, ETD, vessel/voyage, party size and containers from a
+    shipment folder's main workbook. Never raises — problems land in `warnings`.
+    """
+    fields = ShipmentFields()
+    workbook = find_main_workbook(folder)
+    if workbook is None:
+        fields.warnings.append("Tidak ada workbook VGM/SI/Inv/PL di folder ini.")
+        return fields
+    fields.workbook = workbook.name
+    try:
+        with open_book(workbook) as book:
+            si = find_sheet(book, "SI")
+            if si is not None:
+                _read_si(si, fields)
+            else:
+                fields.warnings.append("Sheet SI tidak ditemukan.")
+            vgm = find_sheet(book, "VGM")
+            if vgm is not None:
+                _read_vgm(vgm, fields)
+            else:
+                fields.warnings.append("Sheet VGM tidak ditemukan.")
+    except Exception as exc:      # noqa: BLE001 - a bad workbook must not crash a scan
+        fields.warnings.append(f"Gagal membaca Excel: {exc}")
+    return fields

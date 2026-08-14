@@ -63,6 +63,19 @@ WORKER_EMAILS = [
     "edbertongko88@gmail.com",
 ]
 
+# Folder-scan tracking (post-refactor): the app discovers active shipments by
+# walking every exporter folder under the Drive root, so the fixed EXPORTERS list
+# above no longer bounds the scan. These top-level folders are skipped — they are
+# either not exporters (expenses, tax, relations) or businesses the user asked to
+# leave alone. Matched case-insensitively against the folder name.
+EXCLUDED_SCAN_FOLDERS = [
+    "PENGELUARAN",          # expenses
+    "PPH",                  # tax
+    "RELASI",               # relations / contacts
+    "GETAH ROMI",           # excluded by the user (2026-08)
+    "LHOONG SETIA MINING",  # excluded by the user (2026-08)
+]
+
 # PRD Section 13.0 — shared database location inside Google Drive.
 # The "zzz " prefix keeps the folder at the bottom of an alphabetical listing
 # (plain letters, so the ordering holds in Explorer and in Drive on the web),
