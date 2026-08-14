@@ -263,8 +263,9 @@ class ShipmentDetailView(QWidget):
         scroll_layout.setContentsMargins(0, 0, 0, 0)
         scroll_layout.setSpacing(16)
 
-        # Top row: action items (left) + notes (right). AlignTop so a short card
-        # sizes to its content instead of stretching into a big empty box.
+        # Top row: action items (left) + notes (right). No AlignTop here — both
+        # cards fill the row's height so they stay level; the notes text area
+        # stretches to match and scrolls when its content overflows.
         top = Qt.AlignmentFlag.AlignTop
         top_row = QHBoxLayout()
         top_row.setSpacing(16)
@@ -272,11 +273,11 @@ class ShipmentDetailView(QWidget):
         self.items_view.status_changed.connect(self._on_status_changed)
         self.items_view.add_requested.connect(self._on_add_item)
         self.items_view.delete_requested.connect(self._on_delete_item)
-        top_row.addWidget(self.items_view, 3, top)
+        top_row.addWidget(self.items_view, 3)
 
         self.notes_panel = NotesPanel()
         self.notes_panel.notes_edited.connect(self._on_notes_edited)
-        top_row.addWidget(self.notes_panel, 2, top)
+        top_row.addWidget(self.notes_panel, 2)
         scroll_layout.addLayout(top_row)
 
         # Bottom row: vessel tracking (left) + container tracking (right).

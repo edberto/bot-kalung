@@ -6,9 +6,9 @@ from . import theme
 
 from datetime import date
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QPoint, QRect, QSize, Qt
 from PyQt6.QtWidgets import (
-    QComboBox, QDateEdit, QLabel, QPushButton, QSpinBox, QWidget,
+    QComboBox, QDateEdit, QLabel, QLayout, QPushButton, QSpinBox, QWidget,
 )
 
 MONTHS_ID = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli",
@@ -49,6 +49,75 @@ class Panel(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
 
 
+class FlowLayout(QLayout):
+    """A layout that wraps its items onto the next line when a row runs out of
+    horizontal room (adapted from Qt's flow-layout example).
+
+    Used where a variable number of small chips must stay inside a narrow,
+    fixed-width card instead of spilling off its right edge.
+    """
+
+    def __init__(self, parent=None, spacing=5):
+        super().__init__(parent)
+        self.setContentsMargins(0, 0, 0, 0)
+        self.setSpacing(spacing)
+        self._items = []
+
+    def addItem(self, item):
+        self._items.append(item)
+
+    def count(self):
+        return len(self._items)
+
+    def itemAt(self, index):
+        return self._items[index] if 0 <= index < len(self._items) else None
+
+    def takeAt(self, index):
+        return self._items.pop(index) if 0 <= index < len(self._items) else None
+
+    def expandingDirections(self):
+        return Qt.Orientation(0)
+
+    def hasHeightForWidth(self):
+        return True
+
+    def heightForWidth(self, width):
+        return self._do_layout(QRect(0, 0, width, 0), test_only=True)
+
+    def setGeometry(self, rect):
+        super().setGeometry(rect)
+        self._do_layout(rect, test_only=False)
+
+    def sizeHint(self):
+        return self.minimumSize()
+
+    def minimumSize(self):
+        size = QSize()
+        for item in self._items:
+            size = size.expandedTo(item.minimumSize())
+        left, top, right, bottom = self.getContentsMargins()
+        return size + QSize(left + right, top + bottom)
+
+    def _do_layout(self, rect, test_only):
+        left, top, right, bottom = self.getContentsMargins()
+        effective = rect.adjusted(left, top, -right, -bottom)
+        x, y, line_height = effective.x(), effective.y(), 0
+        spacing = self.spacing()
+        for item in self._items:
+            hint = item.sizeHint()
+            next_x = x + hint.width() + spacing
+            if next_x - spacing > effective.right() and line_height > 0:
+                x = effective.x()
+                y = y + line_height + spacing
+                next_x = x + hint.width() + spacing
+                line_height = 0
+            if not test_only:
+                item.setGeometry(QRect(QPoint(x, y), hint))
+            x = next_x
+            line_height = max(line_height, hint.height())
+        return y + line_height - rect.y() + bottom
+
+
 # Shared styling for the shipment-detail sections, so the four panels read as
 # clearly separated, prominently-titled cards.
 CARD_STYLE = ("background: #ffffff; border: 1px solid #e5e7eb;"
@@ -81,13 +150,18 @@ class SecondaryButton(QPushButton):
     def __init__(self, text: str = ""):
         super().__init__(text)
         self.setMinimumHeight(36)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        # A solid (if muted) fill so the button stays visible on a white card,
+        # instead of a near-invisible white-on-white outline.
         self.setStyleSheet(theme.style("""
             QPushButton {
-                background: white; color: #1f2937; border: 1px solid #d1d5db;
-                border-radius: 6px; padding: 8px 16px;
+                background: #eef2f7; color: #1f2937; border: 1px solid #cbd5e1;
+                border-radius: 6px; padding: 8px 16px; font-weight: 600;
             }
-            QPushButton:hover:enabled { background: #f3f4f6; }
-            QPushButton:disabled { color: #9ca3af; }
+            QPushButton:hover:enabled { background: #e2e8f0; border-color: #94a3b8; }
+            QPushButton:pressed:enabled { background: #d7dee7; }
+            QPushButton:disabled { background: #f5f6f8; color: #9ca3af;
+                                   border-color: #e5e7eb; }
         """))
 
 
@@ -97,13 +171,16 @@ class DangerButton(QPushButton):
     def __init__(self, text: str = ""):
         super().__init__(text)
         self.setMinimumHeight(36)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setStyleSheet(theme.style("""
             QPushButton {
-                background: white; color: #b91c1c; border: 1px solid #fca5a5;
-                border-radius: 6px; padding: 8px 16px;
+                background: #fdeaea; color: #b91c1c; border: 1px solid #f3b4b4;
+                border-radius: 6px; padding: 8px 16px; font-weight: 600;
             }
-            QPushButton:hover:enabled { background: #fef2f2; border-color: #f87171; }
-            QPushButton:disabled { color: #9ca3af; border-color: #e5e7eb; }
+            QPushButton:hover:enabled { background: #fbdcdc; border-color: #f87171; }
+            QPushButton:pressed:enabled { background: #f7cccc; }
+            QPushButton:disabled { background: #f9fafb; color: #9ca3af;
+                                   border-color: #e5e7eb; }
         """))
 
 

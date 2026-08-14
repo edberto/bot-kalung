@@ -7,7 +7,7 @@ removing. Notes is a free-text box beside the list.
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import QEvent, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QHBoxLayout, QLabel, QPushButton, QTextEdit, QVBoxLayout,
 )
@@ -25,6 +25,53 @@ _STATUS_COLOR = {
     "draft_ok": "#0891b2",
     "final": "#16a34a",
 }
+
+
+class _StatusCombo(ComboBox):
+    """A status dropdown that reads as a modern pill: its current value is
+    centred and tinted by the status colour, and clicking anywhere opens it.
+
+    A non-editable QComboBox can't centre its collapsed text, so it is made
+    editable with a read-only, centred line edit standing in for the display.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.setEditable(True)
+        edit = self.lineEdit()
+        edit.setReadOnly(True)
+        edit.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        edit.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        edit.setCursor(Qt.CursorShape.PointingHandCursor)
+        edit.setStyleSheet("border: none; background: transparent;")
+        edit.installEventFilter(self)          # click the field, not just the arrow
+
+        for status in ACTION_STATUSES:
+            self.addItem(ACTION_STATUS_LABELS[status], status)
+        for index in range(self.count()):       # centre the popup rows too
+            self.setItemData(index, Qt.AlignmentFlag.AlignCenter,
+                             Qt.ItemDataRole.TextAlignmentRole)
+
+    def eventFilter(self, obj, event):
+        if obj is self.lineEdit() and event.type() == QEvent.Type.MouseButtonPress:
+            self.showPopup()
+            return True
+        return super().eventFilter(obj, event)
+
+    def apply_color(self, color: str):
+        """Tint the pill to the current status' colour."""
+        self.setStyleSheet(theme.style(f"""
+            QComboBox {{ background: #ffffff; border: 1px solid #e5e7eb;
+                border-radius: 8px; padding: 5px 8px; font-size: 12px;
+                font-weight: 700; color: {color}; }}
+            QComboBox:hover {{ border-color: {color}; }}
+            QComboBox::drop-down {{ border: none; width: 20px; }}
+            QComboBox::down-arrow {{ width: 10px; height: 10px; }}
+            QComboBox QAbstractItemView {{ border: 1px solid #e5e7eb;
+                border-radius: 8px; background: #ffffff; padding: 4px;
+                outline: none; selection-background-color: #eff6ff;
+                selection-color: #111827; }}
+        """))
 
 
 class ActionItemRow(Panel):
@@ -52,14 +99,13 @@ class ActionItemRow(Panel):
             "font-weight: 600; color: #111827;"))
         row.addWidget(title, 1)
 
-        self.status_combo = ComboBox()
+        self.status_combo = _StatusCombo()
         self.status_combo.setFixedWidth(150)
-        for status in ACTION_STATUSES:
-            self.status_combo.addItem(ACTION_STATUS_LABELS[status], status)
         self.status_combo.setCurrentIndex(
             ACTION_STATUSES.index(item.status)
             if item.status in ACTION_STATUSES else 0)
-        self.status_combo.currentIndexChanged.connect(self._emit_status)
+        self.status_combo.apply_color(color)
+        self.status_combo.currentIndexChanged.connect(self._on_status_picked)
         row.addWidget(self.status_combo, 0, Qt.AlignmentFlag.AlignVCenter)
 
         delete = QPushButton("✕")
@@ -74,8 +120,13 @@ class ActionItemRow(Panel):
         delete.clicked.connect(lambda: self.delete_requested.emit(self.item_id))
         row.addWidget(delete, 0, Qt.AlignmentFlag.AlignVCenter)
 
-    def _emit_status(self):
-        self.status_changed.emit(self.item_id, self.status_combo.currentData())
+    def _on_status_picked(self):
+        status = self.status_combo.currentData()
+        # Retint the pill and the row's accent so the new state reads instantly,
+        # before the surrounding list is rebuilt.
+        color = _STATUS_COLOR.get(status, "#9ca3af")
+        self.status_combo.apply_color(color)
+        self.status_changed.emit(self.item_id, status)
 
 
 class ActionItemsView(Panel):
