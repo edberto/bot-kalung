@@ -151,18 +151,23 @@ class SecondaryButton(QPushButton):
         super().__init__(text)
         self.setMinimumHeight(36)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        # A solid (if muted) fill so the button stays visible on a white card,
-        # instead of a near-invisible white-on-white outline.
-        self.setStyleSheet(theme.style("""
-            QPushButton {
-                background: #eef2f7; color: #1f2937; border: 1px solid #cbd5e1;
+        # Built from theme tokens (not literal hex) so the fill AND the text are
+        # both correct in dark mode — a hardcoded light fill left the text
+        # invisible there. A solid muted fill keeps it visible on a white card.
+        self.setStyleSheet(f"""
+            QPushButton {{
+                background: {theme.color('track')}; color: {theme.color('text')};
+                border: 1px solid {theme.color('border_strong')};
                 border-radius: 6px; padding: 8px 16px; font-weight: 600;
-            }
-            QPushButton:hover:enabled { background: #e2e8f0; border-color: #94a3b8; }
-            QPushButton:pressed:enabled { background: #d7dee7; }
-            QPushButton:disabled { background: #f5f6f8; color: #9ca3af;
-                                   border-color: #e5e7eb; }
-        """))
+            }}
+            QPushButton:hover:enabled {{ background: {theme.color('accent_soft')};
+                border-color: {theme.color('accent')};
+                color: {theme.color('accent')}; }}
+            QPushButton:pressed:enabled {{ background: {theme.color('selection')}; }}
+            QPushButton:disabled {{ background: {theme.color('surface_muted')};
+                color: {theme.color('text_faint')};
+                border-color: {theme.color('border')}; }}
+        """)
 
 
 class DangerButton(QPushButton):
@@ -172,16 +177,20 @@ class DangerButton(QPushButton):
         super().__init__(text)
         self.setMinimumHeight(36)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setStyleSheet(theme.style("""
-            QPushButton {
-                background: #fdeaea; color: #b91c1c; border: 1px solid #f3b4b4;
+        # The error banner triple is theme-aware, so the red pill adapts to dark
+        # mode instead of staying a light chip with invisible text.
+        fg, bg, border = theme.banner("error")
+        self.setStyleSheet(f"""
+            QPushButton {{
+                background: {bg}; color: {fg}; border: 1px solid {border};
                 border-radius: 6px; padding: 8px 16px; font-weight: 600;
-            }
-            QPushButton:hover:enabled { background: #fbdcdc; border-color: #f87171; }
-            QPushButton:pressed:enabled { background: #f7cccc; }
-            QPushButton:disabled { background: #f9fafb; color: #9ca3af;
-                                   border-color: #e5e7eb; }
-        """))
+            }}
+            QPushButton:hover:enabled {{ background: {border}; }}
+            QPushButton:pressed:enabled {{ background: {border}; }}
+            QPushButton:disabled {{ background: {theme.color('surface_muted')};
+                color: {theme.color('text_faint')};
+                border-color: {theme.color('border')}; }}
+        """)
 
 
 class _NoWheelMixin:

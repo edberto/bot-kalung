@@ -68,9 +68,13 @@ class _StatusCombo(ComboBox):
             QComboBox::drop-down {{ border: none; width: 20px; }}
             QComboBox::down-arrow {{ width: 10px; height: 10px; }}
             QComboBox QAbstractItemView {{ border: 1px solid #e5e7eb;
-                border-radius: 8px; background: #ffffff; padding: 4px;
-                outline: none; selection-background-color: #eff6ff;
-                selection-color: #111827; }}
+                border-radius: 8px; background: #ffffff; padding: 0;
+                outline: none; }}
+            QComboBox QAbstractItemView::item {{ min-height: 28px;
+                padding: 5px 12px; border: none; color: #111827; }}
+            QComboBox QAbstractItemView::item:hover {{ background: #f3f4f6; }}
+            QComboBox QAbstractItemView::item:selected {{ background: #eef2ff;
+                color: #1d4ed8; }}
         """))
 
 
@@ -122,11 +126,17 @@ class ActionItemRow(Panel):
 
     def _on_status_picked(self):
         status = self.status_combo.currentData()
-        # Retint the pill and the row's accent so the new state reads instantly,
-        # before the surrounding list is rebuilt.
+        # Retint the pill and the row's accent in place so the new state reads
+        # instantly — the list is no longer rebuilt on a status change.
         color = _STATUS_COLOR.get(status, "#9ca3af")
+        self.setStyleSheet(theme.style(
+            "background: #f9fafb; border: 1px solid #e5e7eb;"
+            f"border-left: 3px solid {color}; border-radius: 8px;"))
         self.status_combo.apply_color(color)
         self.status_changed.emit(self.item_id, status)
+
+    def current_status(self) -> str:
+        return self.status_combo.currentData()
 
 
 class ActionItemsView(Panel):
