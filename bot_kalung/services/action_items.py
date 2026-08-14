@@ -85,6 +85,28 @@ class ActionItems:
         done = sum(1 for r in rows if r["status"] == ACTION_STATUS_DONE)
         return done, len(rows)
 
+    def progress_map(self, shipment_ids) -> dict[str, tuple[int, int]]:
+        """{shipment_id: (done, total)} for many shipments in ONE query.
+
+        The sidebar shows a progress count per active shipment; querying each one
+        separately opens a fresh connection per shipment to the Drive-hosted DB,
+        which is slow. This batches them into a single round-trip.
+        """
+        ids = list(shipment_ids)
+        if not ids:
+            return {}
+        placeholders = ",".join("?" for _ in ids)
+        rows = self.db.query(
+            f"SELECT shipment_id, status FROM action_items "
+            f"WHERE shipment_id IN ({placeholders})", tuple(ids))
+        tally: dict[str, list] = {sid: [0, 0] for sid in ids}
+        for r in rows:
+            entry = tally[r["shipment_id"]]
+            entry[1] += 1
+            if r["status"] == ACTION_STATUS_DONE:
+                entry[0] += 1
+        return {sid: (done, total) for sid, (done, total) in tally.items()}
+
     def count_overdue(self) -> int:
         """Action items on active shipments whose due date has passed and are not
         yet final — the dashboard's overdue metric.

@@ -111,6 +111,7 @@ class MainWindow(QMainWindow):
 
         self.detail = ShipmentDetailView(ctx.db, ctx.settings)
         self.detail.changed.connect(self.refresh)
+        self.detail.progress_changed.connect(self.refresh_sidebar)
         self.detail.completed.connect(self._on_shipment_completed)
         self.detail.deleted.connect(self._on_shipment_deleted)
         self.detail.bnct_refresh_requested.connect(self._bnct_poll_now)
@@ -475,14 +476,26 @@ class MainWindow(QMainWindow):
         self.settings.shutdown()
         super().closeEvent(event)
 
+    def _progress_lookup(self, active):
+        """A (done, total) lookup for the active shipments, from ONE batched
+        query instead of one connection per shipment to the Drive-hosted DB."""
+        progress = self.action_items.progress_map([s["id"] for s in active])
+        return lambda sid: progress.get(sid, (0, 0))
+
     def refresh(self):
         active = self.shipments.active()
-        self.sidebar.refresh(active, self.action_items.progress)
-        self.dashboard.refresh(
-            active, self.action_items.progress,
-            overdue=self.action_items.count_overdue(),
-            this_month=self.shipments.count_completed_this_month())
+        lookup = self._progress_lookup(active)
+        self.sidebar.refresh(active, lookup)
+        # The dashboard is calendar-only now and ignores these metrics, so don't
+        # pay for the overdue / completed-this-month queries on every refresh.
+        self.dashboard.refresh(active, lookup, overdue=0, this_month=0)
         # A deleted shipment cascades its notifications away, so keep the badge
         # in sync with any change to the shipment set.
         if hasattr(self, "notification_store"):
             self._refresh_notification_badge()
+
+    def refresh_sidebar(self):
+        """Light refresh for a per-item progress change: only the sidebar's
+        progress counts move, so skip the dashboard, calendar and badge work."""
+        active = self.shipments.active()
+        self.sidebar.refresh(active, self._progress_lookup(active))

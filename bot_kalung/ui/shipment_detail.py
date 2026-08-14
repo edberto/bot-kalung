@@ -23,7 +23,7 @@ from PyQt6.QtWidgets import (
     QScrollArea, QVBoxLayout, QWidget,
 )
 
-from ..core.constants import EXPORTER_COLORS
+from ..core.constants import ACTION_STATUS_DONE, EXPORTER_COLORS
 from ..services import fileops
 from ..services.action_items import ActionItems
 from ..services.bnct import LOGIN_URL
@@ -139,6 +139,7 @@ class ShipmentDetailView(QWidget):
 
     error = pyqtSignal(str)
     changed = pyqtSignal()          # something changed; sidebar/dashboard reload
+    progress_changed = pyqtSignal()  # only item progress changed; light refresh
     completed = pyqtSignal(str)     # shipment marked complete, carries its label
     deleted = pyqtSignal(str)       # shipment removed; carries a note to show
     bnct_refresh_requested = pyqtSignal()   # kept for the window's connection
@@ -413,9 +414,21 @@ class ShipmentDetailView(QWidget):
             "background: #eef2ff; border: 2px solid #2563eb; border-radius: 6px;"))
 
     def _on_status_changed(self, item_id: str, status: str):
+        # The row recoloured itself already; just persist the change and update
+        # the progress bar from the in-memory rows — no re-query, no widget
+        # rebuild. The sidebar count follows via the lighter progress_changed.
         self.items.set_status(item_id, status)
-        self._refresh_items()
-        self.changed.emit()
+        self._update_progress_inline()
+        self.progress_changed.emit()
+
+    def _update_progress_inline(self):
+        rows = self.items_view.rows
+        total = len(rows)
+        done = sum(1 for row in rows.values()
+                   if row.current_status() == ACTION_STATUS_DONE)
+        self.progress_label.setText(f"{done} dari {total} item final")
+        self.progress_bar.setRange(0, max(total, 1))
+        self.progress_bar.setValue(done)
 
     def _on_add_item(self):
         dialog = _AddItemDialog(self)
@@ -441,7 +454,8 @@ class ShipmentDetailView(QWidget):
             return
         self.shipments.set_notes(self.shipment_id, text)
         self.message.show_success("Catatan disimpan.")
-        self.changed.emit()
+        # Notes are not shown in the sidebar/dashboard/calendar, so nothing else
+        # needs reloading — skip the refresh cascade entirely.
 
     # -- ETD ---------------------------------------------------------------
 
