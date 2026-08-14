@@ -9,7 +9,7 @@ be added and any item can be deleted (lifecycle is manual, per the user).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 
 from ..core.constants import (
     ACTION_ITEM_SEEDS,
@@ -84,6 +84,17 @@ class ActionItems:
             "SELECT status FROM action_items WHERE shipment_id=?", (shipment_id,))
         done = sum(1 for r in rows if r["status"] == ACTION_STATUS_DONE)
         return done, len(rows)
+
+    def count_overdue(self) -> int:
+        """Action items on active shipments whose due date has passed and are not
+        yet final — the dashboard's overdue metric.
+        """
+        today = date.today().isoformat()
+        rows = self.db.query(
+            "SELECT a.id FROM action_items a JOIN shipments s ON s.id=a.shipment_id "
+            "WHERE s.status='active' AND a.due_date IS NOT NULL "
+            "AND a.due_date < ? AND a.status != ?", (today, ACTION_STATUS_DONE))
+        return len(rows)
 
     # -- seeding on import ----------------------------------------------
 

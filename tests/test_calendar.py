@@ -1,4 +1,4 @@
-"""Month calendar, per-step dates, and entry colours (2026-07-22)."""
+"""Month calendar, per-action-item dates, and entry colours."""
 
 import os
 import sys
@@ -14,18 +14,17 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PyQt6.QtWidgets import QApplication, QLabel
 
 import bot_kalung.services.shipments as _shipments_mod
+import bot_kalung.services.action_items as _action_items_mod
 import bot_kalung.ui.calendar_view as _calendar_view_mod
 import bot_kalung.ui.dashboard as _dashboard_mod
 from bot_kalung.core.context import AppContext
+from bot_kalung.services.action_items import ActionItems
 from bot_kalung.services.shipments import Shipments
 from bot_kalung.ui.calendar_view import MAX_PER_DAY, EntryCard, MonthCalendar
 from bot_kalung.ui.main_window import VIEW_DETAIL, MainWindow
 
-# The calendar shows one month at a time. Offsetting a few days from the *real*
-# today would, near a month boundary, push demo entries into an adjacent month's
-# grid where the assertions can't see them (e.g. an ETD at today+5 lands in the
-# next month on the 31st). Freeze "today" to a stable mid-month date so every
-# demo entry shares the displayed month whatever the real date is.
+# Freeze "today" to a stable mid-month date (see the note in earlier revisions):
+# demo entries a few days out must stay inside the displayed month's grid.
 FROZEN_TODAY = date(2026, 6, 15)
 
 
@@ -36,6 +35,7 @@ class _FrozenDate(date):
 
 
 _shipments_mod.date = _FrozenDate
+_action_items_mod.date = _FrozenDate
 _calendar_view_mod.date = _FrozenDate
 _dashboard_mod.date = _FrozenDate
 
@@ -63,6 +63,7 @@ with tempfile.TemporaryDirectory() as tmp:
     ctx.create(root)
     ctx.settings.set_many({"setup_complete": "1", "my_email": "a@x.com"})
     shipments = Shipments(ctx.db)
+    items = ActionItems(ctx.db)
 
     sid = shipments.create({
         "exporter_code": "AMJ", "sequence_number": 24,
@@ -70,37 +71,30 @@ with tempfile.TemporaryDirectory() as tmp:
         "etd_belawan": iso(5), "destination_port": "KARACHI",
         "destination_country": "PAKISTAN", "container_quantity": 1,
         "container_size_short": "40'",
-    })
+    }, seed_steps=False)
+    items.seed(sid, "AMJ", "Pakistan")
+    by_code = {i.code: i.id for i in items.list(sid)}
+    fumi, phyto, coo = by_code["fumi"], by_code["phyto"], by_code["coo"]
 
-    # ---- setting and clearing a step date --------------------------------
-    shipments.set_step_date(sid, "A2", iso(2))
-    a2 = next(s for s in shipments.steps(sid) if s.code == "A2")
-    check("step date persists", a2.due_date == iso(2))
-    shipments.set_step_date(sid, "A2", None)
-    check("step date clears",
-          next(s for s in shipments.steps(sid) if s.code == "A2").due_date is None)
-
-    # A step an older shipment predates still persists a date (UPSERT path).
-    ctx.db.execute("DELETE FROM workflow_steps WHERE shipment_id=? AND step_code='A3'",
-                   (sid,))
-    shipments.set_step_date(sid, "A3", iso(1))
-    check("a date sticks on a step the shipment predates",
-          next(s for s in shipments.steps(sid) if s.code == "A3").due_date == iso(1))
+    # ---- setting and clearing an item date -------------------------------
+    items.set_due_date(fumi, iso(2))
+    check("item date persists",
+          next(i for i in items.list(sid) if i.id == fumi).due_date == iso(2))
+    items.set_due_date(fumi, None)
+    check("item date clears",
+          next(i for i in items.list(sid) if i.id == fumi).due_date is None)
 
     # ---- calendar_entries -------------------------------------------------
-    shipments.set_step_date(sid, "A2", iso(-3))        # overdue
-    shipments.set_step_date(sid, "A4", iso(-1))        # done + past
-    shipments.set_step(sid, "A4", True)
-    custom = shipments.add_custom_step(sid, "Cek dokumen", author="a@x.com")
-    shipments.set_step_date(sid, custom, iso(2))
+    items.set_due_date(fumi, iso(-3))         # overdue
+    items.set_due_date(phyto, iso(-1))        # done + past
+    items.set_status(phyto, "final")
+    custom = items.add_custom(sid, "Cek dokumen")
+    items.set_due_date(custom, iso(2))
 
     entries = shipments.calendar_entries(iso(-30), iso(30))
     kinds = {e.kind for e in entries}
-    check("entries carry both steps and the ETD", kinds == {"step", "etd"})
-    check("built-in step titles are resolved from the constants",
-          any(e.title == "Terima DO" or e.title.startswith("Beritahu") or
-              e.kind == "step" for e in entries))
-    check("a custom step's own title is used",
+    check("entries carry both action items and the ETD", kinds == {"step", "etd"})
+    check("a custom item's own title is used",
           any(e.title == "Cek dokumen" for e in entries))
     check("entries carry the shipment label",
           all(e.label == "AMJ24" for e in entries))
@@ -113,17 +107,17 @@ with tempfile.TemporaryDirectory() as tmp:
           len(shipments.calendar_entries(iso(-30), iso(30))) == len(entries))
 
     # ---- colour precedence -------------------------------------------------
-    by_code = {e.step_code: e for e in entries if e.kind == "step"}
-    check("an unfinished past-dated step is overdue",
-          by_code["A2"].is_overdue(TODAY.isoformat()))
-    check("a done past-dated step is NOT overdue (completion wins)",
-          not by_code["A4"].is_overdue(TODAY.isoformat()))
-    check("a future-dated step is not overdue",
-          not by_code[custom].is_overdue(TODAY.isoformat()))
-    shipments.set_step_date(sid, "B1", TODAY.isoformat())
+    by_id = {e.step_code: e for e in entries if e.kind == "step"}
+    check("an unfinished past-dated item is overdue",
+          by_id[fumi].is_overdue(TODAY.isoformat()))
+    check("a done past-dated item is NOT overdue (completion wins)",
+          not by_id[phyto].is_overdue(TODAY.isoformat()))
+    check("a future-dated item is not overdue",
+          not by_id[custom].is_overdue(TODAY.isoformat()))
+    items.set_due_date(coo, TODAY.isoformat())
     todays = next(e for e in shipments.calendar_entries(iso(-30), iso(30))
-                  if e.step_code == "B1")
-    check("a step dated today is not yet overdue",
+                  if e.step_code == coo)
+    check("an item dated today is not yet overdue",
           not todays.is_overdue(TODAY.isoformat()))
 
     # ---- the widget --------------------------------------------------------
@@ -147,14 +141,14 @@ with tempfile.TemporaryDirectory() as tmp:
     check("the ETD card is a distinct state",
           (TODAY + timedelta(days=5)).day in states.get("etd", []))
 
-    # ticking the overdue step turns it green
-    shipments.set_step(sid, "A2", True)
+    # marking the overdue item final turns it green
+    items.set_status(fumi, "final")
     cal.reload()
     after = {}
     for day, cell in cal.cells.items():
         for card in cell.findChildren(EntryCard):
             after.setdefault(day, []).append(card.state)
-    check("ticking an overdue step turns its card green",
+    check("marking an overdue item final turns its card green",
           "done" in after.get((TODAY + timedelta(days=-3)).day, []))
 
     # ---- navigation --------------------------------------------------------
@@ -212,7 +206,7 @@ with tempfile.TemporaryDirectory() as tmp:
 
     short_widths, _ = cell_widths("OK")
     long_widths, long_cal = cell_widths(
-        "Terima nomor kontainer dan segel dari Toni lalu masukkan ke Excel")
+        "Kirim dokumen final ke pembeli lalu konfirmasi penerimaan barang")
     check("day cells share one width",
           max(short_widths) - min(short_widths) <= 2)
     check("a long entry does not widen its cell",
@@ -224,7 +218,7 @@ with tempfile.TemporaryDirectory() as tmp:
           long_card.label.text() != long_card.label.full_text()
           and long_card.label.text().endswith("…"))
     check("the full text survives on the tooltip",
-          "Terima nomor kontainer" in long_card.toolTip())
+          "Kirim dokumen final" in long_card.toolTip())
 
     # ---- clicking an entry navigates and focuses ---------------------------
     window.open_dashboard()
@@ -233,18 +227,18 @@ with tempfile.TemporaryDirectory() as tmp:
     clicked = []
     cal.entry_clicked.connect(lambda s, c: clicked.append((s, c)))
     card.clicked.emit(sid, custom)
-    check("clicking an entry emits shipment and step",
+    check("clicking an entry emits shipment and item",
           clicked and clicked[-1][0] == sid)
     window._on_calendar_entry(sid, custom)
     check("clicking navigates to the shipment",
           window.stack.currentIndex() == VIEW_DETAIL
           and window.current_shipment_id == sid)
-    check("the focused step exists in the checklist",
-          custom in window.detail.checklist.rows)
+    check("the focused item exists in the action-item list",
+          custom in window.detail.items_view.rows)
 
     # A card for a deleted shipment must not crash or navigate.
     window.open_dashboard()
-    window._on_calendar_entry("does-not-exist", "A1")
+    window._on_calendar_entry("does-not-exist", "nope")
     check("an entry for a missing shipment is ignored",
           window.stack.currentIndex() != VIEW_DETAIL)
 

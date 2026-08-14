@@ -17,6 +17,7 @@ from pathlib import Path
 
 from ..core.constants import APP_NAME
 from ..core.context import AppContext
+from ..services.action_items import ActionItems
 from ..services.shipments import Shipments
 from .bnct_controller import BnctController
 from .dashboard import DashboardView
@@ -68,6 +69,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.ctx = ctx
         self.shipments = Shipments(ctx.db)
+        self.action_items = ActionItems(ctx.db)
         self.current_shipment_id: str | None = None
         self.previous_view = VIEW_DASHBOARD
 
@@ -393,13 +395,13 @@ class MainWindow(QMainWindow):
         self.dashboard.calendar.set_entries(
             self.shipments.calendar_entries(start_iso, end_iso))
 
-    def _on_calendar_entry(self, shipment_id: str, step_code: str):
-        """Open the shipment a calendar card belongs to, focusing its step."""
+    def _on_calendar_entry(self, shipment_id: str, item_id: str):
+        """Open the shipment a calendar card belongs to, focusing its action item."""
         if self.shipments.get(shipment_id) is None:
             return
         self.open_shipment(shipment_id)
-        if step_code:
-            self.detail.focus_step(step_code)
+        if item_id:
+            self.detail.focus_item(item_id)
 
     def open_resequence(self):
         """Change a shipment's sequence number (folder, files, Excel, PDFs)."""
@@ -453,10 +455,10 @@ class MainWindow(QMainWindow):
 
     def refresh(self):
         active = self.shipments.active()
-        self.sidebar.refresh(active, self.shipments.progress)
+        self.sidebar.refresh(active, self.action_items.progress)
         self.dashboard.refresh(
-            active, self.shipments.progress,
-            overdue=self.shipments.count_overdue_steps(),
+            active, self.action_items.progress,
+            overdue=self.action_items.count_overdue(),
             this_month=self.shipments.count_completed_this_month())
         # A deleted shipment cascades its notifications away, so keep the badge
         # in sync with any change to the shipment set.

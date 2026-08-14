@@ -14,6 +14,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PyQt6.QtWidgets import QApplication
 
 from bot_kalung.core.context import AppContext
+from bot_kalung.services.action_items import ActionItems
 from bot_kalung.services.shipments import Shipments
 from bot_kalung.ui.main_window import VIEW_DETAIL, MainWindow
 
@@ -43,6 +44,7 @@ with tempfile.TemporaryDirectory() as tmp:
     ctx.create(root)
     ctx.settings.set("setup_complete", "1")
     shipments = Shipments(ctx.db)
+    items = ActionItems(ctx.db)
 
     quarantined = shipments.create({
         "exporter_code": "AMJ", "sequence_number": 24,
@@ -51,7 +53,8 @@ with tempfile.TemporaryDirectory() as tmp:
         "destination_port": "KARACHI", "destination_country": "PAKISTAN",
         "container_quantity": 3, "container_size_short": "40'",
         "quarantine_required": True, "folder_path": str(folder),
-    })
+    }, seed_steps=False)
+    items.seed(quarantined, "AMJ", "Pakistan")
     plain = shipments.create({
         "exporter_code": "NIT", "sequence_number": 16,
         "booking_number": "T22854", "vessel_name": "MTT REYA", "voyage": "123N",
@@ -59,7 +62,8 @@ with tempfile.TemporaryDirectory() as tmp:
         "destination_port": "CHENNAI", "destination_country": "INDIA",
         "container_quantity": 10, "container_size_short": "40'",
         "quarantine_required": False, "folder_path": str(tmp / "gone"),
-    })
+    }, seed_steps=False)
+    items.seed(plain, "NIT", "India")
 
     window = MainWindow(ctx)
     window.open_shipment(quarantined)
@@ -77,9 +81,9 @@ with tempfile.TemporaryDirectory() as tmp:
           and "KARACHI" in detail.meta_label.text()
           and "3 x 40'" in detail.meta_label.text())
 
-    done, total = shipments.progress(quarantined)
-    check("progress reflects the seeded steps",
-          detail.progress_label.text() == f"{done} dari {total} langkah selesai")
+    done, total = items.progress(quarantined)
+    check("progress reflects the seeded action items",
+          detail.progress_label.text() == f"{done} dari {total} item final")
     check("progress bar matches", detail.progress_bar.value() == done)
 
     check("folder resolved", detail.folder == folder)
@@ -92,14 +96,8 @@ with tempfile.TemporaryDirectory() as tmp:
     check("Open Excel enabled", detail.excel_button.isEnabled())
 
     check("quarantine banner shown", not detail.quarantine_banner.isHidden())
-    check("quarantine banner mentions writing on the SI",
-          "SI" in detail.quarantine_banner.text())
-
-    # PRD 6.1.1 — the banner clears once B3 is complete.
-    shipments.set_step(quarantined, "B3", True)
-    detail.load(quarantined)
-    check("quarantine banner dismissed after B3",
-          detail.quarantine_banner.isHidden())
+    check("quarantine banner mentions the quarantine documents",
+          "Karantina" in detail.quarantine_banner.text())
 
     # A shipment with no quarantine and a missing folder.
     window.open_shipment(plain)
@@ -137,18 +135,18 @@ with tempfile.TemporaryDirectory() as tmp:
     notes = []
     detail.deleted.connect(notes.append)
 
-    def step_rows(sid):
+    def item_rows(sid):
         return ctx.db.query_one(
-            "SELECT COUNT(*) c FROM workflow_steps WHERE shipment_id=?", (sid,))["c"]
+            "SELECT COUNT(*) c FROM action_items WHERE shipment_id=?", (sid,))["c"]
 
     window.open_shipment(plain)
-    check("shipment has workflow steps before deletion", step_rows(plain) == 22)
+    check("shipment has action items before deletion", item_rows(plain) > 0)
 
     detail._delete_shipment()
     check("the shipment's own folder was the delete target",
           trashed and trashed[-1] == str(tmp / "gone"))
     check("record is gone from the database", shipments.get(plain) is None)
-    check("workflow steps are cascade-deleted", step_rows(plain) == 0)
+    check("action items are cascade-deleted", item_rows(plain) == 0)
     check("the delete signal carried a note",
           notes and "dihapus" in notes[-1])
     check("view returns to the dashboard",

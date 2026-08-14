@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any
 
-from ..core.constants import WORKFLOW_STEPS
+from ..core.constants import ACTION_STATUS_DONE, WORKFLOW_STEPS
 from ..core.db import Database, new_id
 from .audit import COMPLETED, CREATED, DELETED, AuditLog
 
@@ -364,28 +364,25 @@ class Shipments:
 
     def calendar_entries(self, start_iso: str,
                          end_iso: str) -> list[CalendarEntry]:
-        """Dated steps plus shipment ETDs falling in [start, end], across ALL
-        shipments (active and completed).
+        """Dated action items plus shipment ETDs falling in [start, end], across
+        ALL shipments (active and completed).
         """
         entries: list[CalendarEntry] = []
 
         rows = self.db.query(
-            "SELECT w.shipment_id, w.step_code, w.due_date, w.status, w.title, "
+            "SELECT a.id, a.shipment_id, a.due_date, a.status, a.title, "
             "       s.exporter_code, s.sequence_number "
-            "FROM workflow_steps w JOIN shipments s ON s.id = w.shipment_id "
-            "WHERE w.due_date IS NOT NULL AND w.due_date BETWEEN ? AND ? "
-            "ORDER BY w.due_date, s.exporter_code, s.sequence_number",
+            "FROM action_items a JOIN shipments s ON s.id = a.shipment_id "
+            "WHERE a.due_date IS NOT NULL AND a.due_date BETWEEN ? AND ? "
+            "ORDER BY a.due_date, s.exporter_code, s.sequence_number",
             (start_iso, end_iso))
         for row in rows:
-            code = row["step_code"]
-            # Built-in titles live in the constants, not the database.
-            title = (_BUILTIN[code][1] if code in _BUILTIN
-                     else (row["title"] or "(tanpa judul)"))
             entries.append(CalendarEntry(
                 kind="step", shipment_id=row["shipment_id"],
                 label=f"{row['exporter_code']}{row['sequence_number']}",
-                step_code=code, title=title, date=row["due_date"][:10],
-                is_complete=row["status"] == "complete"))
+                step_code=row["id"], title=row["title"] or "(tanpa judul)",
+                date=row["due_date"][:10],
+                is_complete=row["status"] == ACTION_STATUS_DONE))
 
         etds = self.db.query(
             "SELECT id, exporter_code, sequence_number, etd_belawan, "
@@ -401,6 +398,12 @@ class Shipments:
                 step_code=None, title=f"ETD {vessel}".strip(),
                 date=row["etd_belawan"][:10], is_complete=False))
         return entries
+
+    def set_notes(self, shipment_id: str, notes: str | None) -> None:
+        """Set or clear the shipment's free-text notes."""
+        self.db.execute(
+            "UPDATE shipments SET notes=? WHERE id=?",
+            ((notes or "").strip() or None, shipment_id))
 
     def mark_complete(self, shipment_id: str) -> None:
         row = self.get(shipment_id)

@@ -1,8 +1,9 @@
-"""Shipment Detail (PRD Section 6).
+"""Shipment Detail (folder-scan tracker).
 
-This phase delivers the header bar (6.1) and the quarantine reminder (6.1.1).
-The workflow checklist (6.2/6.3) follows; its area says so rather than looking
-like an empty list.
+Header bar + quarantine reminder + BNCT status + the action-item list and notes.
+The old A1..E6 workflow checklist (with its email/print/PDF actions) was replaced
+by per-item statuses; a scanned shipment is imported already in progress, so
+those construction-time actions no longer apply.
 """
 
 from __future__ import annotations
@@ -15,46 +16,24 @@ from pathlib import Path
 
 from datetime import date as _date
 
-from PyQt6.QtCore import QDate, Qt, QThread, pyqtSignal
+from PyQt6.QtCore import QDate, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
-    QComboBox, QDialog, QDialogButtonBox, QFormLayout, QFrame, QHBoxLayout,
+    QDialog, QDialogButtonBox, QFormLayout, QFrame, QHBoxLayout,
     QLabel, QLineEdit, QMessageBox, QProgressBar, QPushButton,
     QScrollArea, QVBoxLayout, QWidget,
 )
 
-from ..core.constants import (
-    EXPORTER_COLORS, NON_COMPLETING_ACTION_KINDS, STEPS_COMPLETED_BY_ACTION,
-    STEPS_WITH_SIDE_EFFECTS,
-)
-from ..services import (
-    etd_change, fileops, messaging, pdf_export, printing, whatsapp,
-)
-from ..services.messaging import DraftBuilder, MessagingError
+from ..core.constants import EXPORTER_COLORS
+from ..services import etd_change, fileops
+from ..services.action_items import ActionItems
 from ..services.naming import parse_iso_date
 from ..services.shipments import Shipments
+from .action_items_view import ActionItemsView
 from .bnct_panel import BnctPanel
-from .checklist import ChecklistView
 from .widgets import (
     DangerButton, DateEdit, InlineMessage, Panel, SecondaryButton, days_until,
     format_date_id,
 )
-
-
-class _PdfExportWorker(QThread):
-    """E4 drives Excel, which takes seconds and must not freeze the window."""
-
-    done = pyqtSignal(object)
-
-    def __init__(self, workbook, folder, exporter_code, sequence, parent=None):
-        super().__init__(parent)
-        self._args = (workbook, folder, exporter_code, sequence)
-
-    def run(self):
-        workbook, folder, exporter_code, sequence = self._args
-        # export_shipment never raises, so `done` always carries a result.
-        self.done.emit(pdf_export.export_shipment(
-            workbook, exporter_code=exporter_code, sequence=sequence,
-            folder=folder))
 
 
 def open_path_or_url(target: str) -> bool:
@@ -83,21 +62,21 @@ def open_path(path: str | Path) -> bool:
             return False
 
 
-class _StepDateDialog(QDialog):
-    """Pick (or clear) a step's date."""
+class _ItemDateDialog(QDialog):
+    """Pick (or clear) an action item's date."""
 
-    def __init__(self, step, parent=None):
+    def __init__(self, item, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Tanggal Langkah")
+        self.setWindowTitle("Tanggal Item")
         self._cleared = False
         form = QFormLayout(self)
 
-        title = QLabel(f"{step.display_number}. {step.title}")
+        title = QLabel(item.title)
         title.setWordWrap(True)
         form.addRow(title)
 
         self.date_field = DateEdit()
-        existing = parse_iso_date(step.due_date) if step.due_date else None
+        existing = parse_iso_date(item.due_date) if item.due_date else None
         self.date_field.setDate(QDate(existing.year, existing.month, existing.day)
                                 if existing else QDate.currentDate())
         form.addRow("Tanggal", self.date_field)
@@ -105,7 +84,7 @@ class _StepDateDialog(QDialog):
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok
             | QDialogButtonBox.StandardButton.Cancel)
-        if step.due_date:
+        if item.due_date:
             clear = buttons.addButton("Hapus tanggal",
                                       QDialogButtonBox.ButtonRole.DestructiveRole)
             clear.clicked.connect(self._clear)
@@ -156,28 +135,18 @@ class _EtdDialog(QDialog):
         return _date(qdate.year(), qdate.month(), qdate.day())
 
 
-class _AddStepDialog(QDialog):
-    """Collects a custom step's title and where to insert it."""
+class _AddItemDialog(QDialog):
+    """Collects an ad-hoc action item's title."""
 
-    def __init__(self, steps, parent=None):
+    def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Tambah Langkah")
+        self.setWindowTitle("Tambah Item")
         self.setMinimumWidth(360)
         form = QFormLayout(self)
 
         self.title_field = QLineEdit()
-        self.title_field.setPlaceholderText("Judul langkah baru")
+        self.title_field.setPlaceholderText("Judul item baru")
         form.addRow("Judul", self.title_field)
-
-        self.position_combo = QComboBox()
-        self.position_combo.addItem("Di akhir daftar", (None, "after"))
-        if steps:
-            self.position_combo.addItem("Di awal daftar", (steps[0].code, "before"))
-        for step in steps:
-            self.position_combo.addItem(
-                f"Setelah {step.display_number}. {step.title}",
-                (step.code, "after"))
-        form.addRow("Posisi", self.position_combo)
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok
@@ -187,17 +156,15 @@ class _AddStepDialog(QDialog):
         form.addRow(buttons)
         self.title_field.setFocus()
 
-    def result_values(self) -> tuple[str, str | None, str]:
-        anchor, side = self.position_combo.currentData()
-        return self.title_field.text().strip(), anchor, side
+    def title(self) -> str:
+        return self.title_field.text().strip()
 
 
 class ShipmentDetailView(QWidget):
-    """Header + quarantine banner for one shipment."""
+    """Header + quarantine banner + BNCT status + action items for one shipment."""
 
     error = pyqtSignal(str)
-
-    changed = pyqtSignal()          # a step changed; sidebar/dashboard reload
+    changed = pyqtSignal()          # something changed; sidebar/dashboard reload
     completed = pyqtSignal(str)     # shipment marked complete, carries its label
     deleted = pyqtSignal(str)       # shipment removed; carries a note to show
     bnct_refresh_requested = pyqtSignal()   # "Periksa Sekarang" pressed
@@ -207,17 +174,16 @@ class ShipmentDetailView(QWidget):
         self.db = db
         self.settings = settings
         self.shipments = Shipments(db)
-        self.drafts = DraftBuilder(db, settings) if settings is not None else None
+        self.items = ActionItems(db)
         self.shipment_id: str | None = None
         self.folder: Path | None = None
         self.workbook: Path | None = None
-        self.pdf_worker: _PdfExportWorker | None = None
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(28, 20, 28, 20)
         outer.setSpacing(12)
 
-        # -- header bar (PRD 6.1) -----------------------------------------
+        # -- header bar ----------------------------------------------------
         header = Panel()
         header.setStyleSheet(theme.style(
             "background: white; border: 1px solid #e5e7eb; border-radius: 8px;"))
@@ -242,8 +208,6 @@ class ShipmentDetailView(QWidget):
             "font-size: 13px; font-weight: 600; border: none;"))
         top.addWidget(self.etd_label)
 
-        # The ETD is editable: changing it also renames the folder's date
-        # suffix and rewrites the VGM/SI cells that derive from it.
         self.etd_edit_button = QPushButton("✎")
         self.etd_edit_button.setToolTip("Ubah ETD")
         self.etd_edit_button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -272,6 +236,10 @@ class ShipmentDetailView(QWidget):
         self.excel_button.clicked.connect(self._open_excel)
         actions.addWidget(self.excel_button)
 
+        self.complete_button = SecondaryButton("Tandai Selesai")
+        self.complete_button.clicked.connect(self._mark_complete)
+        actions.addWidget(self.complete_button)
+
         self.delete_button = DangerButton("Hapus Pengiriman")
         self.delete_button.clicked.connect(self._delete_shipment)
         actions.addWidget(self.delete_button)
@@ -297,11 +265,11 @@ class ShipmentDetailView(QWidget):
 
         outer.addWidget(header)
 
-        # -- quarantine reminder (PRD 6.1.1) -------------------------------
+        # -- quarantine reminder -------------------------------------------
         self.quarantine_banner = InlineMessage()
         outer.addWidget(self.quarantine_banner)
 
-        # -- BNCT monitoring status (PRD 15) -------------------------------
+        # -- BNCT monitoring status ----------------------------------------
         self.bnct_panel = BnctPanel(db, on_refresh=self.bnct_refresh_requested.emit)
         outer.addWidget(self.bnct_panel)
 
@@ -313,21 +281,18 @@ class ShipmentDetailView(QWidget):
         divider.setStyleSheet(theme.style("color: #e5e7eb;"))
         outer.addWidget(divider)
 
-        # Kept as an attribute so a step can be scrolled into view (focus_step).
-        self.checklist_scroll = QScrollArea()
-        self.checklist_scroll.setWidgetResizable(True)
-        self.checklist_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
-        self.checklist = ChecklistView()
-        self.checklist.step_toggled.connect(self._on_step_toggled)
-        self.checklist.action_requested.connect(self._on_action)
-        self.checklist.mark_complete_requested.connect(self._on_mark_complete)
-        self.checklist.remark_edited.connect(self._on_remark_edited)
-        self.checklist.add_requested.connect(self._on_add_custom)
-        self.checklist.delete_requested.connect(self._on_delete_custom)
-        self.checklist.move_requested.connect(self._on_move_custom)
-        self.checklist.date_edit_requested.connect(self._on_date_edit)
-        self.checklist_scroll.setWidget(self.checklist)
-        outer.addWidget(self.checklist_scroll, 1)
+        # -- action items + notes ------------------------------------------
+        self.items_scroll = QScrollArea()
+        self.items_scroll.setWidgetResizable(True)
+        self.items_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        self.items_view = ActionItemsView()
+        self.items_view.status_changed.connect(self._on_status_changed)
+        self.items_view.add_requested.connect(self._on_add_item)
+        self.items_view.delete_requested.connect(self._on_delete_item)
+        self.items_view.date_edit_requested.connect(self._on_item_date)
+        self.items_view.notes_edited.connect(self._on_notes_edited)
+        self.items_scroll.setWidget(self.items_view)
+        outer.addWidget(self.items_scroll, 1)
 
     # -- state -------------------------------------------------------------
 
@@ -370,23 +335,16 @@ class ShipmentDetailView(QWidget):
         self.folder_button.setEnabled(self.folder is not None)
         self.excel_button.setEnabled(self.workbook is not None)
 
-        # PRD 6.1.1 — visible until B3 (Pay LOLO empty) is complete.
-        b3_done = any(s.code == "B3" and s.is_complete
-                      for s in self.shipments.steps(shipment_id))
-        if row["quarantine_required"] and not b3_done:
+        if row["quarantine_required"]:
             self.quarantine_banner.show_warning(
-                "Karantina diperlukan — tulis tanggal dan lokasi pemeriksaan "
-                "di SI yang sudah dicetak.")
+                "Karantina diperlukan — pastikan Fumi/Phyto/COO diproses.")
         else:
             self.quarantine_banner.clear()
 
         self.bnct_panel.load(shipment_id)
-        self._refresh_checklist()
+        self._refresh_items()
 
     def refresh_bnct(self, shipment_id: str):
-        """The controller recorded a new check; update the panel if it is the
-        shipment currently on screen.
-        """
         if shipment_id == self.shipment_id:
             self.bnct_panel.load(shipment_id)
 
@@ -401,70 +359,72 @@ class ShipmentDetailView(QWidget):
                 return entry
         return None
 
-    # -- checklist ---------------------------------------------------------
+    # -- action items ------------------------------------------------------
 
-    def _refresh_checklist(self):
+    def _refresh_items(self):
         if self.shipment_id is None:
             return
         row = self.shipments.get(self.shipment_id)
-        etd_passed = False
-        if row is not None:
-            remaining = days_until(row["etd_belawan"])
-            etd_passed = remaining is not None and remaining < 0
-        self.checklist.apply(self.shipments.steps(self.shipment_id),
-                             overdue=etd_passed)
-
-        done, total = self.shipments.progress(self.shipment_id)
-        self.progress_label.setText(f"{done} dari {total} langkah selesai")
+        self.items_view.apply(self.items.list(self.shipment_id),
+                              row["notes"] if row is not None else None)
+        done, total = self.items.progress(self.shipment_id)
+        self.progress_label.setText(f"{done} dari {total} item final")
         self.progress_bar.setRange(0, max(total, 1))
         self.progress_bar.setValue(done)
 
-    def _on_step_toggled(self, code: str, complete: bool):
-        """PRD 6.2 — unchecking is always silent; re-checking a step with a
-        side effect confirms first.
-        """
-        if complete and code in STEPS_WITH_SIDE_EFFECTS:
-            title, message = STEPS_WITH_SIDE_EFFECTS[code]
-            answer = QMessageBox.question(
-                self, title, message,
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No)
-            if answer != QMessageBox.StandardButton.Yes:
-                self._refresh_checklist()  # revert the checkbox
-                return
-            if code == "B2":
-                self._reprint_si()
-                return
-
-        self.shipments.set_step(self.shipment_id, code, complete)
-        self.load(self.shipment_id)   # reloads the checklist and the header
-        self.changed.emit()
-
-    # -- dates -------------------------------------------------------------
-
-    def focus_step(self, code: str):
-        """Scroll a step into view and highlight it — used when arriving from
-        the calendar. The highlight clears on the next load().
-        """
-        row = self.checklist.rows.get(code)
+    def focus_item(self, item_id: str):
+        """Scroll an item into view — used when arriving from the calendar."""
+        row = self.items_view.rows.get(item_id)
         if row is None:
             return
-        self.checklist_scroll.ensureWidgetVisible(row, 50, 50)
+        self.items_scroll.ensureWidgetVisible(row, 50, 50)
         row.setStyleSheet(theme.style(
-            "background: #eef2ff; border: 2px solid #2563eb;"
-            "border-radius: 6px;"))
+            "background: #eef2ff; border: 2px solid #2563eb; border-radius: 6px;"))
 
-    def _on_date_edit(self, code: str):
-        step = next((s for s in self.shipments.steps(self.shipment_id)
-                     if s.code == code), None)
-        if step is None:
+    def _on_status_changed(self, item_id: str, status: str):
+        self.items.set_status(item_id, status)
+        self._refresh_items()
+        self.changed.emit()
+
+    def _on_add_item(self):
+        dialog = _AddItemDialog(self)
+        if dialog.exec() != QDialog.DialogCode.Accepted or not dialog.title():
             return
-        dialog = _StepDateDialog(step, self)
+        self.items.add_custom(self.shipment_id, dialog.title())
+        self._refresh_items()
+        self.changed.emit()
+
+    def _on_delete_item(self, item_id: str):
+        answer = QMessageBox.question(
+            self, "Hapus item?", "Hapus item tindakan ini?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self.items.delete(item_id)
+        self._refresh_items()
+        self.changed.emit()
+
+    def _on_item_date(self, item_id: str):
+        item = next((i for i in self.items.list(self.shipment_id)
+                     if i.id == item_id), None)
+        if item is None:
+            return
+        dialog = _ItemDateDialog(item, self)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
-        self.shipments.set_step_date(self.shipment_id, code, dialog.value())
-        self.load(self.shipment_id)
+        self.items.set_due_date(item_id, dialog.value())
+        self._refresh_items()
         self.changed.emit()
+
+    def _on_notes_edited(self, text: str):
+        if self.shipment_id is None:
+            return
+        self.shipments.set_notes(self.shipment_id, text)
+        self.message.show_success("Catatan disimpan.")
+        self.changed.emit()
+
+    # -- ETD ---------------------------------------------------------------
 
     def _on_edit_etd(self):
         """Change the ETD, updating the folder's date suffix and the Excel
@@ -513,124 +473,9 @@ class ShipmentDetailView(QWidget):
         self.load(self.shipment_id)
         self.changed.emit()
 
-    # -- custom steps and remarks ------------------------------------------
+    # -- completion / deletion --------------------------------------------
 
-    def _current_author(self) -> str | None:
-        return self.settings.get("my_email") if self.settings else None
-
-    def _on_remark_edited(self, code: str, text: str):
-        self.shipments.set_step_remark(
-            self.shipment_id, code, text, author=self._current_author())
-        self.load(self.shipment_id)
-        self.changed.emit()
-
-    def _on_add_custom(self):
-        steps = self.shipments.steps(self.shipment_id)
-        dialog = _AddStepDialog(steps, self)
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            return
-        title, anchor, side = dialog.result_values()
-        if not title:
-            return
-        self.shipments.add_custom_step(
-            self.shipment_id, title, author=self._current_author(),
-            anchor_code=anchor, side=side)
-        self.load(self.shipment_id)
-        self.changed.emit()
-
-    def _on_delete_custom(self, code: str):
-        answer = QMessageBox.question(
-            self, "Hapus langkah?",
-            "Hapus langkah tambahan ini beserta catatannya?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No)
-        if answer != QMessageBox.StandardButton.Yes:
-            return
-        self.shipments.delete_step(self.shipment_id, code)
-        self.load(self.shipment_id)
-        self.changed.emit()
-
-    def _on_move_custom(self, code: str, direction: str):
-        ordered = self.shipments.steps(self.shipment_id)
-        index = next((i for i, s in enumerate(ordered) if s.code == code), None)
-        if index is None:
-            return
-        if direction == "up" and index > 0:
-            anchor, side = ordered[index - 1].code, "before"
-        elif direction == "down" and index < len(ordered) - 1:
-            anchor, side = ordered[index + 1].code, "after"
-        else:
-            return
-        self.shipments.move_step(
-            self.shipment_id, code, anchor_code=anchor, side=side)
-        self.load(self.shipment_id)
-        self.changed.emit()
-
-    def _on_action(self, code: str, kind: str, payload: str):
-        if kind == "url":
-            open_path_or_url(payload)
-        elif kind == "whatsapp":
-            ok, note = whatsapp.open_whatsapp()
-            (self.message.show_success if ok else self.message.show_error)(note)
-        elif kind == "excel":
-            self._open_excel()
-        elif kind == "reprint":
-            self._reprint_si()
-            return
-        elif kind == "pdf":
-            self._export_pdf()
-            return
-        elif kind == "template":
-            if not self._open_template(payload):
-                return
-
-        # PRD 6.3 — only the email buttons stand in for the work being done.
-        if kind in NON_COMPLETING_ACTION_KINDS:
-            return
-        if code in STEPS_COMPLETED_BY_ACTION:
-            self.shipments.set_step(self.shipment_id, code, True, source="auto")
-            self._refresh_checklist()
-            self.load(self.shipment_id)
-            self.changed.emit()
-
-    def _open_template(self, template_id: str) -> bool:
-        if self.drafts is None:
-            self.message.show_error("Pengaturan tidak tersedia.")
-            return False
-        row = self.shipments.get(self.shipment_id)
-        if row is None:
-            return False
-        try:
-            draft = self.drafts.build(template_id, row)
-        except MessagingError as exc:
-            self.message.show_error(str(exc))
-            return False
-
-        if not messaging.open_draft(draft):
-            self.message.show_error("Tidak dapat membuka browser.")
-            return False
-        self.message.show_success(
-            "Draf email dibuka. Tambahkan penerima luar di Gmail.")
-        return True
-
-    def _reprint_si(self):
-        if self.workbook is None:
-            self.message.show_error("File Excel tidak ditemukan untuk dicetak.")
-            self._refresh_checklist()
-            return
-        result = printing.print_si(self.workbook)
-        if result.printed:
-            self.message.show_success(result.message)
-            self.shipments.set_step(self.shipment_id, "B2", True, source="auto")
-        else:
-            # PRD Section 5 — a failed print leaves B2 pending for a retry.
-            self.message.show_warning(result.message)
-            self.shipments.set_step(self.shipment_id, "B2", False)
-        self.load(self.shipment_id)   # reloads the checklist and the header
-        self.changed.emit()
-
-    def _on_mark_complete(self):
-        """PRD 6.4."""
+    def _mark_complete(self):
         row = self.shipments.get(self.shipment_id)
         if row is None:
             return
@@ -645,46 +490,20 @@ class ShipmentDetailView(QWidget):
         self.shipments.mark_complete(self.shipment_id)
         self.completed.emit(label)
 
-    # -- actions -----------------------------------------------------------
-
     def _open_folder(self):
         if self.folder is None or not open_path(self.folder):
-            # PRD Section 12 note — the folder may have moved or been deleted.
             self.message.show_error(
                 "Folder pengiriman tidak dapat dibuka. Folder mungkin sudah "
                 "dipindahkan atau dihapus dari Google Drive.")
         else:
             self.message.clear()
 
-    def _export_pdf(self):
-        """PRD 6.3 step E4 — write the document sheets into the PDF subfolder."""
-        if self.workbook is None or self.folder is None:
+    def _open_excel(self):
+        if self.workbook is None or not open_path(self.workbook):
             self.message.show_error(
-                "File Excel tidak ditemukan untuk diekspor.")
-            return
-        row = self.shipments.get(self.shipment_id)
-        if row is None:
-            return
-        if self.pdf_worker is not None and self.pdf_worker.isRunning():
-            return   # already exporting; a second click would fight for Excel
-
-        self.message.show_info("Mengekspor ke PDF...")
-        self.pdf_worker = _PdfExportWorker(
-            self.workbook, self.folder, row["exporter_code"],
-            row["sequence_number"], self)
-        self.pdf_worker.done.connect(self._on_pdf_exported)
-        self.pdf_worker.start()
-
-    def _on_pdf_exported(self, result):
-        # E4 is only ticked when files were actually written, so a failed
-        # export leaves the step pending for a retry (as B2's print does).
-        if result.ok:
-            self.message.show_success(result.message())
-            self.shipments.set_step(self.shipment_id, "E4", True, source="auto")
+                "File Excel tidak dapat dibuka. Periksa folder pengiriman.")
         else:
-            self.message.show_warning(result.message())
-        self.load(self.shipment_id)
-        self.changed.emit()
+            self.message.clear()
 
     def _delete_shipment(self):
         """Remove the shipment and send its folder to the Recycle Bin."""
@@ -730,13 +549,5 @@ class ShipmentDetailView(QWidget):
         self.deleted.emit(note)
 
     def shutdown(self):
-        """Let a running export finish before the window goes away."""
-        if self.pdf_worker is not None and self.pdf_worker.isRunning():
-            self.pdf_worker.wait(15000)
-
-    def _open_excel(self):
-        if self.workbook is None or not open_path(self.workbook):
-            self.message.show_error(
-                "File Excel tidak dapat dibuka. Periksa folder pengiriman.")
-        else:
-            self.message.clear()
+        """No background workers remain; kept for the window's teardown hook."""
+        return
