@@ -113,6 +113,23 @@ class Shipments:
     def get(self, shipment_id: str):
         return self.db.query_one("SELECT * FROM shipments WHERE id=?", (shipment_id,))
 
+    def for_voyage(self, vessel_name: str | None, voyage: str | None) -> list:
+        """Active shipments whose vessel + voyage match — a display-time join for
+        the Monitor Kapal board (no stored FK, so several exporters can share one
+        voyage and the link stays live). Uses the same fuzzy matchers as BNCT.
+        """
+        from .bnct import _name_matches, _voyage_matches
+
+        if not vessel_name or not voyage:
+            return []
+        rows = self.db.query(
+            "SELECT id, exporter_code, sequence_number, vessel_name, voyage "
+            "FROM shipments WHERE status='active' "
+            "AND vessel_name IS NOT NULL AND voyage IS NOT NULL")
+        return [r for r in rows
+                if _name_matches(vessel_name, r["vessel_name"] or "")
+                and _voyage_matches(voyage, r["voyage"] or "")]
+
     def steps(self, shipment_id: str) -> list[StepState]:
         """Ordered steps for a shipment: the built-in workflow plus any custom
         steps, numbered 1..N. Pure read — no writes (it is called per active

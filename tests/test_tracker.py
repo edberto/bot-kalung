@@ -14,6 +14,7 @@ import sandbox  # noqa: F401 - keeps the real bootstrap pointer untouched
 
 from bot_kalung.core.db import Database, db_path_for
 from bot_kalung.services import excel, tracker
+from bot_kalung.services.shipments import Shipments
 
 failures = []
 
@@ -65,6 +66,7 @@ with tempfile.TemporaryDirectory() as tmp:
 
     db = Database(db_path_for(root))
     db.initialize()
+    shipments = Shipments(db)
 
     result = tracker.run_scan(db, root, year=2026, read_fields=fake_fields)
 
@@ -105,6 +107,24 @@ with tempfile.TemporaryDirectory() as tmp:
     keys = tracker.ScannedRegistry(db).registered_keys()
     check("registry records imported and done alike",
           {("AMJ", 1), ("AMJ", 2), ("AMJ", 3), ("NIT", 1)} <= keys)
+
+    # ---- vessel auto-link (Phase 3) --------------------------------------
+    from bot_kalung.services.vessel_monitor import MonitoredVessels
+    integra = [r for r in MonitoredVessels(db).all()
+               if r["vessel_name"] == "INTEGRA"]
+    voyages = {r["voyage"] for r in integra}
+    check("import auto-adds the shipment's vessel to Monitor Kapal",
+          "162E" in voyages)
+    check("auto-add fills the 3-voyage window",
+          {"162E", "163E", "164E"} <= voyages)
+    check("the vessel voyage is added once, not per shipment",
+          sum(1 for r in integra if r["voyage"] == "162E") == 1)
+
+    # display-time join: every active shipment on this voyage is matched.
+    labels = {f"{m['exporter_code']}{m['sequence_number']}"
+              for m in shipments.for_voyage("INTEGRA", "162E")}
+    check("for_voyage joins active shipments to a voyage",
+          {"AMJ2", "AMJ3", "NIT1"} <= labels)
 
     # ---- delta: a second scan imports nothing new -------------------------
     again = tracker.run_scan(db, root, year=2026, read_fields=fake_fields)

@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout, QLabel, QScrollArea, QVBoxLayout, QWidget,
 )
 
+from ..services.shipments import Shipments
 from ..services.vessel_monitor import MonitoredVessels, state_of
 from .bnct_display import describe_record
 from .vessel_manager_dialog import VesselManagerDialog
@@ -62,7 +63,7 @@ def _reading(row):
 class VesselCard(Panel):
     """One monitored voyage as a read-only kanban card."""
 
-    def __init__(self, row, accent: str):
+    def __init__(self, row, accent: str, shipment_labels: list[str] | None = None):
         super().__init__()
         self.setStyleSheet(theme.style(
             "background: white; border: 1px solid #e5e7eb; "
@@ -79,6 +80,14 @@ class VesselCard(Panel):
         headline.setStyleSheet(theme.style(
             "border: none; font-size: 14px; font-weight: 700; color: #0f172a;"))
         outer.addWidget(headline)
+
+        # {exporter}{seq} of any active shipment riding this voyage (live join).
+        if shipment_labels:
+            chips = QLabel("📦 " + "  ".join(shipment_labels))
+            chips.setWordWrap(True)
+            chips.setStyleSheet(theme.style(
+                "border: none; font-size: 11px; font-weight: 600; color: #1d4ed8;"))
+            outer.addWidget(chips)
 
         record = _reading(row)
         detail = describe_record(record)[2] if record is not None else ""
@@ -105,6 +114,7 @@ class VesselMonitorView(QWidget):
         super().__init__()
         self.db = db
         self.vessels = MonitoredVessels(db)
+        self.shipments = Shipments(db)
         self.columns: dict[str, dict] = {}
 
         outer = QVBoxLayout(self)
@@ -187,8 +197,11 @@ class VesselMonitorView(QWidget):
                                (r["voyage"] or "").lower()))
             column["rows"] = rows                # ordered, for tests/inspection
             for row in rows:
+                matches = self.shipments.for_voyage(row["vessel_name"], row["voyage"])
+                labels = [f"{m['exporter_code']}{m['sequence_number']}"
+                          for m in matches]
                 layout.insertWidget(layout.count() - 1,
-                                    VesselCard(row, column["color"]))
+                                    VesselCard(row, column["color"], labels))
 
             column["header"].setText(f"{column['title']} ({len(rows)})")
 

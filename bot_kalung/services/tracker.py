@@ -18,6 +18,24 @@ from ..core.db import Database, new_id
 from . import excel, naming, scanner
 from .action_items import ActionItems
 from .shipments import Shipments
+from .vessel_monitor import MonitoredVessels
+
+
+def _ensure_vessel_monitored(vessels: MonitoredVessels, name: str | None,
+                             voyage: str | None) -> None:
+    """Auto-monitor a shipment's vessel+voyage on the Monitor Kapal board, unless
+    an existing monitored voyage already covers it (matched fuzzily like BNCT).
+    A shipment with no vessel/voyage yet is skipped.
+    """
+    if not name or not voyage:
+        return
+    from .bnct import _name_matches, _voyage_matches
+
+    for row in vessels.all():
+        if (_name_matches(name, row["vessel_name"] or "")
+                and _voyage_matches(voyage, row["voyage"] or "")):
+            return
+    vessels.add_vessel(name, voyage)
 
 
 def _now() -> str:
@@ -80,6 +98,7 @@ def run_scan(db: Database, drive_root, *, year: int | None = None, settings=None
     registry = ScannedRegistry(db)
     shipments = Shipments(db)
     action_items = ActionItems(db)
+    vessels = MonitoredVessels(db)
     quarantine = (settings.get("quarantine_countries") if settings else None) \
         or DEFAULT_QUARANTINE_COUNTRIES
 
@@ -110,6 +129,7 @@ def run_scan(db: Database, drive_root, *, year: int | None = None, settings=None
                 fields.destination_country, quarantine),
         }, seed_steps=False)
         action_items.seed(shipment_id, candidate.code, fields.destination_country)
+        _ensure_vessel_monitored(vessels, fields.vessel_name, fields.voyage)
         registry.record(candidate.code, candidate.sequence, str(candidate.folder),
                         done=False, shipment_id=shipment_id)
         result.imported.append(candidate.label)
