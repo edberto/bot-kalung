@@ -1,4 +1,8 @@
-"""BnctController container poll: 51-STACK RECEIVING fires one notification."""
+"""The BNCT poll worker's container step: 51-STACK RECEIVING fires one alert.
+
+Exercises _PollWorker._process_containers directly (synchronously, no thread) so
+the transition logic is tested without spinning the event loop.
+"""
 
 import os
 import sys
@@ -13,9 +17,12 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PyQt6.QtWidgets import QApplication
 
 from bot_kalung.core.db import Database, db_path_for, new_id
-from bot_kalung.services.bnct import BnctContainer
+from bot_kalung.services.bnct import BnctContainer, BnctVessel
+from bot_kalung.services.bnct_monitor import BnctMonitor
 from bot_kalung.services.containers import Containers
-from bot_kalung.ui.bnct_controller import BnctController
+from bot_kalung.services.notifications import NotificationStore
+from bot_kalung.services.vessel_monitor import VesselMonitor
+from bot_kalung.ui.bnct_controller import _PollWorker
 
 failures = []
 
@@ -39,6 +46,12 @@ class FakeClient:
 
 app = QApplication.instance() or QApplication([])
 
+
+def blank_result():
+    return {"notifications": [], "checked": [], "vessel_checked": [],
+            "container_checked": []}
+
+
 with tempfile.TemporaryDirectory() as tmp:
     db = Database(db_path_for(Path(tmp)))
     db.initialize()
@@ -56,21 +69,23 @@ with tempfile.TemporaryDirectory() as tmp:
         status_code="51", status_text="STACK RECEIVING",
         vessel_name="MV.MAO GANG GUANG ZHOU", voyage_in="021S", voyage_out="021N")
 
-    controller = BnctController(db, settings=None, client=FakeClient(
-        {"CMAU8513405": [stack_card]}))
+    # The vessel is on the schedule (found, not departing) -> containers polled.
+    vessels = [BnctVessel(site="tpkb", phase="schedule",
+                          name="MV.MAO GANG GUANG ZHOU",
+                          voyage_in="021S", voyage_out="021N")]
 
-    notes = []
-    controller.notified.connect(notes.append)
-    checked = []
-    controller.container_checked.connect(checked.append)
+    worker = _PollWorker(FakeClient({"CMAU8513405": [stack_card]}),
+                         BnctMonitor(db), VesselMonitor(db), containers,
+                         NotificationStore(db))
 
-    # Simulate what _poll_containers hands to the worker, then deliver results.
-    controller._pending_container_rows = containers.active_with_vessel()
-    controller._on_containers_fetched({"CMAU8513405": [stack_card]}, None)
+    result = blank_result()
+    worker._process_containers(vessels, result)
 
     row = containers.for_shipment(sid)[0]
     check("container status updated to 51 from the poll", row.at_stack_receiving)
-    check("the shipment was flagged for a container refresh", sid in checked)
+    check("the shipment was flagged for a container refresh",
+          sid in result["container_checked"])
+    notes = result["notifications"]
     check("a container notification fired on the 51 transition",
           len(notes) == 1 and notes[0].kind == "container")
     check("the notification deep-links to the shipment",
@@ -80,15 +95,19 @@ with tempfile.TemporaryDirectory() as tmp:
           ["c"] == 1)
 
     # A second poll at the same status must NOT re-notify.
-    controller._on_containers_fetched({"CMAU8513405": [stack_card]}, None)
-    check("no duplicate notification while it stays at 51", len(notes) == 1)
+    result2 = blank_result()
+    worker._process_containers(vessels, result2)
+    check("no duplicate notification while it stays at 51",
+          result2["notifications"] == [])
 
-    # An error or empty result is a no-op (never raises).
-    controller._on_containers_fetched(None, "boom")
-    controller._on_containers_fetched({}, None)
-    check("an errored/empty poll changes nothing", len(notes) == 1)
-
-    controller.stop()
+    # When the vessel has departed, its containers are not polled at all.
+    departed = [BnctVessel(site="tpkb", phase="alongside",
+                           name="MV.MAO GANG GUANG ZHOU", voyage_out="021N",
+                           loading_remain=0)]
+    result3 = blank_result()
+    worker._process_containers(departed, result3)
+    check("a departed vessel's containers are skipped",
+          result3["container_checked"] == [])
 
 print()
 if failures:
