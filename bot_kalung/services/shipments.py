@@ -45,6 +45,7 @@ class CalendarEntry:
     title: str
     date: str                    # ISO yyyy-mm-dd
     is_complete: bool
+    etd_source: str | None = None  # "bnct" | "manual" | "si" for an ETD entry
 
     def is_overdue(self, today: str) -> bool:
         """Unfinished and already past. Completion beats overdue, and a step
@@ -228,11 +229,11 @@ class Shipments:
         self.db.execute(
             "INSERT INTO shipments ("
             "id, exporter_code, sequence_number, booking_number, vessel_name, "
-            "voyage, etd_belawan, destination_port, destination_country, "
-            "container_quantity, container_size_short, empty_pickup_location, "
-            "quarantine_required, folder_path, do_pdf_filename, "
-            "shipping_company, status, created_at"
-            ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'active',?)",
+            "voyage, etd_belawan, etd_source, destination_port, "
+            "destination_country, container_quantity, container_size_short, "
+            "empty_pickup_location, quarantine_required, folder_path, "
+            "do_pdf_filename, shipping_company, status, created_at"
+            ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'active',?)",
             (
                 shipment_id,
                 values["exporter_code"],
@@ -241,6 +242,7 @@ class Shipments:
                 values.get("vessel_name"),
                 values.get("voyage"),
                 values.get("etd_belawan"),
+                values.get("etd_source"),
                 values.get("destination_port"),
                 values.get("destination_country"),
                 values.get("container_quantity"),
@@ -410,7 +412,7 @@ class Shipments:
                 is_complete=row["status"] == ACTION_STATUS_DONE))
 
         etds = self.db.query(
-            "SELECT id, exporter_code, sequence_number, etd_belawan, "
+            "SELECT id, exporter_code, sequence_number, etd_belawan, etd_source, "
             "       vessel_name, voyage FROM shipments "
             "WHERE etd_belawan IS NOT NULL AND etd_belawan BETWEEN ? AND ? "
             "ORDER BY etd_belawan, exporter_code, sequence_number",
@@ -421,7 +423,8 @@ class Shipments:
                 kind="etd", shipment_id=row["id"],
                 label=f"{row['exporter_code']}{row['sequence_number']}",
                 step_code=None, title=f"ETD {vessel}".strip(),
-                date=row["etd_belawan"][:10], is_complete=False))
+                date=row["etd_belawan"][:10], is_complete=False,
+                etd_source=row["etd_source"]))
         return entries
 
     def set_notes(self, shipment_id: str, notes: str | None) -> None:
@@ -432,8 +435,9 @@ class Shipments:
 
     def set_etd(self, shipment_id: str, iso: str | None) -> None:
         """Set the shipment's ETD (database only — never touches folder/Excel)."""
-        self.db.execute("UPDATE shipments SET etd_belawan=? WHERE id=?",
-                        (iso or None, shipment_id))
+        self.db.execute(
+            "UPDATE shipments SET etd_belawan=?, etd_source='manual' WHERE id=?",
+            (iso or None, shipment_id))
 
     def set_voyage_etd(self, vessel_name: str | None, voyage: str | None,
                        iso: str | None) -> int:
@@ -452,8 +456,9 @@ class Shipments:
                if _name_matches(vessel_name, r["vessel_name"] or "")
                and _voyage_matches(voyage, r["voyage"] or "")]
         for shipment_id in ids:
-            self.db.execute("UPDATE shipments SET etd_belawan=? WHERE id=?",
-                            (iso or None, shipment_id))
+            self.db.execute(
+                "UPDATE shipments SET etd_belawan=?, etd_source='manual' "
+                "WHERE id=?", (iso or None, shipment_id))
         return len(ids)
 
     def mark_complete(self, shipment_id: str) -> None:

@@ -23,23 +23,25 @@ from datetime import date
 from . import theme
 
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QFontMetrics
 from PyQt6.QtWidgets import (
-    QGridLayout, QHBoxLayout, QLabel, QSizePolicy, QStyle, QVBoxLayout,
-    QWidget,
+    QGridLayout, QHBoxLayout, QLabel, QScrollArea, QSizePolicy, QStyle,
+    QVBoxLayout, QWidget,
 )
 
 from .widgets import MONTHS_ID, Panel, SecondaryButton
 
 DAY_HEADERS = ["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"]
 
-# How many entry cards a day shows before collapsing the rest into "+N lainnya".
-MAX_PER_DAY = 3
+# Legend: ETD colour by where the date came from.
+ETD_LEGEND = [("ETD dari BNCT (voyage)", "info"), ("ETD dari SI", "warning")]
 
 
 def _kind_for(entry, today_iso: str) -> str:
     if entry.kind == "etd":
-        return "etd"
+        # BNCT (or a manual voyage-wide set) is the authoritative voyage ETD;
+        # a plain SI ETD is per-shipment and may not agree across the voyage.
+        return ("etd_bnct" if entry.etd_source in ("bnct", "manual")
+                else "etd_si")
     if entry.is_complete:
         return "done"
     return "overdue" if entry.is_overdue(today_iso) else "pending"
@@ -48,45 +50,13 @@ def _kind_for(entry, today_iso: str) -> str:
 def _palette(state: str) -> tuple[str, str, str]:
     """(text, background, border) for an entry card."""
     return theme.banner({
-        "done": "success", "overdue": "error",
-        "pending": "info", "etd": "warning",
+        "done": "success", "overdue": "error", "pending": "info",
+        "etd_bnct": "info", "etd_si": "warning", "etd": "warning",
     }[state])
 
 
-class ElidedLabel(QLabel):
-    """A label that crops its text to whatever width it is given.
-
-    Without this a long entry title demands width, which widens its day cell
-    and knocks the whole grid out of shape. `Ignored` horizontally means the
-    label never influences the column width; the text is cropped to fit and the
-    full version stays on the card's tooltip.
-    """
-
-    def __init__(self, text: str):
-        super().__init__()
-        self._full = text
-        self.setTextFormat(Qt.TextFormat.PlainText)
-        self.setMinimumWidth(0)
-        self.setSizePolicy(QSizePolicy.Policy.Ignored,
-                           QSizePolicy.Policy.Preferred)
-        self._apply()
-
-    def full_text(self) -> str:
-        return self._full
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self._apply()
-
-    def _apply(self):
-        elided = QFontMetrics(self.font()).elidedText(
-            self._full, Qt.TextElideMode.ElideRight, max(0, self.width()))
-        if elided != self.text():          # guard against a relayout loop
-            super().setText(elided)
-
-
 class EntryCard(Panel):
-    """One clickable item inside a day cell."""
+    """One clickable item inside a day cell. The title wraps rather than crops."""
 
     clicked = pyqtSignal(str, str)      # shipment_id, step_code ("" for ETD)
 
@@ -98,18 +68,20 @@ class EntryCard(Panel):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setMinimumWidth(0)
         self.setSizePolicy(QSizePolicy.Policy.Ignored,
-                           QSizePolicy.Policy.Preferred)
+                           QSizePolicy.Policy.Minimum)
         self.setStyleSheet(theme.style(
             f"background: {bg}; border: 1px solid {border};"
             "border-radius: 4px;"))
-        # The full text lives here, since the visible one may be cropped.
         self.setToolTip(f"{entry.label} · {entry.title}")
 
         row = QHBoxLayout(self)
-        row.setContentsMargins(5, 2, 5, 2)
-        self.label = ElidedLabel(f"{entry.label} · {entry.title}")
+        row.setContentsMargins(5, 3, 5, 3)
+        self.label = QLabel(f"{entry.label} · {entry.title}")
+        self.label.setWordWrap(True)      # wrap long titles instead of cropping
+        self.label.setTextFormat(Qt.TextFormat.PlainText)
         self.label.setStyleSheet(
-            f"border: none; color: {fg}; font-size: 10px; font-weight: 600;")
+            f"border: none; background: transparent; color: {fg};"
+            "font-size: 10px; font-weight: 600;")
         row.addWidget(self.label)
 
     def mousePressEvent(self, event):
@@ -117,7 +89,7 @@ class EntryCard(Panel):
 
 
 class DayCell(Panel):
-    """One day in the grid: its number plus that day's entry cards."""
+    """One day in the grid: its number plus a scrollable list of entry cards."""
 
     entry_clicked = pyqtSignal(str, str)
 
@@ -126,9 +98,9 @@ class DayCell(Panel):
         super().__init__()
         self.day = day
         self.is_today = is_today
-        self.setMinimumHeight(78)
+        self.setMinimumHeight(84)
         # Never let contents dictate the cell's width — the seven columns share
-        # the calendar evenly and long entries are cropped instead.
+        # the calendar evenly; entries wrap and scroll within the cell instead.
         self.setMinimumWidth(0)
         self.setSizePolicy(QSizePolicy.Policy.Ignored,
                            QSizePolicy.Policy.Preferred)
@@ -150,28 +122,38 @@ class DayCell(Panel):
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 3, 4, 3)
-        layout.setSpacing(2)
+        layout.setSpacing(3)
 
         number = QLabel(str(day))
         number.setStyleSheet(theme.style(
-            "border: none; font-size: 11px;"
+            "border: none; background: transparent; font-size: 11px;"
             + ("font-weight: 700; color: #2563eb;" if is_today
                else "color: #6b7280;")))
         layout.addWidget(number)
 
-        for entry in entries[:MAX_PER_DAY]:
+        # A vertical scroll area so a busy day keeps every entry (wrapped) instead
+        # of hiding the overflow; the horizontal bar is off so nothing spills out.
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        self.scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.scroll.setStyleSheet("background: transparent; border: none;")
+
+        container = QWidget()
+        container.setStyleSheet("background: transparent;")
+        entries_layout = QVBoxLayout(container)
+        entries_layout.setContentsMargins(0, 0, 0, 0)
+        entries_layout.setSpacing(3)
+        self.cards: list[EntryCard] = []
+        for entry in entries:
             card = EntryCard(entry, _kind_for(entry, today_iso))
             card.clicked.connect(self.entry_clicked)
-            layout.addWidget(card)
-
-        hidden = len(entries) - MAX_PER_DAY
-        if hidden > 0:
-            more = QLabel(f"+{hidden} lainnya")
-            more.setStyleSheet(theme.style(
-                "border: none; font-size: 10px; color: #6b7280;"))
-            layout.addWidget(more)
-
-        layout.addStretch(1)
+            entries_layout.addWidget(card)
+            self.cards.append(card)
+        entries_layout.addStretch(1)
+        self.scroll.setWidget(container)
+        layout.addWidget(self.scroll, 1)
 
 
 class MonthCalendar(QWidget):
@@ -228,6 +210,21 @@ class MonthCalendar(QWidget):
         self.today_button.clicked.connect(self.go_to_today)
         header.addWidget(self.today_button)
         outer.addLayout(header)
+
+        # Legend so the ETD colours are self-explanatory.
+        legend = QHBoxLayout()
+        legend.setSpacing(6)
+        legend.addStretch(1)
+        for text, kind in ETD_LEGEND:
+            _, _, border = theme.banner(kind)
+            dot = QLabel("●")
+            dot.setStyleSheet(theme.style(f"color: {border}; font-size: 12px;"))
+            label = QLabel(text)
+            label.setStyleSheet(theme.style("font-size: 10px; color: #6b7280;"))
+            legend.addWidget(dot)
+            legend.addWidget(label)
+            legend.addSpacing(10)
+        outer.addLayout(legend)
 
         self.grid = QGridLayout()
         self.grid.setSpacing(4)
@@ -316,3 +313,7 @@ class MonthCalendar(QWidget):
                 self.grid.addWidget(cell, row, column)
                 if day:
                     self.cells[day] = cell
+        # Week rows share the vertical space equally, so every cell is the same
+        # height and a busy day scrolls its entries rather than growing the row.
+        for row in range(1, 7):
+            self.grid.setRowStretch(row, 1 if row <= len(weeks) else 0)

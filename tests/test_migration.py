@@ -80,7 +80,7 @@ check("all eleven tables parsed from SCHEMA",
                         "message_templates", "bnct_checks", "notifications",
                         "audit_log", "monitored_vessels", "scanned_shipments",
                         "action_items", "containers"})
-check("shipments columns parsed", len(expected["shipments"]) == 20)
+check("shipments columns parsed", len(expected["shipments"]) == 21)
 check("shipping_company is expected", "shipping_company" in expected["shipments"])
 check("table constraints are not read as columns",
       "UNIQUE" not in expected["workflow_steps"]

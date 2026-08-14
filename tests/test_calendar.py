@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import sandbox  # noqa: F401 - keeps the real bootstrap pointer untouched
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtWidgets import QApplication, QLabel
+from PyQt6.QtWidgets import QApplication
 
 import bot_kalung.services.shipments as _shipments_mod
 import bot_kalung.services.action_items as _action_items_mod
@@ -20,7 +20,7 @@ import bot_kalung.ui.dashboard as _dashboard_mod
 from bot_kalung.core.context import AppContext
 from bot_kalung.services.action_items import ActionItems
 from bot_kalung.services.shipments import Shipments
-from bot_kalung.ui.calendar_view import MAX_PER_DAY, EntryCard, MonthCalendar
+from bot_kalung.ui.calendar_view import EntryCard, MonthCalendar
 from bot_kalung.ui.main_window import VIEW_DETAIL, MainWindow
 
 # Freeze "today" to a stable mid-month date (see the note in earlier revisions):
@@ -133,13 +133,13 @@ with tempfile.TemporaryDirectory() as tmp:
         for card in cell.findChildren(EntryCard):
             states.setdefault(card.state, []).append(day)
     check(f"all four card states render {sorted(states)}",
-          {"done", "overdue", "pending", "etd"} <= set(states))
+          {"done", "overdue", "pending", "etd_si"} <= set(states))
     check("the overdue card sits on its own day",
           (TODAY + timedelta(days=-3)).day in states.get("overdue", []))
     check("the done card is green even though its date passed",
           (TODAY + timedelta(days=-1)).day in states.get("done", []))
-    check("the ETD card is a distinct state",
-          (TODAY + timedelta(days=5)).day in states.get("etd", []))
+    check("the SI ETD card is its own state",
+          (TODAY + timedelta(days=5)).day in states.get("etd_si", []))
 
     # marking the overdue item final turns it green
     items.set_status(fumi, "final")
@@ -150,6 +150,15 @@ with tempfile.TemporaryDirectory() as tmp:
             after.setdefault(day, []).append(card.state)
     check("marking an overdue item final turns its card green",
           "done" in after.get((TODAY + timedelta(days=-3)).day, []))
+
+    # ETD colour follows its source: BNCT/manual (voyage) vs SI (per-shipment).
+    ctx.db.execute("UPDATE shipments SET etd_source='bnct' WHERE id=?", (sid,))
+    cal.reload()
+    etd_states = {c.state for cell in cal.cells.values()
+                  for c in cell.findChildren(EntryCard)
+                  if c.state.startswith("etd")}
+    check("a BNCT-sourced ETD renders in the BNCT colour",
+          etd_states == {"etd_bnct"})
 
     # ---- navigation --------------------------------------------------------
     cal.shift(1)
@@ -163,24 +172,23 @@ with tempfile.TemporaryDirectory() as tmp:
     check("'Hari ini' jumps back from an arbitrary month", cal.showing_today())
     check("'Hari ini' restores the highlight", cal.cells[TODAY.day].is_today)
 
-    # ---- per-day cap -------------------------------------------------------
+    # ---- a busy day keeps every entry (scrollable, not capped) -------------
     spare = MonthCalendar()
 
     class _E:
         def __init__(self, i):
             self.kind, self.shipment_id, self.label = "step", "x", f"S{i}"
-            self.step_code, self.title = f"c{i}", "t"
+            self.step_code, self.title, self.etd_source = f"c{i}", "t", None
             self.date, self.is_complete = TODAY.isoformat(), False
 
         def is_overdue(self, today):
             return False
 
-    spare.set_entries([_E(i) for i in range(MAX_PER_DAY + 2)])
+    spare.set_entries([_E(i) for i in range(8)])
     cell = spare.cells[TODAY.day]
-    check("a busy day caps its cards",
-          len(cell.findChildren(EntryCard)) == MAX_PER_DAY)
-    check("the overflow is reported, not silently dropped",
-          any("lainnya" in label.text() for label in cell.findChildren(QLabel)))
+    check("a busy day keeps every entry (none dropped)",
+          len(cell.findChildren(EntryCard)) == 8)
+    check("the entries live in a scroll area", cell.scroll is not None)
 
     # ---- a long entry must not widen its day cell --------------------------
     def cell_widths(title: str):
@@ -189,7 +197,7 @@ with tempfile.TemporaryDirectory() as tmp:
 
         class _One:
             kind, shipment_id, label = "step", "x", "AMJ24"
-            step_code, is_complete = "c", False
+            step_code, is_complete, etd_source = "c", False, None
             date = TODAY.isoformat()
 
             def __init__(self, t):
@@ -214,10 +222,10 @@ with tempfile.TemporaryDirectory() as tmp:
 
     long_card = next(c for cell in long_cal.cells.values()
                      for c in cell.findChildren(EntryCard))
-    check("the long entry is cropped to fit",
-          long_card.label.text() != long_card.label.full_text()
-          and long_card.label.text().endswith("…"))
-    check("the full text survives on the tooltip",
+    check("the long entry wraps rather than cropping",
+          long_card.label.wordWrap()
+          and "penerimaan barang" in long_card.label.text())
+    check("the full text is also on the tooltip",
           "Kirim dokumen final" in long_card.toolTip())
 
     # ---- clicking an entry navigates and focuses ---------------------------

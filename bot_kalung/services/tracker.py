@@ -136,6 +136,7 @@ def run_scan(db: Database, drive_root, *, year: int | None = None, settings=None
             "etd_belawan": fields.etd.isoformat() if fields.etd else None,
             "vessel_name": fields.vessel_name,
             "voyage": fields.voyage,
+            "etd_source": "si" if fields.etd else None,
             "booking_number": fields.booking_number,
             "container_quantity": fields.container_quantity,
             "container_size_short": fields.container_size_short,

@@ -203,8 +203,9 @@ class BnctMonitor:
             return
         iso = bnct.etd_to_iso(merged_record(reading, prev)["etd"])
         if iso:
-            self.db.execute("UPDATE shipments SET etd_belawan=? WHERE id=?",
-                            (iso, shipment_id))
+            self.db.execute(
+                "UPDATE shipments SET etd_belawan=?, etd_source='bnct' WHERE id=?",
+                (iso, shipment_id))
 
 
 def _fmt(value) -> str:

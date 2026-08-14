@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS shipments (
     vessel_name           TEXT,
     voyage                TEXT,
     etd_belawan           TEXT,
+    etd_source            TEXT,
     destination_port      TEXT,
     destination_country   TEXT,
     container_quantity    INTEGER,
