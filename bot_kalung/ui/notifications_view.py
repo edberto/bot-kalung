@@ -20,7 +20,7 @@ from .widgets import InlineMessage, Panel, SecondaryButton, format_date_id
 
 # Accent per notification kind (matches the BNCT panel's colours).
 KIND_COLOR = {"schedule": "#2563eb", "alongside": "#059669",
-              "departing": "#b91c1c"}
+              "departing": "#b91c1c", "container": "#d97706"}
 
 
 def _when(iso: str) -> str:

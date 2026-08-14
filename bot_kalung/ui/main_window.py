@@ -160,6 +160,7 @@ class MainWindow(QMainWindow):
         self.bnct = BnctController(ctx.db, ctx.settings)
         self.bnct.notified.connect(self._on_bnct_notification)
         self.bnct.checked.connect(self.detail.refresh_bnct)
+        self.bnct.container_checked.connect(self.detail.refresh_containers)
         self.bnct.error.connect(self._on_bnct_error)
         self.bnct.polled.connect(self._on_bnct_polled)
         self.settings.saved.connect(self.bnct.apply_interval)

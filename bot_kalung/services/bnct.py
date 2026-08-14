@@ -115,6 +115,37 @@ class BnctReading:
         return bool(self.vessel and self.vessel.departing)
 
 
+# Container endpoint sites (uppercase, unlike the lowercase vessel SITES).
+CONTAINER_SITES = ("PTP", "TPKB")
+# The status that fires the "container is being received at the stack" alert.
+STACK_RECEIVING_CODE = "51"
+
+
+@dataclass
+class BnctContainer:
+    """One container row from the BNCT container search (`getContainerList`)."""
+    site: str
+    container_no: str
+    size: str = ""
+    type: str = ""
+    fcl: str = ""
+    status_code: str = ""
+    status_text: str = ""
+    shipping_line: str = ""
+    voyage_ref: str = ""
+    vessel_name: str = ""
+    voyage_in: str = ""
+    voyage_out: str = ""
+
+    @property
+    def status(self) -> str:
+        return f"{self.status_code}-{self.status_text}".strip("-")
+
+    @property
+    def at_stack_receiving(self) -> bool:
+        return self.status_code == STACK_RECEIVING_CODE
+
+
 # -- HTML token extraction ---------------------------------------------------
 
 class _TextCollector(HTMLParser):
@@ -356,6 +387,81 @@ class BnctClient:
     def fetch_vessels(self) -> list[BnctVessel]:      # pragma: no cover - iface
         raise NotImplementedError
 
+    def fetch_containers(self, container_no: str) -> list[BnctContainer]:
+        """Default: no container search (fakes that only mock vessels)."""
+        return []
+
+    def fetch_containers_batch(
+            self, container_numbers) -> dict[str, list[BnctContainer]]:
+        """Fetch several containers in one session. Default: nothing."""
+        return {no: self.fetch_containers(no) for no in container_numbers}
+
+
+# -- container search parsing ------------------------------------------------
+
+# The cards call containerDetail(...) from an onclick; the arg list runs to the
+# ')' that precedes the attribute's closing quote, so a ')' inside a value (a
+# vessel name like "MV.X (021S-021N)") does not cut it short.
+_CONTAINER_DETAIL_RE = re.compile(
+    r"""containerDetail\s*\((?P<args>.*?)\)\s*["']""", re.DOTALL)
+
+
+def _split_js_args(text: str) -> list[str]:
+    """Split a JS call's argument list, honouring quotes and escapes."""
+    args, cur, quote, i = [], "", None, 0
+    while i < len(text):
+        c = text[i]
+        if quote:
+            if c == "\\" and i + 1 < len(text):
+                cur += text[i + 1]
+                i += 2
+                continue
+            if c == quote:
+                quote = None
+            else:
+                cur += c
+        elif c in "'\"":
+            quote = c
+        elif c == ",":
+            args.append(cur)
+            cur = ""
+        else:
+            cur += c
+        i += 1
+    args.append(cur)
+    return [a.strip().strip("'\"").strip() for a in args]
+
+
+def parse_containers(html: str, site: str) -> list[BnctContainer]:
+    """Parse containerDetail(...) cards. Tolerant: a miss yields []."""
+    results: list[BnctContainer] = []
+    for match in _CONTAINER_DETAIL_RE.finditer(html or ""):
+        args = _split_js_args(match.group("args"))
+        if len(args) < 12:
+            continue
+        # (id, containerNo, size, type, fcl, statusCode, statusText,
+        #  shippingLine, voyageRef, vesselName, voyageIn, voyageOut)
+        results.append(BnctContainer(
+            site=site, container_no=args[1], size=args[2], type=args[3],
+            fcl=args[4], status_code=args[5], status_text=args[6],
+            shipping_line=args[7], voyage_ref=args[8], vessel_name=args[9],
+            voyage_in=args[10], voyage_out=args[11]))
+    return results
+
+
+def match_container(containers: list[BnctContainer], vessel_name: str,
+                    voyage: str) -> BnctContainer | None:
+    """The container card whose vessel+voyage match the shipment. A container can
+    appear at both terminals (an old voyage and the current one); pick the match.
+    Falls back to the sole card when there is exactly one.
+    """
+    for c in containers:
+        if _name_matches(vessel_name, c.vessel_name) and (
+                _voyage_matches(voyage, c.voyage_out)
+                or _voyage_matches(voyage, c.voyage_in)):
+            return c
+    return containers[0] if len(containers) == 1 else None
+
 
 _TOKEN_RE = re.compile(
     r'id="csrfTokenForm"[^>]*value="([0-9a-fA-F-]{36})"')
@@ -365,7 +471,8 @@ class HttpBnctClient(BnctClient):
     def __init__(self, timeout: float = 30.0):
         self.timeout = timeout
 
-    def fetch_vessels(self) -> list[BnctVessel]:
+    def _login(self):
+        """Open a session and scrape the CSRF token from the login page."""
         import requests
 
         session = requests.Session()
@@ -382,8 +489,10 @@ class HttpBnctClient(BnctClient):
         match = _TOKEN_RE.search(login.text)
         if not match:
             raise BnctError("Token portal BNCT tidak ditemukan (situs berubah?).")
-        token = match.group(1)
+        return session, match.group(1)
 
+    def fetch_vessels(self) -> list[BnctVessel]:
+        session, token = self._login()
         vessels: list[BnctVessel] = []
         for site in SITES:
             vessels += self._fetch_site(session, token, site, "schedule",
@@ -391,6 +500,38 @@ class HttpBnctClient(BnctClient):
             vessels += self._fetch_site(session, token, site, "alongside",
                                         "getVesselAlongsideDetails", parse_alongside)
         return vessels
+
+    def fetch_containers(self, container_no: str) -> list[BnctContainer]:
+        session, token = self._login()
+        return self._containers_for(session, token, container_no)
+
+    def fetch_containers_batch(
+            self, container_numbers) -> dict[str, list[BnctContainer]]:
+        """One login, then every container at both terminals — the poll path."""
+        session, token = self._login()
+        return {no: self._containers_for(session, token, no)
+                for no in container_numbers}
+
+    def _containers_for(self, session, token, container_no):
+        containers: list[BnctContainer] = []
+        for site in CONTAINER_SITES:
+            containers += self._fetch_container_site(
+                session, token, container_no, site)
+        return containers
+
+    def _fetch_container_site(self, session, token, container_no, site):
+        import requests
+
+        try:
+            resp = session.post(
+                MONITORING_URL,
+                params={"do": "getContainerList", "key": container_no, "site": site},
+                headers={"X-CSRF-TOKEN": token}, timeout=self.timeout)
+            resp.raise_for_status()
+        except requests.RequestException as exc:
+            raise BnctError(
+                f"Gagal mengambil data kontainer BNCT ({site}): {exc}") from exc
+        return parse_containers(resp.text, site)
 
     def _fetch_site(self, session, token, site, phase, action, parser):
         import requests

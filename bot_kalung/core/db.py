@@ -174,6 +174,22 @@ CREATE TABLE IF NOT EXISTS action_items (
     created_at   TEXT NOT NULL,
     updated_at   TEXT
 );
+
+-- Containers for a scanned shipment, populated from the VGM read and tracked on
+-- BNCT (container search). last_* hold the most recent reading so a transition
+-- into 51-STACK RECEIVING can be detected without a history table.
+CREATE TABLE IF NOT EXISTS containers (
+    id                TEXT PRIMARY KEY,
+    shipment_id       TEXT NOT NULL REFERENCES shipments(id) ON DELETE CASCADE,
+    container_no      TEXT NOT NULL,
+    size              TEXT,
+    type              TEXT,
+    last_site         TEXT,
+    last_status_code  TEXT,
+    last_status_text  TEXT,
+    last_checked_at   TEXT,
+    UNIQUE (shipment_id, container_no)
+);
 """
 
 # Indexes are created AFTER _add_missing_columns, because one references a
@@ -191,6 +207,7 @@ CREATE INDEX IF NOT EXISTS idx_monitored_created ON monitored_vessels(created_at
 CREATE INDEX IF NOT EXISTS idx_scanned_shipment ON scanned_shipments(shipment_id);
 CREATE INDEX IF NOT EXISTS idx_action_items_shipment ON action_items(shipment_id);
 CREATE INDEX IF NOT EXISTS idx_action_items_due ON action_items(due_date);
+CREATE INDEX IF NOT EXISTS idx_containers_shipment ON containers(shipment_id);
 """
 
 

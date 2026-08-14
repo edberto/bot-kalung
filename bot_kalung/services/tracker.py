@@ -17,6 +17,7 @@ from ..core.constants import DEFAULT_QUARANTINE_COUNTRIES
 from ..core.db import Database, new_id
 from . import excel, naming, scanner
 from .action_items import ActionItems
+from .containers import Containers
 from .shipments import Shipments
 from .vessel_monitor import MonitoredVessels
 
@@ -98,6 +99,7 @@ def run_scan(db: Database, drive_root, *, year: int | None = None, settings=None
     registry = ScannedRegistry(db)
     shipments = Shipments(db)
     action_items = ActionItems(db)
+    containers = Containers(db)
     vessels = MonitoredVessels(db)
     quarantine = (settings.get("quarantine_countries") if settings else None) \
         or DEFAULT_QUARANTINE_COUNTRIES
@@ -129,6 +131,8 @@ def run_scan(db: Database, drive_root, *, year: int | None = None, settings=None
                 fields.destination_country, quarantine),
         }, seed_steps=False)
         action_items.seed(shipment_id, candidate.code, fields.destination_country)
+        containers.populate(shipment_id, fields.containers,
+                            size=fields.container_size_short)
         _ensure_vessel_monitored(vessels, fields.vessel_name, fields.voyage)
         registry.record(candidate.code, candidate.sequence, str(candidate.folder),
                         done=False, shipment_id=shipment_id)

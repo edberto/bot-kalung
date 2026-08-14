@@ -26,10 +26,13 @@ from PyQt6.QtWidgets import (
 from ..core.constants import EXPORTER_COLORS
 from ..services import etd_change, fileops
 from ..services.action_items import ActionItems
+from ..services.bnct import LOGIN_URL
+from ..services.containers import Containers
 from ..services.naming import parse_iso_date
 from ..services.shipments import Shipments
 from .action_items_view import ActionItemsView
 from .bnct_panel import BnctPanel
+from .containers_panel import ContainersPanel
 from .widgets import (
     DangerButton, DateEdit, InlineMessage, Panel, SecondaryButton, days_until,
     format_date_id,
@@ -175,6 +178,7 @@ class ShipmentDetailView(QWidget):
         self.settings = settings
         self.shipments = Shipments(db)
         self.items = ActionItems(db)
+        self.container_store = Containers(db)
         self.shipment_id: str | None = None
         self.folder: Path | None = None
         self.workbook: Path | None = None
@@ -281,17 +285,29 @@ class ShipmentDetailView(QWidget):
         divider.setStyleSheet(theme.style("color: #e5e7eb;"))
         outer.addWidget(divider)
 
-        # -- action items + notes ------------------------------------------
+        # -- containers + action items + notes (one scroll area) -----------
         self.items_scroll = QScrollArea()
         self.items_scroll.setWidgetResizable(True)
         self.items_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+
+        scroll_content = QWidget()
+        scroll_layout = QVBoxLayout(scroll_content)
+        scroll_layout.setContentsMargins(0, 0, 0, 0)
+        scroll_layout.setSpacing(14)
+
+        self.containers_panel = ContainersPanel()
+        self.containers_panel.open_bnct.connect(self._open_bnct_container)
+        scroll_layout.addWidget(self.containers_panel)
+
         self.items_view = ActionItemsView()
         self.items_view.status_changed.connect(self._on_status_changed)
         self.items_view.add_requested.connect(self._on_add_item)
         self.items_view.delete_requested.connect(self._on_delete_item)
         self.items_view.date_edit_requested.connect(self._on_item_date)
         self.items_view.notes_edited.connect(self._on_notes_edited)
-        self.items_scroll.setWidget(self.items_view)
+        scroll_layout.addWidget(self.items_view, 1)
+
+        self.items_scroll.setWidget(scroll_content)
         outer.addWidget(self.items_scroll, 1)
 
     # -- state -------------------------------------------------------------
@@ -342,11 +358,31 @@ class ShipmentDetailView(QWidget):
             self.quarantine_banner.clear()
 
         self.bnct_panel.load(shipment_id)
+        self.containers_panel.apply(self.container_store.for_shipment(shipment_id))
         self._refresh_items()
 
     def refresh_bnct(self, shipment_id: str):
         if shipment_id == self.shipment_id:
             self.bnct_panel.load(shipment_id)
+
+    def refresh_containers(self, shipment_id: str):
+        """A container status changed; refresh the list if it is on screen."""
+        if shipment_id == self.shipment_id:
+            self.containers_panel.apply(
+                self.container_store.for_shipment(shipment_id))
+
+    def _open_bnct_container(self, container_no: str):
+        """Copy the container number and open the BNCT portal — the portal has no
+        URL pre-fill, so the worker pastes it into the container search.
+        """
+        from PyQt6.QtWidgets import QApplication
+
+        clipboard = QApplication.clipboard()
+        if clipboard is not None:
+            clipboard.setText(container_no)
+        open_path_or_url(LOGIN_URL)
+        self.message.show_success(
+            f"Nomor {container_no} disalin. Tempel di pencarian kontainer BNCT.")
 
     @staticmethod
     def _find_workbook(folder: Path | None) -> Path | None:

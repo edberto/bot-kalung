@@ -126,6 +126,12 @@ with tempfile.TemporaryDirectory() as tmp:
     check("for_voyage joins active shipments to a voyage",
           {"AMJ2", "AMJ3", "NIT1"} <= labels)
 
+    # containers populated from the VGM read (Phase 4)
+    from bot_kalung.services.containers import Containers
+    conts = Containers(db).for_shipment(amj2["id"])
+    check("import populates the shipment's containers",
+          any(c.container_no == "TRHU5986693" for c in conts))
+
     # ---- delta: a second scan imports nothing new -------------------------
     again = tracker.run_scan(db, root, year=2026, read_fields=fake_fields)
     check("a rescan imports nothing new", again.imported == [])
