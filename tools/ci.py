@@ -228,33 +228,44 @@ def _snapshot(path) -> dict:
         conn.close()
 
 
-def _clear_stale_exe() -> None:
+def _clear_stale_exe(patience: int = 20) -> None:
     """Remove a previous dist exe so PyInstaller can overwrite it. Windows
     Defender briefly locks a freshly-scanned binary, so retry past that.
     """
     import time
 
     exe = ROOT / "dist" / "Bot Kalung.exe"
-    for _ in range(12):
+    for _ in range(patience):
         if not exe.exists():
             return
         try:
             exe.unlink()
             return
         except OSError:
-            time.sleep(0.5)
+            time.sleep(1.0)
 
 
 def stage_build() -> bool:
+    import time
+
     header("build (PyInstaller + selftest)")
-    _clear_stale_exe()
-    build = subprocess.run(
-        [PYTHON, "-m", "PyInstaller", "bot_kalung.spec", "--noconfirm"],
-        cwd=ROOT, capture_output=True, text=True)
-    if build.returncode != 0:
+    # Defender's lock on the previous exe is transient, so a build that fails on
+    # "Access is denied" is retried after clearing and waiting.
+    build = None
+    for attempt in range(3):
+        _clear_stale_exe()
+        build = subprocess.run(
+            [PYTHON, "-m", "PyInstaller", "bot_kalung.spec", "--noconfirm"],
+            cwd=ROOT, capture_output=True, text=True)
+        if build.returncode == 0:
+            break
+        combined = build.stdout + build.stderr
+        if attempt < 2 and ("Access is denied" in combined
+                            or "PermissionError" in combined):
+            time.sleep(4)
+            continue
         print(_c("FAIL", RED), "PyInstaller build failed:")
-        print(_indent("\n".join(
-            (build.stdout + build.stderr).splitlines()[-15:])))
+        print(_indent("\n".join(combined.splitlines()[-15:])))
         return False
     exe = ROOT / "dist" / "Bot Kalung.exe"
     if not exe.is_file():
