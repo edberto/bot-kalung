@@ -75,46 +75,6 @@ def open_path(path: str | Path) -> bool:
             return False
 
 
-class _ItemDateDialog(QDialog):
-    """Pick (or clear) an action item's date."""
-
-    def __init__(self, item, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Tanggal Item")
-        self._cleared = False
-        form = QFormLayout(self)
-
-        title = QLabel(item.title)
-        title.setWordWrap(True)
-        form.addRow(title)
-
-        self.date_field = DateEdit()
-        existing = parse_iso_date(item.due_date) if item.due_date else None
-        self.date_field.setDate(QDate(existing.year, existing.month, existing.day)
-                                if existing else QDate.currentDate())
-        form.addRow("Tanggal", self.date_field)
-
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok
-            | QDialogButtonBox.StandardButton.Cancel)
-        if item.due_date:
-            clear = buttons.addButton("Hapus tanggal",
-                                      QDialogButtonBox.ButtonRole.DestructiveRole)
-            clear.clicked.connect(self._clear)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        form.addRow(buttons)
-
-    def _clear(self):
-        self._cleared = True
-        self.accept()
-
-    def value(self) -> str | None:
-        if self._cleared:
-            return None
-        return self.date_field.date().toString("yyyy-MM-dd")
-
-
 class _EtdDialog(QDialog):
     """Pick a new ETD for the shipment."""
 
@@ -302,19 +262,20 @@ class ShipmentDetailView(QWidget):
         scroll_layout.setContentsMargins(0, 0, 0, 0)
         scroll_layout.setSpacing(16)
 
-        # Top row: action items (left) + notes (right).
+        # Top row: action items (left) + notes (right). AlignTop so a short card
+        # sizes to its content instead of stretching into a big empty box.
+        top = Qt.AlignmentFlag.AlignTop
         top_row = QHBoxLayout()
         top_row.setSpacing(16)
         self.items_view = ActionItemsView()
         self.items_view.status_changed.connect(self._on_status_changed)
         self.items_view.add_requested.connect(self._on_add_item)
         self.items_view.delete_requested.connect(self._on_delete_item)
-        self.items_view.date_edit_requested.connect(self._on_item_date)
-        top_row.addWidget(self.items_view, 3)
+        top_row.addWidget(self.items_view, 3, top)
 
         self.notes_panel = NotesPanel()
         self.notes_panel.notes_edited.connect(self._on_notes_edited)
-        top_row.addWidget(self.notes_panel, 2)
+        top_row.addWidget(self.notes_panel, 2, top)
         scroll_layout.addLayout(top_row)
 
         # Bottom row: vessel tracking (left) + container tracking (right).
@@ -323,11 +284,11 @@ class ShipmentDetailView(QWidget):
         self.bnct_panel = BnctPanel(db)
         self.bnct_panel.open_monitor_requested.connect(
             self.open_vessel_monitor_requested)
-        bottom_row.addWidget(self.bnct_panel, 1)
+        bottom_row.addWidget(self.bnct_panel, 1, top)
 
         self.containers_panel = ContainersPanel()
         self.containers_panel.open_bnct.connect(self._open_bnct_containers)
-        bottom_row.addWidget(self.containers_panel, 1)
+        bottom_row.addWidget(self.containers_panel, 1, top)
         scroll_layout.addLayout(bottom_row)
         scroll_layout.addStretch(1)
 
@@ -470,18 +431,6 @@ class ShipmentDetailView(QWidget):
         if answer != QMessageBox.StandardButton.Yes:
             return
         self.items.delete(item_id)
-        self._refresh_items()
-        self.changed.emit()
-
-    def _on_item_date(self, item_id: str):
-        item = next((i for i in self.items.list(self.shipment_id)
-                     if i.id == item_id), None)
-        if item is None:
-            return
-        dialog = _ItemDateDialog(item, self)
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            return
-        self.items.set_due_date(item_id, dialog.value())
         self._refresh_items()
         self.changed.emit()
 

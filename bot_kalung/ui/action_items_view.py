@@ -1,21 +1,20 @@
 """Action items and notes for a scanned shipment.
 
-Replaces the boolean workflow checklist: one row per action item (document or
-task), each with a status dropdown instead of a done/pending checkbox, an
-optional due date, and a delete button. Ad-hoc items are added with the button.
-The shipment's free-text notes live in a separate NotesPanel beside the list.
+Each is a distinct card. Action items are one row apiece — title, a status
+dropdown (colour-coded by state), and a subtle delete that confirms before
+removing. Notes is a free-text box beside the list.
 """
 
 from __future__ import annotations
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
-    QHBoxLayout, QLabel, QTextEdit, QVBoxLayout, QWidget,
+    QHBoxLayout, QLabel, QPushButton, QTextEdit, QVBoxLayout,
 )
 
 from . import theme
 from ..core.constants import ACTION_STATUS_LABELS, ACTION_STATUSES
-from .widgets import ComboBox, DangerButton, Panel, SecondaryButton, format_date_id
+from .widgets import CARD_STYLE, ComboBox, Panel, SecondaryButton, section_header
 
 # Colour per status, from "not started" grey to "final" green.
 _STATUS_COLOR = {
@@ -28,52 +27,31 @@ _STATUS_COLOR = {
 }
 
 
-def _link_button(text: str) -> SecondaryButton:
-    button = SecondaryButton(text)
-    button.setMinimumHeight(28)
-    return button
-
-
 class ActionItemRow(Panel):
-    """One action item: a status dot, its title + optional date, a status
-    dropdown, a date button, and a delete button.
-    """
+    """One action item: a title, a status dropdown, and a subtle delete."""
 
     status_changed = pyqtSignal(str, str)     # item id, status
     delete_requested = pyqtSignal(str)        # item id
-    date_edit_requested = pyqtSignal(str)     # item id
 
     def __init__(self, item):
         super().__init__()
         self.item_id = item.id
         color = _STATUS_COLOR.get(item.status, "#9ca3af")
         self.setStyleSheet(theme.style(
-            f"background: white; border: 1px solid #e5e7eb;"
-            f"border-left: 3px solid {color}; border-radius: 6px;"))
+            "background: #f9fafb; border: 1px solid #e5e7eb;"
+            f"border-left: 3px solid {color}; border-radius: 8px;"))
 
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(12, 8, 12, 8)
-        layout.setSpacing(10)
+        row = QHBoxLayout(self)
+        row.setContentsMargins(12, 9, 10, 9)
+        row.setSpacing(10)
 
-        text_column = QVBoxLayout()
-        text_column.setSpacing(2)
         title = QLabel(item.title + ("  (tambahan)" if item.is_custom else ""))
         title.setWordWrap(True)
         title.setStyleSheet(theme.style(
-            "border: none; font-size: 13px; font-weight: 600; color: #111827;"))
-        text_column.addWidget(title)
+            "border: none; background: transparent; font-size: 13px;"
+            "font-weight: 600; color: #111827;"))
+        row.addWidget(title, 1)
 
-        self.date_label = QLabel()
-        self.date_label.setStyleSheet(theme.style(
-            "border: none; font-size: 11px; font-weight: 600; color: #2563eb;"))
-        self.date_label.setVisible(bool(item.due_date))
-        if item.due_date:
-            self.date_label.setText(f"📅 {format_date_id(item.due_date)}")
-        text_column.addWidget(self.date_label)
-        layout.addLayout(text_column, 1)
-
-        # Status dropdown. Block signals while populating so setCurrentIndex does
-        # not fire a spurious change.
         self.status_combo = ComboBox()
         self.status_combo.setFixedWidth(150)
         for status in ACTION_STATUSES:
@@ -82,45 +60,42 @@ class ActionItemRow(Panel):
             ACTION_STATUSES.index(item.status)
             if item.status in ACTION_STATUSES else 0)
         self.status_combo.currentIndexChanged.connect(self._emit_status)
-        layout.addWidget(self.status_combo, 0, Qt.AlignmentFlag.AlignVCenter)
+        row.addWidget(self.status_combo, 0, Qt.AlignmentFlag.AlignVCenter)
 
-        date_button = _link_button("📅")
-        date_button.setToolTip("Ubah tanggal" if item.due_date else "Tambah tanggal")
-        date_button.setFixedWidth(40)
-        date_button.clicked.connect(
-            lambda: self.date_edit_requested.emit(self.item_id))
-        layout.addWidget(date_button, 0, Qt.AlignmentFlag.AlignVCenter)
-
-        delete = DangerButton("Hapus")
-        delete.setMinimumHeight(28)
+        delete = QPushButton("✕")
+        delete.setCursor(Qt.CursorShape.PointingHandCursor)
+        delete.setFixedSize(26, 26)
+        delete.setToolTip("Hapus item")
+        delete.setStyleSheet(theme.style("""
+            QPushButton { border: none; background: transparent; color: #9ca3af;
+                          font-size: 14px; border-radius: 6px; }
+            QPushButton:hover { background: #fef2f2; color: #dc2626; }
+        """))
         delete.clicked.connect(lambda: self.delete_requested.emit(self.item_id))
-        layout.addWidget(delete, 0, Qt.AlignmentFlag.AlignVCenter)
+        row.addWidget(delete, 0, Qt.AlignmentFlag.AlignVCenter)
 
     def _emit_status(self):
         self.status_changed.emit(self.item_id, self.status_combo.currentData())
 
 
-class ActionItemsView(QWidget):
-    """The action-item list for one shipment, rebuilt per shipment."""
+class ActionItemsView(Panel):
+    """The action-item list card for one shipment, rebuilt per shipment."""
 
     status_changed = pyqtSignal(str, str)     # item id, status
     add_requested = pyqtSignal()
     delete_requested = pyqtSignal(str)        # item id
-    date_edit_requested = pyqtSignal(str)     # item id
 
     def __init__(self):
         super().__init__()
         self.rows: dict[str, ActionItemRow] = {}
+        self.setStyleSheet(theme.style(CARD_STYLE))
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(6)
+        layout.setContentsMargins(16, 14, 16, 16)
+        layout.setSpacing(12)
 
         heading = QHBoxLayout()
-        title = QLabel("Item Tindakan")
-        title.setStyleSheet(theme.style(
-            "font-size: 14px; font-weight: 700; color: #111827;"))
-        heading.addWidget(title)
+        heading.addWidget(section_header("Item Tindakan"))
         heading.addStretch(1)
         self.add_button = SecondaryButton("+  Tambah Item")
         self.add_button.clicked.connect(self.add_requested)
@@ -129,7 +104,7 @@ class ActionItemsView(QWidget):
 
         self.list_layout = QVBoxLayout()
         self.list_layout.setContentsMargins(0, 0, 0, 0)
-        self.list_layout.setSpacing(6)
+        self.list_layout.setSpacing(8)
         layout.addLayout(self.list_layout)
         layout.addStretch(1)
 
@@ -144,35 +119,31 @@ class ActionItemsView(QWidget):
             row = ActionItemRow(item)
             row.status_changed.connect(self.status_changed)
             row.delete_requested.connect(self.delete_requested)
-            row.date_edit_requested.connect(self.date_edit_requested)
             self.rows[item.id] = row
             self.list_layout.addWidget(row)
 
 
-class NotesPanel(QWidget):
-    """The shipment's free-text notes, saved on button press."""
+class NotesPanel(Panel):
+    """The shipment's free-text notes card, saved on button press."""
 
     notes_edited = pyqtSignal(str)
 
     def __init__(self):
         super().__init__()
         self._original = ""
+        self.setStyleSheet(theme.style(CARD_STYLE))
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(6)
-
-        title = QLabel("Catatan")
-        title.setStyleSheet(theme.style(
-            "font-size: 14px; font-weight: 700; color: #111827;"))
-        layout.addWidget(title)
+        layout.setContentsMargins(16, 14, 16, 16)
+        layout.setSpacing(12)
+        layout.addWidget(section_header("Catatan"))
 
         self.notes = QTextEdit()
         self.notes.setPlaceholderText("Catatan bebas untuk pengiriman ini…")
-        self.notes.setMinimumHeight(140)
+        self.notes.setMinimumHeight(150)
         self.notes.setStyleSheet(theme.style(
-            "background: white; border: 1px solid #e5e7eb; border-radius: 8px;"
-            "font-size: 12px; color: #374151; padding: 6px;"))
+            "background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px;"
+            "font-size: 13px; color: #374151; padding: 8px;"))
         layout.addWidget(self.notes, 1)
 
         save = QHBoxLayout()

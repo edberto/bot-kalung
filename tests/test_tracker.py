@@ -143,6 +143,25 @@ with tempfile.TemporaryDirectory() as tmp:
     third = tracker.run_scan(db, root, year=2026, read_fields=fake_fields)
     check("a newly-added in-sequence folder is imported", third.imported == ["AMJ4"])
 
+    # ---- a renamed folder must NOT duplicate the shipment ------------------
+    # Rename AMJ2's folder and drop its registry row (simulating drift). The scan
+    # re-discovers (AMJ,2); it must skip it — never create a duplicate and never
+    # modify the existing shipment row.
+    before = len(db.query("SELECT id FROM shipments"))
+    (amj / "2.5x40-karachi").rename(amj / "2.5x40-karachi-Buyer-Renamed")
+    db.execute("DELETE FROM scanned_shipments WHERE exporter_code='AMJ' "
+               "AND sequence_number=2")
+    rescan = tracker.run_scan(db, root, year=2026, read_fields=fake_fields)
+    check("a renamed folder does not create a duplicate",
+          rescan.imported == []
+          and len(db.query("SELECT id FROM shipments")) == before)
+    check("the existing shipment row is left untouched",
+          db.query_one("SELECT folder_path FROM shipments WHERE exporter_code='AMJ'"
+                       " AND sequence_number=2")["folder_path"]
+          .endswith("2.5x40-karachi"))
+    check("the re-discovered key is re-registered so later scans skip it",
+          ("AMJ", 2) in tracker.ScannedRegistry(db).registered_keys())
+
 
 print()
 if failures:

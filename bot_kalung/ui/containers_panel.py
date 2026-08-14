@@ -9,28 +9,27 @@ number into the container search).
 from __future__ import annotations
 
 from PyQt6.QtCore import pyqtSignal
-from PyQt6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout
 
 from . import theme
-from .widgets import Panel, SecondaryButton
+from .widgets import CARD_STYLE, Panel, SecondaryButton, section_header
 
 # The BNCT container search's terminal codes.
 _TERMINAL = {"PTP": "PTP", "TPKB": "TPKB"}
 
 
-class ContainersPanel(QWidget):
+class ContainersPanel(Panel):
     open_bnct = pyqtSignal()      # open the portal + copy the numbers
 
     def __init__(self):
         super().__init__()
+        self.setStyleSheet(theme.style(CARD_STYLE))
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(6)
+        layout.setContentsMargins(16, 14, 16, 16)
+        layout.setSpacing(12)
 
         top = QHBoxLayout()
-        self.heading = QLabel("Kontainer")
-        self.heading.setStyleSheet(theme.style(
-            "font-size: 14px; font-weight: 700; color: #111827;"))
+        self.heading = section_header("Kontainer")
         top.addWidget(self.heading)
         top.addStretch(1)
         self.bnct_button = SecondaryButton("Buka di BNCT")
@@ -41,7 +40,7 @@ class ContainersPanel(QWidget):
 
         self.list_layout = QVBoxLayout()
         self.list_layout.setContentsMargins(0, 0, 0, 0)
-        self.list_layout.setSpacing(6)
+        self.list_layout.setSpacing(8)
         layout.addLayout(self.list_layout)
         layout.addStretch(1)
 
@@ -62,13 +61,13 @@ class ContainersPanel(QWidget):
         for container in containers:
             self.list_layout.addWidget(self._row(container))
 
-    def _row(self, container) -> QWidget:
+    def _row(self, container) -> Panel:
         stack = container.at_stack_receiving
-        accent = "#16a34a" if stack else "#e5e7eb"
+        accent = "#16a34a" if stack else "#cbd5e1"
         card = Panel()
         card.setStyleSheet(theme.style(
-            "background: white; border: 1px solid #e5e7eb;"
-            f"border-left: 3px solid {accent}; border-radius: 6px;"))
+            "background: #f9fafb; border: 1px solid #e5e7eb;"
+            f"border-left: 3px solid {accent}; border-radius: 8px;"))
         row = QVBoxLayout(card)
         row.setContentsMargins(12, 8, 12, 8)
         row.setSpacing(2)

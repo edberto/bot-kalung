@@ -49,6 +49,20 @@ class Panel(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
 
 
+# Shared styling for the shipment-detail sections, so the four panels read as
+# clearly separated, prominently-titled cards.
+CARD_STYLE = ("background: #ffffff; border: 1px solid #e5e7eb;"
+              "border-radius: 10px;")
+SECTION_HEADER_STYLE = ("border: none; background: transparent; font-size: 16px;"
+                        "font-weight: 800; color: #0f172a;")
+
+
+def section_header(text: str) -> QLabel:
+    label = QLabel(text)
+    label.setStyleSheet(theme.style(SECTION_HEADER_STYLE))
+    return label
+
+
 class PrimaryButton(QPushButton):
     def __init__(self, text: str = ""):
         super().__init__(text)

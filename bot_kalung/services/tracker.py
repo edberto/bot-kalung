@@ -107,7 +107,20 @@ def run_scan(db: Database, drive_root, *, year: int | None = None, settings=None
     plan = scanner.scan(drive_root, year, registry.registered_keys(), settings)
     result = ScanApplyResult(report=plan.report)
 
+    # Existing active shipments by (code, seq). If the registry drifted (a folder
+    # rename, a DB reset), a folder we re-discover may already have a shipment —
+    # re-register it so the next scan skips it, but NEVER create a duplicate and
+    # never modify the existing shipment row.
+    active_keys = {(r["exporter_code"], r["sequence_number"])
+                   for r in shipments.active()}
+
     for candidate in plan.to_import:
+        if (candidate.code, candidate.sequence) in active_keys:
+            registry.record(candidate.code, candidate.sequence,
+                            str(candidate.folder), done=False, shipment_id=None)
+            result.report.append(f"{candidate.label}: sudah ada, dilewati")
+            continue
+
         try:
             fields = read_fields(candidate.folder)
         except Exception as exc:      # noqa: BLE001 - one bad workbook, keep going

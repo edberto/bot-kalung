@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout
 
 from ..services.bnct_monitor import BnctMonitor
 from .bnct_display import describe_record
-from .widgets import Panel, SecondaryButton, format_date_id
+from .widgets import CARD_STYLE, Panel, SecondaryButton, format_date_id, section_header
 
 
 def _checked_at(iso: str) -> str:
@@ -35,17 +35,13 @@ class BnctPanel(Panel):
         self.monitor = BnctMonitor(db)
         self.shipment_id: str | None = None
 
-        self.setStyleSheet(theme.style(
-            "background: #f8fafc; border: 1px solid #e5e7eb; border-radius: 8px;"))
+        self.setStyleSheet(theme.style(CARD_STYLE))
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(16, 12, 16, 12)
-        outer.setSpacing(8)
+        outer.setContentsMargins(16, 14, 16, 16)
+        outer.setSpacing(12)
 
         top = QHBoxLayout()
-        title = QLabel("Kapal (BNCT)")
-        title.setStyleSheet(theme.style(
-            "font-size: 14px; font-weight: 700; color: #111827; border: none;"))
-        top.addWidget(title)
+        top.addWidget(section_header("Kapal (BNCT)"))
         top.addStretch(1)
         self.monitor_button = SecondaryButton("Buka Monitor Kapal")
         self.monitor_button.setMinimumHeight(28)
@@ -53,7 +49,7 @@ class BnctPanel(Panel):
         top.addWidget(self.monitor_button)
         outer.addLayout(top)
 
-        # A pill showing the coarse state.
+        # A solid pill in the state's colour (matches the Monitor Kapal board).
         self.status_chip = QLabel()
         self.status_chip.setStyleSheet(theme.style("border: none;"))
         chip_row = QHBoxLayout()
@@ -63,14 +59,15 @@ class BnctPanel(Panel):
 
         self.time_label = QLabel()
         self.time_label.setStyleSheet(theme.style(
-            "font-size: 11px; color: #9ca3af; border: none;"))
+            "border: none; background: transparent; font-size: 11px; color: #9ca3af;"))
         outer.addWidget(self.time_label)
+        outer.addStretch(1)
 
     def _set_chip(self, text: str, color: str):
         self.status_chip.setText(text)
         self.status_chip.setStyleSheet(theme.style(
-            f"border: none; background: {color}1a; color: {color};"
-            "border-radius: 6px; padding: 4px 12px; font-size: 13px;"
+            f"border: none; background: {color}; color: #ffffff;"
+            "border-radius: 6px; padding: 5px 14px; font-size: 13px;"
             "font-weight: 700;"))
 
     def load(self, shipment_id: str | None):
