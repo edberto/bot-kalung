@@ -1,4 +1,4 @@
-"""Settings screen (PRD Section 11, narrowed — see DECISIONS.md 13)."""
+"""Settings screen — two tabs (Umum, LLM) after the folder-scan refactor."""
 
 import os
 import sys
@@ -12,9 +12,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtWidgets import QApplication
 
-from bot_kalung.core.constants import DEFAULT_EXPORTER_FOLDERS, WORKER_EMAILS
+from bot_kalung.core.constants import WORKER_EMAILS
 from bot_kalung.core.context import AppContext
-from bot_kalung.services import drive
 from bot_kalung.ui.main_window import VIEW_SETTINGS, MainWindow
 
 failures = []
@@ -32,7 +31,6 @@ with tempfile.TemporaryDirectory() as tmp:
     tmp = Path(tmp)
     root = tmp / "Drive"
     (root / "AMJ").mkdir(parents=True)
-    (root / "Pengangkut Baru").mkdir()
 
     ctx = AppContext()
     ctx.create(root)
@@ -43,9 +41,12 @@ with tempfile.TemporaryDirectory() as tmp:
     view = window.settings
 
     check("settings reachable", window.stack.currentIndex() == VIEW_SETTINGS)
-    check("four tabs, contacts dropped", view.tabs.count() == 4)
-    check("tab titles", [view.tabs.tabText(i) for i in range(4)]
-          == ["Umum", "LLM", "Subjek Email", "Negara Karantina"])
+    check("two tabs after the refactor", view.tabs.count() == 2)
+    check("tab titles", [view.tabs.tabText(i) for i in range(2)] == ["Umum", "LLM"])
+    check("the retired tabs are gone",
+          not hasattr(view, "country_list")
+          and not hasattr(view, "subject_fields")
+          and not hasattr(view, "folder_fields"))
 
     # ---- loaded state ----------------------------------------------------
     check("drive path loaded", view.drive_field.text() == str(root))
@@ -53,14 +54,8 @@ with tempfile.TemporaryDirectory() as tmp:
     check("provider defaults to anthropic", view.radio_anthropic.isChecked())
     check("ollama fields disabled while anthropic selected",
           not view.ollama_model_field.isEnabled())
-    check("quarantine list loaded", view.country_list.count() == 1
-          and view.country_list.item(0).text() == "PAKISTAN")
-    check("email subject fields built",
-          len(view.subject_fields) == 8 and "T10" in view.subject_fields)
-    check("subject prefilled as exporter+seq plus a separator",
-          view.subject_fields["T10"].text() == "{exporter}{seq} - ")
 
-    # ---- drive validation --------------------------------------------------
+    # ---- drive validation ------------------------------------------------
     check("valid drive root passes", view._validate_drive())
     check("validation reports which exporters were found",
           "AMJ" in view.drive_message.text())
@@ -69,7 +64,7 @@ with tempfile.TemporaryDirectory() as tmp:
     check("missing root reports an error", not view.drive_message.isHidden())
     view.drive_field.setText(str(root))
 
-    # ---- LLM ---------------------------------------------------------------
+    # ---- LLM -------------------------------------------------------------
     view.radio_ollama.setChecked(True)
     view._on_provider_changed()
     check("switching provider enables ollama fields",
@@ -77,32 +72,13 @@ with tempfile.TemporaryDirectory() as tmp:
           and not view.api_key_field.isEnabled())
     view.radio_anthropic.setChecked(True)
     view._on_provider_changed()
-
     view.api_key_field.setText("sk-ant-test-key")
 
-    # ---- quarantine editing -------------------------------------------------
-    view.country_field.setText("india")
-    view._add_country()
-    check("country added and upper-cased", view.country_list.count() == 2
-          and view.country_list.item(1).text() == "INDIA")
-    view.country_field.setText("INDIA")
-    view._add_country()
-    check("duplicate rejected", view.country_list.count() == 2)
-    check("duplicate warns", not view.message.isHidden())
-    view.country_list.setCurrentRow(1)
-    view._remove_country()
-    check("country removed", view.country_list.count() == 1)
+    # ---- BNCT interval + ntfy --------------------------------------------
+    view.bnct_interval_field.setValue(7)
+    view.ntfy_enabled.setChecked(True)
 
-    view.country_field.setText("bangladesh")
-    view._add_country()
-
-    # ---- exporter folder mapping ---------------------------------------------
-    view.folder_fields["NIT"].setText("Pengangkut Baru")
-
-    # ---- subject editing -------------------------------------------------------
-    view.subject_fields["T10"].setText("Dokumen {exporter}{seq} - {vessel_voyage}")
-
-    # ---- save -----------------------------------------------------------------
+    # ---- save ------------------------------------------------------------
     view.save()
     check("save reports success", not view.message.isHidden()
           and "disimpan" in view.message.text())
@@ -110,46 +86,21 @@ with tempfile.TemporaryDirectory() as tmp:
     settings = ctx.settings
     check("api key persisted", settings.get("llm_api_key") == "sk-ant-test-key")
     check("provider persisted", settings.get("llm_provider") == "anthropic")
-    check("quarantine list persisted",
-          set(settings.quarantine_countries) == {"PAKISTAN", "BANGLADESH"})
-    check("quarantine check uses the saved list",
-          settings.is_quarantine_country("bangladesh")
-          and not settings.is_quarantine_country("india"))
+    check("bnct interval persisted", settings.get("bnct_interval_minutes") == "7")
+    check("ntfy toggle persisted", settings.get_bool("ntfy_enabled"))
 
-    mapping = settings.get("exporter_folders")
-    check("overridden exporter folder persisted",
-          mapping.get("NIT") == "Pengangkut Baru")
-    check("unchanged exporters are not stored",
-          "AMJ" not in mapping and "TTJ" not in mapping)
-    check("mapping actually resolves the new folder",
-          drive.resolve_exporter_folder(root, "NIT", settings) is not None
-          and drive.resolve_exporter_folder(root, "NIT", settings).name
-          == "Pengangkut Baru")
-    check("defaults still apply to untouched exporters",
-          drive.exporter_folder_map(settings)["AMJ"]
-          == DEFAULT_EXPORTER_FOLDERS["AMJ"])
-
-    row = ctx.db.query_one(
-        "SELECT subject_template FROM message_templates WHERE id='T10'")
-    check("subject persisted",
-          row["subject_template"] == "Dokumen {exporter}{seq} - {vessel_voyage}")
-
-    # ---- reload round-trip -------------------------------------------------------
+    # ---- reload round-trip -----------------------------------------------
     view.load()
     check("api key reloaded", view.api_key_field.text() == "sk-ant-test-key")
-    check("quarantine reloaded", view.country_list.count() == 2)
-    check("exporter folder reloaded",
-          view.folder_fields["NIT"].text() == "Pengangkut Baru")
+    check("interval reloaded", view.bnct_interval_field.value() == 7)
 
     # A second AppContext must see everything, since the DB is the shared store.
     other = AppContext()
     other.attach(root)
     check("another session sees the saved key",
           other.settings.get("llm_api_key") == "sk-ant-test-key")
-    check("another session sees the saved quarantine list",
-          "BANGLADESH" in other.settings.quarantine_countries)
 
-    # ---- back navigation ---------------------------------------------------------
+    # ---- back navigation -------------------------------------------------
     window.open_history()
     window.open_settings()
     view.back_requested.emit()

@@ -1,11 +1,10 @@
-"""Settings (PRD Section 11).
+"""Settings.
 
-Four tabs rather than the PRD's five: the Contacts tab is gone, since contacts
-are not configured (see DECISIONS.md section 13). The Message Templates tab
-edits subjects only, because bodies are deliberately empty.
-
-A General tab addition not in the PRD: the exporter -> Drive folder mapping,
-which is needed because only AMJ's folder is named after its exporter code.
+Two tabs after the folder-scan refactor: Umum (Drive root, theme, identity, BNCT
+interval, ntfy) and LLM. The exporter-folder mapping, email-subject templates,
+and quarantine-country list were retired — the scanner discovers folders itself,
+the construction-time email actions are gone, and the quarantine documents are
+seeded from the destination country directly.
 """
 
 from __future__ import annotations
@@ -17,14 +16,11 @@ from pathlib import Path
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtWidgets import (
     QButtonGroup, QCheckBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout,
-    QLabel, QLineEdit, QListWidget, QListWidgetItem, QRadioButton, QScrollArea,
-    QTabWidget, QVBoxLayout, QWidget,
+    QLabel, QLineEdit, QRadioButton, QScrollArea, QTabWidget, QVBoxLayout,
+    QWidget,
 )
 
-from ..core.constants import (
-    DEFAULT_EXPORTER_FOLDERS, EXPORTERS, NTFY_DEFAULT_SERVER, NTFY_TOPIC,
-    WORKER_EMAILS,
-)
+from ..core.constants import NTFY_DEFAULT_SERVER, NTFY_TOPIC, WORKER_EMAILS
 from ..services import drive
 from ..services.llm import LLMClient
 from .widgets import (
@@ -71,9 +67,6 @@ class SettingsView(QWidget):
         self.tabs = QTabWidget()
         self.tabs.addTab(self._scroll_wrap(self._build_general()), "Umum")
         self.tabs.addTab(self._scroll_wrap(self._build_llm()), "LLM")
-        self.tabs.addTab(self._scroll_wrap(self._build_templates()), "Subjek Email")
-        self.tabs.addTab(self._scroll_wrap(self._build_quarantine()),
-                         "Negara Karantina")
         outer.addWidget(self.tabs, 1)
 
         self.message = InlineMessage()
@@ -125,22 +118,6 @@ class SettingsView(QWidget):
         drive_layout.addWidget(self.drive_message)
         layout.addWidget(drive_box)
 
-        folders_box = QGroupBox("Folder per eksportir")
-        folders_layout = QFormLayout(folders_box)
-        note = QLabel(
-            "Nama folder di Google Drive untuk tiap eksportir. Hanya AMJ yang "
-            "namanya sama dengan kode eksportir.")
-        note.setWordWrap(True)
-        note.setStyleSheet(theme.style("color: #6b7280; font-size: 11px;"))
-        folders_layout.addRow(note)
-        self.folder_fields: dict[str, QLineEdit] = {}
-        for code in EXPORTERS:
-            field = QLineEdit()
-            field.setPlaceholderText(DEFAULT_EXPORTER_FOLDERS.get(code, code))
-            self.folder_fields[code] = field
-            folders_layout.addRow(code, field)
-        layout.addWidget(folders_box)
-
         theme_box = QGroupBox("Tampilan")
         theme_layout = QFormLayout(theme_box)
         self.theme_combo = ComboBox()
@@ -177,8 +154,8 @@ class SettingsView(QWidget):
         self.bnct_interval_field.setSuffix(" menit")
         monitor_layout.addRow("Interval pemeriksaan", self.bnct_interval_field)
         monitor_note = QLabel(
-            "Aplikasi memeriksa jadwal & status kapal di BNCT selama aplikasi "
-            "terbuka. Pemeriksaan berhenti setelah langkah D2 ditandai selesai.")
+            "Aplikasi memeriksa jadwal & status kapal serta kontainer di BNCT "
+            "selama aplikasi terbuka.")
         monitor_note.setWordWrap(True)
         monitor_note.setStyleSheet(theme.style("color: #6b7280; font-size: 11px;"))
         monitor_layout.addRow("", monitor_note)
@@ -235,8 +212,8 @@ class SettingsView(QWidget):
                 f"Folder eksportir ditemukan: {', '.join(found)}")
         else:
             self.drive_message.show_warning(
-                "Tidak ditemukan folder eksportir di lokasi ini. Periksa "
-                "pemetaan folder di bawah.")
+                "Tidak ditemukan folder eksportir di lokasi ini. Pastikan path "
+                "menunjuk ke root Google Drive yang benar.")
         return ok
 
     # -- Tab 2: LLM --------------------------------------------------------
@@ -304,98 +281,11 @@ class SettingsView(QWidget):
         self.test_button.setEnabled(True)
         (self.llm_message.show_success if ok else self.llm_message.show_error)(message)
 
-    # -- Tab 3: Email subjects ---------------------------------------------
-
-    def _build_templates(self) -> QWidget:
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.setSpacing(10)
-
-        note = QLabel(
-            "Isi email dikosongkan dengan sengaja — ditulis manual di Gmail. "
-            "Hanya subjek yang disiapkan. Variabel yang tersedia: "
-            "{exporter} {seq} {booking_no} {vessel} {voyage} {vessel_voyage} "
-            "{etd} {etd_short} {destination} {destination_country} "
-            "{container_qty} {container_size}")
-        note.setWordWrap(True)
-        note.setStyleSheet(theme.style("color: #6b7280; font-size: 11px;"))
-        layout.addWidget(note)
-
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
-        host = QWidget()
-        form = QFormLayout(host)
-        self.subject_fields: dict[str, QLineEdit] = {}
-        rows = self.ctx.db.query(
-            "SELECT id, step_code, subject_template FROM message_templates "
-            "WHERE channel='email' ORDER BY id")
-        for row in rows:
-            field = QLineEdit(row["subject_template"] or "")
-            self.subject_fields[row["id"]] = field
-            form.addRow(f"{row['id']} · {row['step_code']}", field)
-        scroll.setWidget(host)
-        layout.addWidget(scroll, 1)
-        return page
-
-    # -- Tab 4: Quarantine countries ---------------------------------------
-
-    def _build_quarantine(self) -> QWidget:
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.setSpacing(10)
-
-        note = QLabel(
-            "Negara tujuan yang memerlukan pemeriksaan karantina. Diperiksa "
-            "pada langkah 2 pembuatan pengiriman.")
-        note.setWordWrap(True)
-        note.setStyleSheet(theme.style("color: #6b7280; font-size: 11px;"))
-        layout.addWidget(note)
-
-        self.country_list = QListWidget()
-        self.country_list.setMaximumHeight(220)
-        layout.addWidget(self.country_list)
-
-        row = QHBoxLayout()
-        self.country_field = QLineEdit()
-        self.country_field.setPlaceholderText("Nama negara, contoh: PAKISTAN")
-        self.country_field.returnPressed.connect(self._add_country)
-        add = SecondaryButton("Tambah")
-        add.clicked.connect(self._add_country)
-        remove = SecondaryButton("Hapus yang dipilih")
-        remove.clicked.connect(self._remove_country)
-        row.addWidget(self.country_field, 1)
-        row.addWidget(add)
-        row.addWidget(remove)
-        layout.addLayout(row)
-        layout.addStretch(1)
-        return page
-
-    def _add_country(self):
-        name = self.country_field.text().strip().upper()
-        if not name:
-            return
-        existing = {self.country_list.item(i).text()
-                    for i in range(self.country_list.count())}
-        if name in existing:
-            self.message.show_warning(f"{name} sudah ada dalam daftar.")
-            return
-        self.country_list.addItem(QListWidgetItem(name))
-        self.country_field.clear()
-
-    def _remove_country(self):
-        for item in self.country_list.selectedItems():
-            self.country_list.takeItem(self.country_list.row(item))
-
     # -- load / save --------------------------------------------------------
 
     def load(self):
         settings = self.ctx.settings
         self.drive_field.setText(settings.get("google_drive_root") or "")
-
-        mapping = settings.get("exporter_folders") or {}
-        for code, field in self.folder_fields.items():
-            field.setText(mapping.get(code, ""))
 
         mine = settings.get("my_email") or ""
         index = self.email_combo.findData(mine)
@@ -415,10 +305,6 @@ class SettingsView(QWidget):
             settings.get("ollama_url") or "http://localhost:11434")
         self._on_provider_changed()
 
-        self.country_list.clear()
-        for country in settings.quarantine_countries:
-            self.country_list.addItem(QListWidgetItem(country))
-
         try:
             interval = int(settings.get("bnct_interval_minutes", 5))
         except (TypeError, ValueError):
@@ -433,24 +319,12 @@ class SettingsView(QWidget):
     def save(self):
         settings = self.ctx.settings
 
-        # Only store an exporter folder when it differs from the built-in
-        # default, so the defaults keep applying if they are ever corrected.
-        mapping = {}
-        for code, field in self.folder_fields.items():
-            value = field.text().strip()
-            if value and value != DEFAULT_EXPORTER_FOLDERS.get(code):
-                mapping[code] = value
-
-        countries = [self.country_list.item(i).text()
-                     for i in range(self.country_list.count())]
-
         theme_changed = (self.theme_combo.currentData()
                          != (settings.get("theme") or "light"))
 
         settings.set_many({
             "theme": self.theme_combo.currentData() or "light",
             "google_drive_root": self.drive_field.text().strip(),
-            "exporter_folders": mapping,
             "bnct_interval_minutes": str(self.bnct_interval_field.value()),
             "ntfy_enabled": self.ntfy_enabled.isChecked(),
             "ntfy_server": self.ntfy_server_field.text().strip()
@@ -462,13 +336,7 @@ class SettingsView(QWidget):
             "ollama_model": self.ollama_model_field.text().strip() or "llama3",
             "ollama_url": self.ollama_url_field.text().strip()
                           or "http://localhost:11434",
-            "quarantine_countries": countries,
         })
-
-        for template_id, field in self.subject_fields.items():
-            self.ctx.db.execute(
-                "UPDATE message_templates SET subject_template=? WHERE id=?",
-                (field.text().strip(), template_id))
 
         # Keep the live Drive root in step with what was saved.
         root = self.drive_field.text().strip()
