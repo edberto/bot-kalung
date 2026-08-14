@@ -107,15 +107,14 @@ def run_scan(db: Database, drive_root, *, year: int | None = None, settings=None
     plan = scanner.scan(drive_root, year, registry.registered_keys(), settings)
     result = ScanApplyResult(report=plan.report)
 
-    # Existing active shipments by (code, seq). If the registry drifted (a folder
-    # rename, a DB reset), a folder we re-discover may already have a shipment —
-    # re-register it so the next scan skips it, but NEVER create a duplicate and
-    # never modify the existing shipment row.
-    active_keys = {(r["exporter_code"], r["sequence_number"])
-                   for r in shipments.active()}
+    # Every shipment already in the DB, keyed by (code, seq). If the registry
+    # drifted (a folder rename, a DB reset), a folder we re-discover may already
+    # have a shipment — re-register it so the next scan skips it, but NEVER create
+    # a duplicate and never modify the existing shipment row.
+    known_keys = shipments.all_keys()
 
     for candidate in plan.to_import:
-        if (candidate.code, candidate.sequence) in active_keys:
+        if (candidate.code, candidate.sequence) in known_keys:
             registry.record(candidate.code, candidate.sequence,
                             str(candidate.folder), done=False, shipment_id=None)
             result.report.append(f"{candidate.label}: sudah ada, dilewati")

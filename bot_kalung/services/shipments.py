@@ -113,6 +113,14 @@ class Shipments:
     def get(self, shipment_id: str):
         return self.db.query_one("SELECT * FROM shipments WHERE id=?", (shipment_id,))
 
+    def all_keys(self) -> set[tuple[str, int]]:
+        """Every shipment's (exporter_code, sequence_number), any status. The scan
+        uses this to guarantee it never creates a second row for one shipment.
+        """
+        return {(r["exporter_code"], r["sequence_number"])
+                for r in self.db.query(
+                    "SELECT exporter_code, sequence_number FROM shipments")}
+
     def for_voyage(self, vessel_name: str | None, voyage: str | None) -> list:
         """Active shipments whose vessel + voyage match — a display-time join for
         the Monitor Kapal board (no stored FK, so several exporters can share one
