@@ -114,6 +114,29 @@ with tempfile.TemporaryDirectory() as tmp:
     check("the latest reading is stored",
           reread.at_stack_receiving and reread.last_site == "TPKB")
 
+    # ---- correcting a mis-read number ------------------------------------
+    stored = containers.set_number(reread.id, "caau0000000")  # lower on purpose
+    check("set_number returns the stored (upper-cased) value",
+          stored == "CAAU0000000")
+    renamed = next((r for r in containers.for_shipment(sid)
+                    if r.id == reread.id), None)
+    check("the number is corrected and upper-cased",
+          renamed is not None and renamed.container_no == "CAAU0000000")
+    check("the stale BNCT reading is cleared on rename",
+          renamed.last_site is None and renamed.last_status_code is None
+          and renamed.status == "Belum ada data")
+
+    try:
+        containers.set_number(renamed.id, "TRHU5986693")   # already on shipment
+        check("renaming to an existing number is rejected", False)
+    except ValueError:
+        check("renaming to an existing number is rejected", True)
+    try:
+        containers.set_number(renamed.id, "   ")
+        check("a blank number is rejected", False)
+    except ValueError:
+        check("a blank number is rejected", True)
+
 print()
 if failures:
     print(f"{len(failures)} FAILED: {failures}")

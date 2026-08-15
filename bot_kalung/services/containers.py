@@ -7,6 +7,7 @@ enough to detect the transition into 51-STACK RECEIVING without a history table.
 
 from __future__ import annotations
 
+import sqlite3
 from dataclasses import dataclass
 
 from ..core.db import Database, new_id
@@ -82,6 +83,29 @@ class Containers:
             last_status_code=r["last_status_code"],
             last_status_text=r["last_status_text"],
             last_checked_at=r["last_checked_at"])
+
+    # -- manual correction ----------------------------------------------
+
+    def set_number(self, container_id: str, new_number: str) -> str:
+        """Correct a mis-read container number and return the stored value.
+
+        The previous BNCT reading belonged to the wrong number, so it is cleared
+        — the next poll re-reads the status for the corrected number. Raises
+        ValueError if the number is blank or already used on this shipment.
+        """
+        number = (new_number or "").strip().upper()
+        if not number:
+            raise ValueError("Nomor kontainer tidak boleh kosong.")
+        try:
+            self.db.execute(
+                "UPDATE containers SET container_no=?, last_site=NULL, "
+                "last_status_code=NULL, last_status_text=NULL, "
+                "last_checked_at=NULL WHERE id=?", (number, container_id))
+        except sqlite3.IntegrityError as exc:
+            raise ValueError(
+                f"Nomor kontainer {number} sudah ada pada pengiriman ini.") \
+                from exc
+        return number
 
     # -- poll write -----------------------------------------------------
 

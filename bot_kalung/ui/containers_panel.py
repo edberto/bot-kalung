@@ -12,7 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout
+from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout
 
 from . import theme
 from .widgets import CARD_STYLE, Panel, SecondaryButton, section_header
@@ -66,6 +66,7 @@ class ContainersPanel(Panel):
     open_bnct = pyqtSignal()          # open the portal + copy the numbers
     copy_number = pyqtSignal(str)     # copy one container number
     open_photos = pyqtSignal(str)     # open a container's photo folder (path)
+    edit_number = pyqtSignal(str, str)  # correct a mis-read number (id, current)
 
     def __init__(self):
         super().__init__()
@@ -126,10 +127,26 @@ class ContainersPanel(Panel):
         detail = " ".join(filter(None, [container.size, container.type]))
         if detail:
             title += f"  ·  {detail}"
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.setSpacing(6)
         name = QLabel(title)
+        name.setWordWrap(True)
         name.setStyleSheet(theme.style(
             "border: none; font-size: 13px; font-weight: 600; color: #111827;"))
-        row.addWidget(name)
+        header.addWidget(name, 1)
+
+        edit_btn = QPushButton("✎")
+        edit_btn.setToolTip("Ubah nomor kontainer (salah terbaca)")
+        edit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        edit_btn.setFixedSize(24, 22)
+        edit_btn.setStyleSheet(theme.style(
+            "QPushButton { border: none; background: transparent; color: #2563eb;"
+            " font-size: 13px; } QPushButton:hover { color: #1d4ed8; }"))
+        edit_btn.clicked.connect(
+            lambda: self.edit_number.emit(container.id, container.container_no))
+        header.addWidget(edit_btn, 0, Qt.AlignmentFlag.AlignTop)
+        row.addLayout(header)
 
         status = QLabel(container.status)
         status.setStyleSheet(theme.style(

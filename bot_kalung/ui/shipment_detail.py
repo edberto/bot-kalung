@@ -134,6 +134,39 @@ class _AddItemDialog(QDialog):
         return self.title_field.text().strip()
 
 
+class _EditContainerDialog(QDialog):
+    """Correct a container number that was read wrong from the VGM."""
+
+    def __init__(self, current: str, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Ubah Nomor Kontainer")
+        self.setMinimumWidth(360)
+        form = QFormLayout(self)
+
+        note = QLabel(
+            "Perbaiki nomor kontainer yang salah terbaca. Status BNCT dibaca "
+            "ulang pada pemeriksaan berikutnya.")
+        note.setWordWrap(True)
+        note.setStyleSheet(theme.style("font-size: 11px; color: #6b7280;"))
+        form.addRow(note)
+
+        self.number_field = QLineEdit(current or "")
+        self.number_field.setPlaceholderText("mis. CMAU8513405")
+        form.addRow("Nomor", self.number_field)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        form.addRow(buttons)
+        self.number_field.setFocus()
+        self.number_field.selectAll()
+
+    def value(self) -> str:
+        return self.number_field.text().strip()
+
+
 class ShipmentDetailView(QWidget):
     """Header + quarantine banner + BNCT status + action items for one shipment."""
 
@@ -293,6 +326,7 @@ class ShipmentDetailView(QWidget):
         self.containers_panel.open_bnct.connect(self._open_bnct_containers)
         self.containers_panel.copy_number.connect(self._copy_container_number)
         self.containers_panel.open_photos.connect(self._open_photo_folder)
+        self.containers_panel.edit_number.connect(self._edit_container_number)
         bottom_row.addWidget(self.containers_panel, 1, top)
         scroll_layout.addLayout(bottom_row)
         scroll_layout.addStretch(1)
@@ -400,6 +434,23 @@ class ShipmentDetailView(QWidget):
                 "atau dihapus dari Google Drive.")
         else:
             self.message.clear()
+
+    def _edit_container_number(self, container_id: str, current: str):
+        dialog = _EditContainerDialog(current, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        new_number = dialog.value().strip().upper()
+        if not new_number or new_number == (current or "").strip().upper():
+            return
+        try:
+            self.container_store.set_number(container_id, new_number)
+        except ValueError as exc:
+            self.message.show_error(str(exc))
+            return
+        self.message.show_success(
+            f"Nomor kontainer diubah menjadi {new_number}.")
+        if self.shipment_id:
+            self.refresh_containers(self.shipment_id)
 
     @staticmethod
     def _find_workbook(folder: Path | None) -> Path | None:
