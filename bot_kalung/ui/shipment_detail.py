@@ -291,6 +291,8 @@ class ShipmentDetailView(QWidget):
 
         self.containers_panel = ContainersPanel()
         self.containers_panel.open_bnct.connect(self._open_bnct_containers)
+        self.containers_panel.copy_number.connect(self._copy_container_number)
+        self.containers_panel.open_photos.connect(self._open_photo_folder)
         bottom_row.addWidget(self.containers_panel, 1, top)
         scroll_layout.addLayout(bottom_row)
         scroll_layout.addStretch(1)
@@ -346,7 +348,8 @@ class ShipmentDetailView(QWidget):
             self.quarantine_banner.clear()
 
         self.bnct_panel.load(shipment_id)
-        self.containers_panel.apply(self.container_store.for_shipment(shipment_id))
+        self.containers_panel.apply(
+            self.container_store.for_shipment(shipment_id), self.folder)
         self.notes_panel.set_notes(row["notes"])
         self._refresh_items()
 
@@ -358,7 +361,7 @@ class ShipmentDetailView(QWidget):
         """A container status changed; refresh the list if it is on screen."""
         if shipment_id == self.shipment_id:
             self.containers_panel.apply(
-                self.container_store.for_shipment(shipment_id))
+                self.container_store.for_shipment(shipment_id), self.folder)
 
     def _open_bnct_containers(self):
         """Copy every container number and open the BNCT portal — the portal has
@@ -381,6 +384,22 @@ class ShipmentDetailView(QWidget):
                 "Tempel di pencarian kontainer BNCT.")
         else:
             self.message.show_info("Membuka portal BNCT.")
+
+    def _copy_container_number(self, number: str):
+        from PyQt6.QtWidgets import QApplication
+
+        clipboard = QApplication.clipboard()
+        if clipboard is not None:
+            clipboard.setText(number)
+        self.message.show_success(f"Nomor kontainer {number} disalin.")
+
+    def _open_photo_folder(self, path: str):
+        if not open_path(path):
+            self.message.show_error(
+                "Folder foto tidak dapat dibuka. Mungkin sudah dipindahkan "
+                "atau dihapus dari Google Drive.")
+        else:
+            self.message.clear()
 
     @staticmethod
     def _find_workbook(folder: Path | None) -> Path | None:
