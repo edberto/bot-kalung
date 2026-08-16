@@ -185,7 +185,7 @@ def summarise(reading: BnctReading) -> str:
         return "Belum ditemukan di BNCT"
     v = reading.vessel
     if reading.departing:
-        return f"Akan berangkat — Loading sisa {v.loading_remain} — bayar LOLO"
+        return f"Akan berangkat — Loading sisa {v.loading_remain}"
     if reading.phase == "alongside":
         return (f"Sudah sandar · Loading sisa {v.loading_remain} dari "
                 f"{v.loading_plan}")

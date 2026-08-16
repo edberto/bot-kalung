@@ -62,6 +62,5 @@ def describe_record(record) -> tuple[str, str, str]:
     ]
     detail = "\n".join(ops + _schedule_line(record))
     if _get(record, "departing"):
-        return ("#b91c1c",
-                "Kapal akan berangkat — bayar LOLO penuh ke Indra.", detail)
+        return ("#b91c1c", "Kapal akan berangkat.", detail)
     return ("#059669", "Kapal sudah sandar", detail)
