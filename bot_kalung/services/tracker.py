@@ -144,16 +144,17 @@ def _detect_vessel_voyage_changes(shipments: Shipments, vessels: MonitoredVessel
 
 
 def run_scan(db: Database, drive_root, *, year: int | None = None, settings=None,
-             read_fields=excel.read_shipment_fields,
+             read_fields=workbook.read_shipment_fields,
              reread_fields=workbook.read_shipment_fields,
              mtime_cache: dict | None = None) -> ScanApplyResult:
     """Scan the Drive and import every newly-eligible shipment.
 
-    `read_fields` reads a new shipment's workbook on import (Excel/COM). Active
-    shipments are then re-read with `reread_fields` (the headless openpyxl reader)
-    to catch a vessel/voyage change. Both are injectable so the whole import can
-    be driven in tests without Excel. Never raises for a single bad shipment — its
-    problem lands in `warnings` and the scan continues.
+    Both `read_fields` (import) and `reread_fields` (the vessel/voyage re-read)
+    default to the headless workbook reader (openpyxl/xlrd), so a scan needs no
+    Excel/COM. Both are injectable so the whole import can be driven in tests, and
+    `excel.read_shipment_fields` (Excel/COM) can be passed in where Excel is
+    preferred. Never raises for a single bad shipment — its problem lands in
+    `warnings` and the scan continues.
     """
     year = year or date.today().year
     registry = ScannedRegistry(db)
