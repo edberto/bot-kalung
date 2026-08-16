@@ -135,11 +135,20 @@ with tempfile.TemporaryDirectory() as tmp:
     check("the alongside card shows Discharge and the carried-forward Clossing",
           "Discharge" in detail and "Clossing" in detail)
 
+    # A departure only alerts when the voyage carries an active shipment, and the
+    # body names those shipments instead of the generic "pay LOLO" instruction.
+    from bot_kalung.core.db import new_id as _new_id
+    ctx.db.execute(
+        "INSERT INTO shipments (id, exporter_code, sequence_number, vessel_name, "
+        "voyage, status, created_at) VALUES (?,?,?,?,?, 'active', '2026-08-14')",
+        (_new_id(), "NIT", 16, "EVER CONCERT", "0800-088N"))
+
     notes = monitor.process(vid, alongside_reading(remain=2))
     check("crossing the threshold fires the departing alert",
           any(n.kind == "departing" for n in notes))
-    check("departing tells them to pay LOLO",
-          any("LOLO" in n.body for n in notes if n.kind == "departing"))
+    check("the departing body names the active shipment, not LOLO",
+          any("NIT16" in n.body and "LOLO" not in n.body
+              for n in notes if n.kind == "departing"))
     check("departing does not repeat",
           monitor.process(vid, alongside_reading(remain=2)) == [])
 

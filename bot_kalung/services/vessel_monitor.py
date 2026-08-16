@@ -205,6 +205,28 @@ class VesselMonitor:
     def monitored(self) -> list:
         return self.vessels.monitored()
 
+    def _tailor_departure(self, notes, row) -> list[Notification]:
+        """The board monitors whole voyages, including rolling future ones that
+        carry no shipment. Only alert on departure when this voyage has an active
+        shipment, and name those shipments in the body instead of the generic
+        "pay LOLO" instruction. Schedule/alongside notices are left as-is.
+        """
+        if not any(n.kind == "departing" for n in notes):
+            return notes
+        from .shipments import Shipments
+
+        matches = Shipments(self.db).for_voyage(row["vessel_name"], row["voyage"])
+        labels = [f"{m['exporter_code']}{m['sequence_number']}" for m in matches]
+        tailored: list[Notification] = []
+        for note in notes:
+            if note.kind != "departing":
+                tailored.append(note)
+            elif labels:                     # skip departure with no shipment
+                tailored.append(Notification(
+                    "departing", None, note.title,
+                    f"Pengiriman aktif: {', '.join(labels)}."))
+        return tailored
+
     def process(self, vessel_id: str, reading: BnctReading) -> list[Notification]:
         row = self.vessels.get(vessel_id)
         if row is None:
@@ -217,6 +239,7 @@ class VesselMonitor:
             row["last_phase"] == "alongside",
             bool(row["last_departing"]),
             reading, label, shipment_id=None)
+        notes = self._tailor_departure(notes, row)
 
         old_state = state_of(row)
         new_state = advance_state(old_state, reading)
