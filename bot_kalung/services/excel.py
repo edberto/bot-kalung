@@ -263,7 +263,8 @@ def _split_destination(value) -> tuple[str | None, str | None]:
 
 
 def _parse_long_date(value) -> date | None:
-    """A date cell that may arrive as a real date or as "27 JANUARY 2026"."""
+    """A date cell that may arrive as a real date or as text — full or
+    abbreviated month, e.g. "27 JANUARY 2026", "15 AUG 2026", "1 Sept 2026"."""
     if value is None:
         return None
     if isinstance(value, datetime):
@@ -273,8 +274,12 @@ def _parse_long_date(value) -> date | None:
     match = re.match(r"(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})", str(value).strip())
     if not match:
         return None
+    # Match on the month's first three letters, so an abbreviation ("AUG",
+    # "Sept") resolves the same as the full name ("AUGUST", "SEPTEMBER").
+    token = match.group(2).upper()[:3]
+    months = [m[:3] for m in naming.MONTHS_EN]
     try:
-        month = naming.MONTHS_EN.index(match.group(2).upper()) + 1
+        month = months.index(token) + 1
         return date(int(match.group(3)), month, int(match.group(1)))
     except (ValueError, IndexError):
         return None
