@@ -15,7 +15,7 @@ from datetime import date, datetime
 
 from ..core.constants import DEFAULT_QUARANTINE_COUNTRIES
 from ..core.db import Database, new_id
-from . import excel, naming, scanner
+from . import excel, naming, scanner, workbook
 from .action_items import ActionItems
 from .containers import Containers
 from .shipments import Shipments
@@ -76,6 +76,7 @@ class ScannedRegistry:
 class ScanApplyResult:
     imported: list[str] = field(default_factory=list)    # {code}{seq} labels
     completed: list[str] = field(default_factory=list)   # recorded as done
+    vessel_changes: list[str] = field(default_factory=list)  # "NIT16: A 1N → B 2N"
     report: list[str] = field(default_factory=list)      # discovery notes
     warnings: list[str] = field(default_factory=list)    # per-shipment read issues
 
@@ -84,16 +85,57 @@ class ScanApplyResult:
         parts = [f"{len(self.imported)} pengiriman baru"]
         if self.completed:
             parts.append(f"{len(self.completed)} sudah selesai")
+        if self.vessel_changes:
+            parts.append(f"{len(self.vessel_changes)} perubahan kapal")
         return ", ".join(parts)
 
 
+def _detect_vessel_voyage_changes(shipments: Shipments, vessels: MonitoredVessels,
+                                  reread_fields, skip_ids: set[str],
+                                  result: ScanApplyResult) -> None:
+    """Re-read active shipments' workbooks and update any whose vessel/voyage
+    changed since import — a booking can be moved to a different vessel/voyage.
+
+    Only vessel + voyage: containers are deliberately NOT re-read, so a manual
+    container-number correction is never clobbered. Silent — changes land in
+    `result.vessel_changes` (and the Monitor Kapal link is re-pointed). An
+    unreadable workbook (e.g. old .xls the headless reader can't open) reads as
+    no vessel and is left untouched, never overwritten with a blank.
+    """
+    for row in shipments.active():
+        if row["id"] in skip_ids or not row["folder_path"]:
+            continue
+        try:
+            fields = reread_fields(row["folder_path"])
+        except Exception:      # noqa: BLE001 - one bad workbook must not stop the scan
+            continue
+        new_vessel, new_voyage = fields.vessel_name, fields.voyage
+        if not new_vessel or not new_voyage:
+            continue           # unreadable / incomplete — don't overwrite
+
+        old_vessel = (row["vessel_name"] or "").strip().upper()
+        old_voyage = (row["voyage"] or "").strip().upper()
+        if (new_vessel.strip().upper() == old_vessel
+                and new_voyage.strip().upper() == old_voyage):
+            continue           # no change
+
+        shipments.set_vessel_voyage(row["id"], new_vessel, new_voyage)
+        _ensure_vessel_monitored(vessels, new_vessel, new_voyage)
+        label = f"{row['exporter_code']}{row['sequence_number']}"
+        was = f"{row['vessel_name'] or '?'} {row['voyage'] or '?'}".strip()
+        result.vessel_changes.append(f"{label}: {was} → {new_vessel} {new_voyage}")
+
+
 def run_scan(db: Database, drive_root, *, year: int | None = None, settings=None,
-             read_fields=excel.read_shipment_fields) -> ScanApplyResult:
+             read_fields=excel.read_shipment_fields,
+             reread_fields=workbook.read_shipment_fields) -> ScanApplyResult:
     """Scan the Drive and import every newly-eligible shipment.
 
-    `read_fields` is injectable so the whole import can be driven in tests without
-    Excel. Never raises for a single bad shipment — its problem lands in
-    `warnings` and the scan continues.
+    `read_fields` reads a new shipment's workbook on import (Excel/COM). Active
+    shipments are then re-read with `reread_fields` (the headless openpyxl reader)
+    to catch a vessel/voyage change. Both are injectable so the whole import can
+    be driven in tests without Excel. Never raises for a single bad shipment — its
+    problem lands in `warnings` and the scan continues.
     """
     year = year or date.today().year
     registry = ScannedRegistry(db)
@@ -112,6 +154,7 @@ def run_scan(db: Database, drive_root, *, year: int | None = None, settings=None
     # have a shipment — re-register it so the next scan skips it, but NEVER create
     # a duplicate and never modify the existing shipment row.
     known_keys = shipments.all_keys()
+    imported_ids: set[str] = set()   # skip re-reading what we just imported
 
     for candidate in plan.to_import:
         if (candidate.code, candidate.sequence) in known_keys:
@@ -149,6 +192,7 @@ def run_scan(db: Database, drive_root, *, year: int | None = None, settings=None
         _ensure_vessel_monitored(vessels, fields.vessel_name, fields.voyage)
         registry.record(candidate.code, candidate.sequence, str(candidate.folder),
                         done=False, shipment_id=shipment_id)
+        imported_ids.add(shipment_id)
         result.imported.append(candidate.label)
 
     for candidate in plan.done:
@@ -156,4 +200,8 @@ def run_scan(db: Database, drive_root, *, year: int | None = None, settings=None
                         done=True)
         result.completed.append(candidate.label)
 
+    # After importing, re-read the active shipments to catch a vessel/voyage that
+    # moved after import (the folder scan otherwise never revisits them).
+    _detect_vessel_voyage_changes(shipments, vessels, reread_fields,
+                                  imported_ids, result)
     return result

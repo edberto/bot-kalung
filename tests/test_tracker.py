@@ -162,6 +162,42 @@ with tempfile.TemporaryDirectory() as tmp:
     check("the re-discovered key is re-registered so later scans skip it",
           ("AMJ", 2) in tracker.ScannedRegistry(db).registered_keys())
 
+    # ---- vessel/voyage change detection -----------------------------------
+    # NIT1 was imported on INTEGRA 162E. Its workbook now reports 163E; a rescan
+    # must move it, re-point the Monitor Kapal link, and report the change.
+    nit1 = db.query_one("SELECT * FROM shipments WHERE exporter_code='NIT' "
+                        "AND sequence_number=1")
+
+    def moved_fields(folder):
+        f = fake_fields(folder)
+        f.voyage = "163E"                       # same vessel, new voyage
+        return f
+
+    changed = tracker.run_scan(db, root, year=2026, read_fields=fake_fields,
+                               reread_fields=moved_fields)
+    nit1_after = db.query_one("SELECT * FROM shipments WHERE id=?", (nit1["id"],))
+    check("a moved voyage is detected and updated on the row",
+          nit1_after["voyage"] == "163E" and nit1_after["vessel_name"] == "INTEGRA")
+    check("the change is listed in the scan report",
+          any("NIT1" in c and "163E" in c for c in changed.vessel_changes))
+    check("the new voyage is auto-monitored",
+          any(r["vessel_name"] == "INTEGRA" and r["voyage"] == "163E"
+              for r in MonitoredVessels(db).all()))
+
+    steady = tracker.run_scan(db, root, year=2026, read_fields=fake_fields,
+                              reread_fields=moved_fields)
+    check("no change is reported once the row already matches",
+          steady.vessel_changes == [])
+
+    def blank_fields(folder):
+        return excel.ShipmentFields()           # unreadable (e.g. .xls): no vessel
+
+    tracker.run_scan(db, root, year=2026, read_fields=fake_fields,
+                     reread_fields=blank_fields)
+    nit1_blank = db.query_one("SELECT * FROM shipments WHERE id=?", (nit1["id"],))
+    check("an unreadable workbook never blanks the stored vessel/voyage",
+          nit1_blank["vessel_name"] == "INTEGRA" and nit1_blank["voyage"] == "163E")
+
 
 print()
 if failures:

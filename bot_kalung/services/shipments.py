@@ -439,6 +439,14 @@ class Shipments:
             "UPDATE shipments SET etd_belawan=?, etd_source='manual' WHERE id=?",
             (iso or None, shipment_id))
 
+    def set_vessel_voyage(self, shipment_id: str, vessel_name: str | None,
+                          voyage: str | None) -> None:
+        """Update a shipment's vessel + voyage (database only). Used when a
+        re-scan finds the booking moved to a different vessel/voyage."""
+        self.db.execute(
+            "UPDATE shipments SET vessel_name=?, voyage=? WHERE id=?",
+            (vessel_name or None, voyage or None, shipment_id))
+
     def set_voyage_etd(self, vessel_name: str | None, voyage: str | None,
                        iso: str | None) -> int:
         """Set the ETD for every active shipment on this vessel+voyage — a

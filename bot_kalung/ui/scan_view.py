@@ -72,7 +72,8 @@ class ScanView(QWidget):
 
     def show_result(self, result) -> None:
         self.set_scanning(False)
-        if result.imported or result.completed:
+        changes = getattr(result, "vessel_changes", [])
+        if result.imported or result.completed or changes:
             self.message.show_success(f"Pindai selesai — {result.summary}.")
         else:
             self.message.show_info("Pindai selesai — tidak ada pengiriman baru.")
@@ -80,6 +81,10 @@ class ScanView(QWidget):
         lines: list[str] = []
         if result.imported:
             lines.append("Pengiriman baru: " + ", ".join(result.imported))
+        if changes:
+            lines.append("")
+            lines.append("Perubahan kapal/voyage:")
+            lines += [f"  • {change}" for change in changes]
         if result.completed:
             lines.append("Sudah selesai (dilewati): " + ", ".join(result.completed))
         if result.report:
