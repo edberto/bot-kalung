@@ -29,6 +29,10 @@ hiddenimports += collect_submodules("anthropic")
 # used to be pulled in transitively by the (now-removed) DO parser; import it
 # explicitly so the static scan keeps it in the bundle.
 hiddenimports += collect_submodules("pdfplumber")
+# The headless workbook reader uses openpyxl (.xlsx) and xlrd (.xls); xlrd is
+# imported lazily inside a function, which the static scan can miss.
+hiddenimports += collect_submodules("openpyxl")
+hiddenimports += ["xlrd", "xlrd.xldate"]
 hiddenimports += [
     "win32com.client",
     "win32com.shell",   # SHFileOperation, used to delete folders to the Recycle Bin
