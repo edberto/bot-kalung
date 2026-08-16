@@ -10,6 +10,7 @@ read and the BL page reader are both injectable).
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from datetime import date, datetime
 
@@ -92,7 +93,8 @@ class ScanApplyResult:
 
 def _detect_vessel_voyage_changes(shipments: Shipments, vessels: MonitoredVessels,
                                   reread_fields, skip_ids: set[str],
-                                  result: ScanApplyResult) -> None:
+                                  result: ScanApplyResult,
+                                  mtime_cache: dict | None = None) -> None:
     """Re-read active shipments' workbooks and update any whose vessel/voyage
     changed since import — a booking can be moved to a different vessel/voyage.
 
@@ -101,10 +103,25 @@ def _detect_vessel_voyage_changes(shipments: Shipments, vessels: MonitoredVessel
     `result.vessel_changes` (and the Monitor Kapal link is re-pointed). An
     unreadable workbook (e.g. old .xls the headless reader can't open) reads as
     no vessel and is left untouched, never overwritten with a blank.
+
+    `mtime_cache` (shipment_id -> workbook mtime), when given, skips re-reading a
+    workbook whose file has not changed since last checked — most scans then do
+    only a stat, not a full read over the network drive.
     """
     for row in shipments.active():
         if row["id"] in skip_ids or not row["folder_path"]:
             continue
+        if mtime_cache is not None:
+            wb = excel.find_main_workbook(row["folder_path"])
+            if wb is not None:
+                try:
+                    mtime = os.path.getmtime(wb)
+                except OSError:
+                    mtime = None
+                if mtime is not None:
+                    if mtime_cache.get(row["id"]) == mtime:
+                        continue          # unchanged since last scan
+                    mtime_cache[row["id"]] = mtime
         try:
             fields = reread_fields(row["folder_path"])
         except Exception:      # noqa: BLE001 - one bad workbook must not stop the scan
@@ -128,7 +145,8 @@ def _detect_vessel_voyage_changes(shipments: Shipments, vessels: MonitoredVessel
 
 def run_scan(db: Database, drive_root, *, year: int | None = None, settings=None,
              read_fields=excel.read_shipment_fields,
-             reread_fields=workbook.read_shipment_fields) -> ScanApplyResult:
+             reread_fields=workbook.read_shipment_fields,
+             mtime_cache: dict | None = None) -> ScanApplyResult:
     """Scan the Drive and import every newly-eligible shipment.
 
     `read_fields` reads a new shipment's workbook on import (Excel/COM). Active
@@ -203,5 +221,5 @@ def run_scan(db: Database, drive_root, *, year: int | None = None, settings=None
     # After importing, re-read the active shipments to catch a vessel/voyage that
     # moved after import (the folder scan otherwise never revisits them).
     _detect_vessel_voyage_changes(shipments, vessels, reread_fields,
-                                  imported_ids, result)
+                                  imported_ids, result, mtime_cache)
     return result

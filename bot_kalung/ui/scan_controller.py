@@ -31,11 +31,12 @@ class _ScanWorker(QThread):
 
     done = pyqtSignal(object, object)   # (ScanApplyResult | None, error | None)
 
-    def __init__(self, db, drive_root, settings, parent=None):
+    def __init__(self, db, drive_root, settings, mtime_cache, parent=None):
         super().__init__(parent)
         self._db = db
         self._drive_root = drive_root
         self._settings = settings
+        self._mtime_cache = mtime_cache
 
     def run(self):
         # xlwings talks to Excel over COM, which must be initialised per thread.
@@ -46,7 +47,8 @@ class _ScanWorker(QThread):
             pythoncom = None
         try:
             result = tracker.run_scan(self._db, self._drive_root,
-                                      settings=self._settings)
+                                      settings=self._settings,
+                                      mtime_cache=self._mtime_cache)
             self.done.emit(result, None)
         except Exception as exc:  # noqa: BLE001 - a scan must never crash the app
             self.done.emit(None, f"Kesalahan saat memindai folder: {exc}")
@@ -68,6 +70,9 @@ class ScanController(QObject):
         self.db = db
         self.settings = settings
         self.drive_root = drive_root
+        # shipment_id -> workbook mtime, so the vessel/voyage re-read skips
+        # workbooks that have not changed since the last scan this session.
+        self._mtime_cache: dict = {}
         self._worker: _ScanWorker | None = None
 
         self.timer = QTimer(self)
@@ -98,7 +103,8 @@ class ScanController(QObject):
         if self.scanning:
             return               # a previous scan is still running; skip
         self.started.emit()
-        self._worker = _ScanWorker(self.db, self.drive_root, self.settings, self)
+        self._worker = _ScanWorker(self.db, self.drive_root, self.settings,
+                                   self._mtime_cache, self)
         self._worker.done.connect(self._on_done)
         self._worker.start()
 

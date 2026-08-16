@@ -199,6 +199,42 @@ with tempfile.TemporaryDirectory() as tmp:
           nit1_blank["vessel_name"] == "INTEGRA" and nit1_blank["voyage"] == "163E")
 
 
+# ---- mtime gating: the re-read skips unchanged workbooks -------------------
+with tempfile.TemporaryDirectory() as tmp:
+    import os as _os
+    import time as _time
+
+    root = Path(tmp) / "Drive"
+    make_shipment(root / "NMEHMOOD & CV.Hassan" / "2026", "1.k", "NIT01")
+    db = Database(db_path_for(root))
+    db.initialize()
+
+    reads: list[str] = []
+
+    def counting(folder):
+        reads.append(folder)
+        return excel.ShipmentFields()          # no vessel: a read, not a change
+
+    cache: dict = {}
+    tracker.run_scan(db, root, year=2026, read_fields=fake_fields,
+                     reread_fields=counting, mtime_cache=cache)   # imports NIT1
+    reads.clear()
+    tracker.run_scan(db, root, year=2026, read_fields=fake_fields,
+                     reread_fields=counting, mtime_cache=cache)
+    check("an existing shipment's workbook is re-read once", len(reads) == 1)
+    reads.clear()
+    tracker.run_scan(db, root, year=2026, read_fields=fake_fields,
+                     reread_fields=counting, mtime_cache=cache)
+    check("an unchanged workbook is skipped on the next scan", reads == [])
+
+    wb = next((root / "NMEHMOOD & CV.Hassan" / "2026" / "1.k").glob("*.xlsx"))
+    _os.utime(wb, (_time.time() + 100, _time.time() + 100))
+    reads.clear()
+    tracker.run_scan(db, root, year=2026, read_fields=fake_fields,
+                     reread_fields=counting, mtime_cache=cache)
+    check("a modified workbook is re-read again", len(reads) == 1)
+
+
 print()
 if failures:
     print(f"{len(failures)} FAILED: {failures}")
