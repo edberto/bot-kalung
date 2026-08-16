@@ -1,20 +1,22 @@
-"""Headless workbook reading (openpyxl) — the PC-free ingest path.
+"""Headless workbook reading — the PC-free ingest path.
 
 `excel.read_shipment_fields` reads a shipment's SI/VGM workbook through Excel COM
 (xlwings), which needs Windows + installed Excel. This is the same read with no
-Excel at all: openpyxl on the saved `.xlsx`, using each formula cell's
-Excel-cached value (`data_only=True`). It was verified to match the COM reader
-across every live shipment, so the folder scan can run on a plain Linux worker.
+Excel at all, so the folder scan can run on a plain Linux worker:
 
-Only the cell access differs; the parsing (destination, ETD, party, vessel/
-voyage, booking) is the exact same pure logic, reused from `excel`.
+* `.xlsx` is read with openpyxl, using each formula cell's Excel-cached value
+  (`data_only=True`) — verified to match the COM reader across every live shipment.
+* `.xls` (older binary) is read with xlrd.
+
+Both formats are normalised to a 1-indexed `_Grid` (cell values + merged spans),
+so the field logic is identical and the same as `excel`'s. Only the loading
+differs; the parsing (destination, ETD, party, vessel/voyage, booking) is the
+exact same pure logic, reused from `excel`.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-
-import openpyxl
 
 from .excel import (
     ExcelError,
@@ -29,60 +31,136 @@ from .excel import (
 )
 
 
-# -- openpyxl cell lookup (mirrors excel.find_sheet / find_label / ...) -------
+# -- a format-agnostic worksheet grid ----------------------------------------
 
-def _find_sheet(wb, prefix: str):
+class _Grid:
+    """One worksheet as {(row, col): value} (1-indexed) plus its merged spans,
+    each merge a (min_row, max_row, min_col, max_col) inclusive tuple."""
+
+    def __init__(self, name, cells, merged):
+        self.name = name
+        self._cells = cells
+        self.merged = merged
+
+    def cell(self, row, col):
+        return self._cells.get((row, col))
+
+    def ordered_cells(self):
+        # Row-major, so a label search returns the same first match as Excel.
+        return sorted(self._cells.items())
+
+
+def _grids_from_xlsx(path) -> dict[str, _Grid]:
+    import openpyxl
+
+    wb = openpyxl.load_workbook(path, data_only=True)
+    try:
+        grids: dict[str, _Grid] = {}
+        for name in wb.sheetnames:
+            ws = wb[name]
+            cells = {(c.row, c.column): c.value
+                     for row in ws.iter_rows() for c in row
+                     if c.value is not None}
+            merged = [(m.min_row, m.max_row, m.min_col, m.max_col)
+                      for m in ws.merged_cells.ranges]
+            grids[name] = _Grid(name, cells, merged)
+        return grids
+    finally:
+        wb.close()
+
+
+def _grids_from_xls(path) -> dict[str, _Grid]:
+    import xlrd
+
+    book = xlrd.open_workbook(path)
+    grids: dict[str, _Grid] = {}
+    for name in book.sheet_names():
+        sh = book.sheet_by_name(name)
+        cells = {}
+        for r in range(sh.nrows):
+            for c in range(sh.ncols):
+                ctype = sh.cell_type(r, c)
+                if ctype in (xlrd.XL_CELL_EMPTY, xlrd.XL_CELL_BLANK):
+                    continue
+                value = sh.cell_value(r, c)
+                if ctype == xlrd.XL_CELL_DATE:      # serial float -> datetime
+                    value = xlrd.xldate.xldate_as_datetime(value, book.datemode)
+                cells[(r + 1, c + 1)] = value
+        # xlrd merges are (rlo, rhi, clo, chi), 0-indexed and half-open.
+        merged = [(rlo + 1, rhi, clo + 1, chi)
+                  for (rlo, rhi, clo, chi) in sh.merged_cells]
+        grids[name] = _Grid(name, cells, merged)
+    return grids
+
+
+def _load_grids(path) -> dict[str, _Grid]:
+    return (_grids_from_xls(path) if str(path).lower().endswith(".xls")
+            else _grids_from_xlsx(path))
+
+
+# -- cell lookup (mirrors excel.find_sheet / find_label / ...) ----------------
+
+def _find_sheet(grids, prefix: str):
     """Match by normalized prefix so 'SI ', 'SI  ' and 'SI  benar' all resolve."""
     target = _normalize(prefix)
-    for name in wb.sheetnames:
+    for name, grid in grids.items():
         if _normalize(name).startswith(target):
-            return wb[name]
+            return grid
     return None
 
 
-def _find_label(ws, text: str, *, column: int | None = None,
+def _find_label(grid, text: str, *, column: int | None = None,
                 exact: bool = False) -> tuple[int, int] | None:
     """Locate a label cell, case-insensitively. Returns (row, col) 1-based."""
     needle = text.strip().upper()
-    for row in ws.iter_rows():
-        for cell in row:
-            value = cell.value
-            if not isinstance(value, str):
-                continue
-            cell_text = value.strip().upper()
-            if not cell_text:
-                continue
-            if column is not None and cell.column != column:
-                continue
-            if (cell_text == needle) if exact else (needle in cell_text):
-                return cell.row, cell.column
+    for (row, col), value in grid.ordered_cells():
+        if not isinstance(value, str):
+            continue
+        cell_text = value.strip().upper()
+        if not cell_text:
+            continue
+        if column is not None and col != column:
+            continue
+        if (cell_text == needle) if exact else (needle in cell_text):
+            return row, col
     return None
 
 
-def _value_after(ws, row: int, col: int) -> int:
+def _value_after(grid, row: int, col: int) -> int:
     """First column right of a label, skipping the label's merged span (some
     templates merge the label across two columns, e.g. NIT's ETD in G:H)."""
-    for rng in ws.merged_cells.ranges:
-        if (rng.min_row <= row <= rng.max_row
-                and rng.min_col <= col <= rng.max_col):
-            return rng.max_col + 1
+    for (min_row, max_row, min_col, max_col) in grid.merged:
+        if min_row <= row <= max_row and min_col <= col <= max_col:
+            return max_col + 1
     return col + 1
 
 
-def _cell(ws, row: int, col: int):
-    return ws.cell(row=row, column=col).value
+def _cell(grid, row: int, col: int):
+    return grid.cell(row, col)
 
 
-def _container_rows(ws) -> tuple[int, list[int]]:
+def _value_right(grid, row: int, col: int, span: int = 3):
+    """The value to the right of a label: the first non-empty cell after the
+    label's merged span, within `span` columns. Some templates (e.g. MA's .xls)
+    leave a spacer column between the label and its value, so col+1 is empty."""
+    start = _value_after(grid, row, col)
+    for c in range(start, start + span):
+        value = grid.cell(row, c)
+        if value is not None and (not isinstance(value, str) or value.strip()):
+            return value
+    return None
+
+
+def _container_rows(grid) -> tuple[int, list[int]]:
     """(header_row, data_rows) for the VGM sheet's container table."""
-    header = _find_label(ws, "CONTAINER NO")
+    header = _find_label(grid, "CONTAINER NO")
     if header is None:
         raise ExcelError("Tidak menemukan tabel kontainer di sheet VGM.")
     header_row = header[0]
     rows: list[int] = []
     row = header_row + 1
     while True:
-        index_value = _cell(ws, row, 2)
+        index_value = _cell(grid, row, 2)
         if isinstance(index_value, (int, float)) and not isinstance(index_value, bool):
             rows.append(row)
             row += 1
@@ -93,81 +171,76 @@ def _container_rows(ws) -> tuple[int, list[int]]:
 
 # -- field reads (same logic as excel._read_si / _read_vgm) ------------------
 
-def _read_si(ws, fields: ShipmentFields) -> None:
+def _read_si(grid, fields: ShipmentFields) -> None:
     for label in ("PORT OF DISCHARGE", "DESTINATION"):
-        pod = _find_label(ws, label)
+        pod = _find_label(grid, label)
         if not pod:
             continue
-        raw = _cell(ws, pod[0], _value_after(ws, *pod))
-        port, country = _split_destination(raw)
+        port, country = _split_destination(_value_right(grid, *pod))
         if port:
             fields.destination_port, fields.destination_country = port, country
             break
 
-    etd = _find_label(ws, "ETD", exact=True)
+    etd = _find_label(grid, "ETD", exact=True)
     if etd:
-        fields.etd = _parse_long_date(_cell(ws, etd[0], _value_after(ws, *etd)))
+        fields.etd = _parse_long_date(_value_right(grid, *etd))
 
-    party = _find_label(ws, "Party", exact=True)
+    party = _find_label(grid, "Party", exact=True)
     if party:
-        raw = _cell(ws, party[0], _value_after(ws, *party))
-        fields.container_quantity, fields.container_size_short = _parse_party(raw)
+        fields.container_quantity, fields.container_size_short = _parse_party(
+            _value_right(grid, *party))
 
 
-def _read_vgm(ws, fields: ShipmentFields) -> None:
-    vessel = _find_label(ws, "VESSEL NAME", column=2)
+def _read_vgm(grid, fields: ShipmentFields) -> None:
+    vessel = _find_label(grid, "VESSEL NAME", column=2)
     if vessel:
         fields.vessel_name, fields.voyage = _split_vessel_voyage(
-            _cell(ws, vessel[0], 5))
+            _cell(grid, vessel[0], 5))
 
-    booking = _find_label(ws, "BOOKING NO", column=2)
+    booking = _find_label(grid, "BOOKING NO", column=2)
     if booking:
-        fields.booking_number = _clean_booking(_cell(ws, booking[0], 5))
+        fields.booking_number = _clean_booking(_cell(grid, booking[0], 5))
 
     try:
-        _, rows = _container_rows(ws)
+        _, rows = _container_rows(grid)
     except ExcelError:
         fields.warnings.append("Tabel kontainer VGM tidak ditemukan.")
         return
     numbers = []
     for row in rows:
-        value = _cell(ws, row, 4)      # column D — container number
+        value = _cell(grid, row, 4)      # column D — container number
         if isinstance(value, str) and value.strip():
             numbers.append(value.strip().upper())
     fields.containers = numbers
     if fields.container_quantity is None and rows:
         fields.container_quantity = len(rows)
     if fields.container_size_short is None and rows:
-        size = _cell(ws, rows[0], 3)
+        size = _cell(grid, rows[0], 3)
         if isinstance(size, str) and size.strip():
             fields.container_size_short = size.strip()
 
 
 def read_shipment_fields(folder) -> ShipmentFields:
-    """Headless twin of `excel.read_shipment_fields`. Never raises — problems
-    land in `warnings`."""
+    """Headless twin of `excel.read_shipment_fields` (.xlsx + .xls). Never raises
+    — problems land in `warnings`."""
     fields = ShipmentFields()
     workbook = find_main_workbook(folder)
     if workbook is None or Path(workbook).name.startswith("~$"):
         fields.warnings.append("Tidak ada workbook VGM/SI/Inv/PL di folder ini.")
         return fields
     fields.workbook = workbook.name
-    wb = None
     try:
-        wb = openpyxl.load_workbook(workbook, data_only=True)
-        si = _find_sheet(wb, "SI")
+        grids = _load_grids(workbook)
+        si = _find_sheet(grids, "SI")
         if si is not None:
             _read_si(si, fields)
         else:
             fields.warnings.append("Sheet SI tidak ditemukan.")
-        vgm = _find_sheet(wb, "VGM")
+        vgm = _find_sheet(grids, "VGM")
         if vgm is not None:
             _read_vgm(vgm, fields)
         else:
             fields.warnings.append("Sheet VGM tidak ditemukan.")
     except Exception as exc:      # noqa: BLE001 - a bad workbook must not crash a scan
         fields.warnings.append(f"Gagal membaca Excel: {exc}")
-    finally:
-        if wb is not None:
-            wb.close()
     return fields
