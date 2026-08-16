@@ -44,10 +44,12 @@ def schedule_reading():
 
 
 def alongside_reading(remain=550):
+    # Departure now needs Loading, Restow AND Discharge Remaining all near zero,
+    # so discharge winds down with loading — a low `remain` is a departing vessel.
     return BnctReading(True, "alongside", NOW, BnctVessel(
         "tpkb", "alongside", "MV. EVER CONCERT", "0800-088S", "0800-088N",
         loading_plan=800, loading_actual=800 - remain, loading_remain=remain,
-        discharge_plan=700, discharge_remain=20))
+        discharge_plan=700, discharge_remain=min(20, remain)))
 
 
 def notfound_reading():

@@ -9,8 +9,8 @@ does not re-alert every five minutes.
 Notifications:
 * `schedule` — the vessel first appears in the BNCT schedule (ETD/billing/stack).
 * `alongside` — it moves to the berth and work begins.
-* `departing` — Loading Remain Total drops below the PRD threshold; the crew
-  must pay LOLO in full to Indra.
+* `departing` — Loading, Restow AND Discharge Remain Totals all drop near zero;
+  the crew must pay LOLO in full to Indra.
 """
 
 from __future__ import annotations

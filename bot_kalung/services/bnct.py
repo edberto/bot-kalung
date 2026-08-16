@@ -17,8 +17,8 @@ A vessel moves through two phases:
   Billing, Open Stack, closing times.
 * **Alongside** — at the berth, being worked. Card carries ATB, ETD, berth,
   and a Loading/Discharge/Restow x Plan/Actual/Remain matrix. The last column
-  of each row is the Total across container sizes. "Loading Remain Total < 5"
-  is the PRD's departure signal.
+  of each row is the Total across container sizes. The departure signal is all
+  three Remain Totals (Loading, Restow, Discharge) dropping near zero.
 
 Parsing is deliberately tolerant: the portal is third-party HTML that can
 change without notice, so a parse miss yields an empty list (reported as "not
@@ -37,7 +37,8 @@ LOGIN_URL = f"{PORTAL_BASE}/"
 MONITORING_URL = f"{PORTAL_BASE}/monitoring"
 SITES = ("ptp", "tpkb")
 
-# PRD 15: below this many containers left to load, the vessel is departing.
+# Below this many containers left, an operation counts as finished. A vessel is
+# departing once Loading, Restow AND Discharge Remaining are all under it.
 DEPARTURE_THRESHOLD = 5
 
 
@@ -78,8 +79,18 @@ class BnctVessel:
 
     @property
     def departing(self) -> bool:
-        return (self.phase == "alongside" and self.loading_remain is not None
-                and self.loading_remain < DEPARTURE_THRESHOLD)
+        """Departed once every operation is essentially finished: Loading,
+        Restow AND Discharge Remaining are all near zero (same threshold).
+
+        Loading must be known to judge this; an absent restow/discharge row
+        means that operation isn't happening, so it doesn't hold departure back
+        — but a row that IS present with work left keeps the vessel non-departed
+        even when loading is done.
+        """
+        if self.phase != "alongside" or self.loading_remain is None:
+            return False
+        remains = (self.loading_remain, self.discharge_remain, self.restow_remain)
+        return all(r < DEPARTURE_THRESHOLD for r in remains if r is not None)
 
     @staticmethod
     def _pct(done: int | None, plan: int | None) -> int | None:

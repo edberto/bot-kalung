@@ -113,10 +113,24 @@ missing = bnct.read_for_shipment(allv, "NO SUCH", "000", now=NOW)
 check("missing vessel reads as not found", not missing.found
       and missing.phase is None and "belum terjadwal" in missing.note)
 
-# departing threshold
+# departing threshold: Loading, Restow AND Discharge Remaining must all be low.
 low = BnctVessel("tpkb", "alongside", "X", "1S", "1N", loading_remain=3,
                  loading_plan=800)
 check("remain below 5 is departing", low.departing)
+check("loading done but discharge still high is NOT departing",
+      not BnctVessel("tpkb", "alongside", "X", loading_remain=0,
+                     discharge_remain=40).departing)
+check("loading done but restow still high is NOT departing",
+      not BnctVessel("tpkb", "alongside", "X", loading_remain=0,
+                     restow_remain=12).departing)
+check("all three remains near zero IS departing",
+      BnctVessel("tpkb", "alongside", "X", loading_remain=0,
+                 discharge_remain=2, restow_remain=0).departing)
+check("an absent discharge/restow row does not block departure",
+      BnctVessel("tpkb", "alongside", "X", loading_remain=1).departing)
+check("still loading is not departing even with discharge/restow done",
+      not BnctVessel("tpkb", "alongside", "X", loading_remain=50,
+                     discharge_remain=0, restow_remain=0).departing)
 
 # ---- a vessel at both terminals is combined (real EVER CONCERT 088N) --------
 # ptp handles discharge only (loading 0); tpkb handles loading only (discharge 0).
@@ -128,7 +142,8 @@ tpkb = BnctVessel("tpkb", "alongside", "MV. EVER CONCERT", "0800-088S", "0800-08
                   loading_plan=399, loading_actual=0, loading_remain=399,
                   discharge_plan=0, discharge_actual=0, discharge_remain=0,
                   atb="10/08/2026 15:08", etd="12/08/2026 05:00")
-check("the discharge-only terminal alone would look departing", ptp.departing)
+check("the discharge-only terminal is not falsely departing (discharge high)",
+      not ptp.departing)
 combined = bnct.match_vessel([ptp, tpkb], "EVER CONCERT", "088N")
 check("loading numbers come from the loading terminal",
       combined.loading_plan == 399 and combined.loading_remain == 399)
