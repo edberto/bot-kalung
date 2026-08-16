@@ -106,14 +106,19 @@ class VesselCard(Panel):
             icon = QLabel("📦")
             icon.setStyleSheet(theme.style("border: none; font-size: 11px;"))
             flow.addWidget(icon)
+            # Built from theme tokens so the chip is a proper accent pill in dark
+            # mode too (fixed light-blue hex read as a light chip on a dark card).
+            accent = theme.color("accent")
+            chip_style = (
+                f"QPushButton {{ border: 1px solid {accent};"
+                f" background: {theme.color('accent_soft')}; color: {accent};"
+                " border-radius: 4px; padding: 1px 8px; font-size: 11px;"
+                " font-weight: 700; }"
+                f"QPushButton:hover {{ background: {accent}; color: #ffffff; }}")
             for label, shipment_id in shipments_on_voyage:
                 chip = QPushButton(label)
                 chip.setCursor(Qt.CursorShape.PointingHandCursor)
-                chip.setStyleSheet(theme.style(
-                    "QPushButton { border: 1px solid #bfdbfe; background: #eff6ff;"
-                    " color: #1d4ed8; border-radius: 4px; padding: 1px 8px;"
-                    " font-size: 11px; font-weight: 700; }"
-                    "QPushButton:hover { background: #dbeafe; }"))
+                chip.setStyleSheet(chip_style)
                 chip.clicked.connect(
                     lambda _, sid=shipment_id: self.shipment_clicked.emit(sid))
                 flow.addWidget(chip)
