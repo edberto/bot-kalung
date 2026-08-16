@@ -184,6 +184,11 @@ class BnctMonitor:
             bool(prev and prev["phase"] == "alongside"),
             bool(prev and prev["departing"]),
             reading, label, shipment_id)
+        # Departure is announced once per voyage by the vessel board (listing its
+        # shipments), so the per-shipment departure alert is dropped to avoid a
+        # duplicate and the generic "pay LOLO" message. The departing state is
+        # still recorded on the check below.
+        notes = [n for n in notes if n.kind != "departing"]
 
         self.record(shipment_id, reading, prev)
         self._sync_etd(shipment_id, reading, prev)

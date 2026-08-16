@@ -70,8 +70,8 @@ with tempfile.TemporaryDirectory() as tmp:
     check("monitor emitted transition notifications", len(notes) >= 1)
     check("monitor persisted them to the store",
           store.unread_count() == len(notes))
-    check("a departing transition was recorded",
-          any(n.kind == "departing" for n in store.recent()))
+    check("an alongside transition was recorded",
+          any(n.kind == "alongside" for n in store.recent()))
 
     # ---- MainWindow: badge, navigation, deep-link ------------------------
     window = MainWindow(ctx)

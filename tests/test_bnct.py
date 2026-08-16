@@ -251,19 +251,19 @@ with tempfile.TemporaryDirectory() as tmp:
     check("clossing carried forward into the alongside check",
           bool(monitor.latest(sid)["clossing"]))
 
-    # Loading nearly done -> departing alert, once.
+    # Loading nearly done. The per-shipment monitor no longer notifies on
+    # departure (the vessel board announces it per voyage), but it still records
+    # the departing state on the check.
     departing_reading = BnctReading(
         found=True, phase="alongside", checked_at=NOW.isoformat(),
         vessel=BnctVessel("tpkb", "alongside", "MV. MTT REYA", "26RY123S",
                           "26RY123N", loading_plan=800, loading_actual=798,
                           loading_remain=2))
     notes = monitor.process(sid, "NIT15", departing_reading)
-    check("crossing the threshold fires the departing alert",
-          any(n.kind == "departing" for n in notes))
-    check("departing message tells them to pay LOLO",
-          any("LOLO" in n.body for n in notes if n.kind == "departing"))
-    notes = monitor.process(sid, "NIT15", departing_reading)
-    check("departing alert does not repeat", notes == [])
+    check("per-shipment departure does not notify (board handles it)",
+          not any(n.kind == "departing" for n in notes))
+    check("the departing state is still recorded on the check",
+          monitor.latest(sid)["departing"] == 1)
 
     # A not-found reading is recorded too, so the UI can show "not found yet".
     nf = bnct.read_for_shipment(allv, "GHOST", "000", now=NOW)
