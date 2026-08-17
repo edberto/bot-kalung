@@ -1,0 +1,8 @@
+# Server-only dependencies for the PC-free ingest (Drive API scan).
+#
+# Kept separate from requirements.txt so the desktop build (PyInstaller) does not
+# bundle them — nothing the desktop imports pulls these in. Install alongside the
+# base requirements when running the headless/server scan:
+#     pip install -r requirements.txt -r requirements-server.txt
+google-api-python-client>=2.190
+google-auth>=2.50

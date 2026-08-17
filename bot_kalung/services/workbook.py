@@ -16,6 +16,7 @@ exact same pure logic, reused from `excel`.
 
 from __future__ import annotations
 
+import io
 from pathlib import Path
 
 from .excel import (
@@ -50,10 +51,10 @@ class _Grid:
         return sorted(self._cells.items())
 
 
-def _grids_from_xlsx(path) -> dict[str, _Grid]:
+def _grids_from_xlsx(data: bytes) -> dict[str, _Grid]:
     import openpyxl
 
-    wb = openpyxl.load_workbook(path, data_only=True)
+    wb = openpyxl.load_workbook(io.BytesIO(data), data_only=True)
     try:
         grids: dict[str, _Grid] = {}
         for name in wb.sheetnames:
@@ -69,10 +70,10 @@ def _grids_from_xlsx(path) -> dict[str, _Grid]:
         wb.close()
 
 
-def _grids_from_xls(path) -> dict[str, _Grid]:
+def _grids_from_xls(data: bytes) -> dict[str, _Grid]:
     import xlrd
 
-    book = xlrd.open_workbook(path)
+    book = xlrd.open_workbook(file_contents=data)
     grids: dict[str, _Grid] = {}
     for name in book.sheet_names():
         sh = book.sheet_by_name(name)
@@ -93,9 +94,17 @@ def _grids_from_xls(path) -> dict[str, _Grid]:
     return grids
 
 
-def _load_grids(path) -> dict[str, _Grid]:
-    return (_grids_from_xls(path) if str(path).lower().endswith(".xls")
-            else _grids_from_xlsx(path))
+def _load_grids(source) -> dict[str, _Grid]:
+    """Load a workbook's grids from a filesystem path or a Path-like Drive node.
+
+    Reads the bytes once (Path.read_bytes / DriveNode.read_bytes) and parses from
+    memory, so the same reader serves the local scan and the Drive-API scan.
+    """
+    name = source.name if hasattr(source, "name") else str(source)
+    data = (source.read_bytes() if hasattr(source, "read_bytes")
+            else Path(source).read_bytes())
+    return (_grids_from_xls(data) if name.lower().endswith(".xls")
+            else _grids_from_xlsx(data))
 
 
 # -- cell lookup (mirrors excel.find_sheet / find_label / ...) ----------------

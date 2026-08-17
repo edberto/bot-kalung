@@ -66,8 +66,8 @@ class ScanResult:
 
 # -- done-detection (Bill of Lading scan) --------------------------------
 
-def _find_send_folder(folder: Path) -> Path | None:
-    for entry in drive._safe_iterdir(Path(folder)):
+def _find_send_folder(folder):
+    for entry in drive._safe_iterdir(folder):     # folder: local path or Drive node
         if entry.is_dir() and entry.name.strip().lower() in _SEND_FOLDERS:
             return entry
     return None

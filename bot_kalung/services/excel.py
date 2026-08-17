@@ -240,10 +240,16 @@ class ShipmentFields:
     warnings: list[str] = field(default_factory=list)
 
 
-def find_main_workbook(folder) -> Path | None:
-    """The VGM/SI/Inv/PL workbook in a shipment folder, or None."""
+def find_main_workbook(folder):
+    """The VGM/SI/Inv/PL workbook in a shipment folder, or None.
+
+    `folder` is a filesystem path (str/Path) or a Path-like Drive node — anything
+    exposing `iterdir()` with `.name`/`.is_file()` entries — so the same lookup
+    serves the local scan and the Drive-API scan.
+    """
+    node = folder if hasattr(folder, "iterdir") else Path(folder)
     try:
-        entries = sorted(Path(folder).iterdir())
+        entries = sorted(node.iterdir())
     except OSError:
         return None
     for entry in entries:

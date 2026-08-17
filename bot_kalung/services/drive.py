@@ -213,10 +213,17 @@ class SeriesDir:
     label: str          # human-readable, e.g. "HOPSON / 2026", for the report
 
 
-def _safe_iterdir(path: Path) -> list[Path]:
+def _as_node(path):
+    """A filesystem path (str/Path) or a Path-like Drive node — returned as-is if
+    it already walks (has iterdir), else wrapped in Path. Lets the scan run over
+    the local G: mount or the Drive API with the same code."""
+    return path if hasattr(path, "iterdir") else Path(path)
+
+
+def _safe_iterdir(path) -> list:
     try:
-        return sorted(path.iterdir())
-    except OSError:
+        return sorted(_as_node(path).iterdir())
+    except Exception:      # noqa: BLE001 - a folder we can't read is simply skipped
         return []
 
 
@@ -228,7 +235,7 @@ def _has_numbered_children(path: Path) -> bool:
 
 def numbered_folders(directory) -> list[Path]:
     """The `\\d+.`-prefixed shipment folders directly inside a series directory."""
-    return [e for e in _safe_iterdir(Path(directory))
+    return [e for e in _safe_iterdir(directory)
             if e.is_dir() and SEQ_PREFIX_RE.match(e.name)]
 
 
@@ -246,7 +253,7 @@ def discover_series(drive_root, year: int, settings=None) -> list[SeriesDir]:
     Only current-year series are returned (a directory whose name contains the
     year, or a flat exporter root), so prior-year archives are ignored.
     """
-    root = Path(drive_root)
+    root = _as_node(drive_root)
     if not root.is_dir():
         return []
     excluded = _excluded_scan_names(settings)
@@ -291,7 +298,7 @@ def shipment_identity(folder: Path) -> tuple[str, int] | None:
     shipments). Note this deliberately inverts the legacy `_sequence_from_
     documents`, which the kept resequence/etd_change features still rely on.
     """
-    folder = Path(folder)
+    folder = _as_node(folder)
     prefix = SEQ_PREFIX_RE.match(folder.name)
     if not prefix:
         return None

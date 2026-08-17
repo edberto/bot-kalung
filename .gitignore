@@ -12,6 +12,11 @@ botkalung-error.log
 _demo/
 _sandbox/
 
+# Credentials — service-account keys etc. NEVER commit these.
+secrets/
+*.json.key
+service-account*.json
+
 # Repowise local index and session state (regenerated per machine)
 .repowise/
 
