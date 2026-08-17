@@ -78,6 +78,29 @@ check("scanner imports the contiguous not-done run over nodes",
 check("the done shipment is recognised over nodes",
       any(c.label == "NIT1" for c in plan.done))
 
+# ---- folder references: local path vs Drive id ----------------------------
+from bot_kalung.services import drive_api
+from bot_kalung.services.tracker import _folder_ref
+
+
+class RefNode:
+    ref = "drive:ABC123"
+
+
+check("a Drive node stores its id as the folder reference",
+      _folder_ref(RefNode()) == "drive:ABC123")
+check("a local path stores its filesystem path",
+      _folder_ref(Path("/x/y")) == str(Path("/x/y")))
+check("is_drive_ref distinguishes a Drive ref from a path",
+      drive_api.is_drive_ref("drive:ABC123")
+      and not drive_api.is_drive_ref(str(Path("/x/y"))))
+
+node = drive_api.node_from_ref("drive:ABC123", client=None)
+check("node_from_ref reconstructs the folder id",
+      node.id == "ABC123" and node.is_dir())
+check("folder_url builds the Drive web link",
+      drive_api.folder_url("drive:ABC123").endswith("/folders/ABC123"))
+
 print()
 if failures:
     print(f"{len(failures)} FAILED: {failures}")

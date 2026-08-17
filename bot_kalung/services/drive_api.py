@@ -18,6 +18,26 @@ import io
 FOLDER_MIME = "application/vnd.google-apps.folder"
 SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
 
+# A scanned folder is stored (as shipments.folder_path) as a re-openable
+# reference: a filesystem path for the local scan, or "drive:{id}" for a Drive
+# scan. These resolve such a reference back to a folder the server can re-read.
+REF_PREFIX = "drive:"
+
+
+def is_drive_ref(ref: str | None) -> bool:
+    return bool(ref) and ref.startswith(REF_PREFIX)
+
+
+def node_from_ref(ref: str, client: DriveClient) -> DriveNode:
+    """Reconstruct a folder DriveNode from a stored 'drive:{id}' reference (the
+    name is not needed — the reader finds the workbook by listing children)."""
+    return DriveNode(client, ref[len(REF_PREFIX):], "", True)
+
+
+def folder_url(ref: str) -> str:
+    """The Drive web URL for a 'drive:{id}' reference (for an 'open folder' link)."""
+    return f"https://drive.google.com/drive/folders/{ref[len(REF_PREFIX):]}"
+
 
 class DriveClient:
     """Thin Drive API wrapper: list a folder's children, download a file."""
@@ -88,6 +108,11 @@ class DriveNode:
     @property
     def name(self) -> str:
         return self._name
+
+    @property
+    def ref(self) -> str:
+        """The re-openable handle stored as shipments.folder_path ('drive:{id}')."""
+        return f"{REF_PREFIX}{self.id}"
 
     def is_dir(self) -> bool:
         return self._is_folder

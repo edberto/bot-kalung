@@ -44,6 +44,14 @@ def _now() -> str:
     return datetime.now().isoformat(timespec="seconds")
 
 
+def _folder_ref(folder) -> str:
+    """The re-openable reference stored as shipments.folder_path: a filesystem
+    path for a local scan, or 'drive:{id}' for a Drive-API scan (a Drive node
+    exposes it as `.ref`)."""
+    ref = getattr(folder, "ref", None)
+    return ref if ref is not None else str(folder)
+
+
 class ScannedRegistry:
     """The `scanned_shipments` table — what the tracker has already handled."""
 
@@ -94,7 +102,8 @@ class ScanApplyResult:
 def _detect_vessel_voyage_changes(shipments: Shipments, vessels: MonitoredVessels,
                                   reread_fields, skip_ids: set[str],
                                   result: ScanApplyResult,
-                                  mtime_cache: dict | None = None) -> None:
+                                  mtime_cache: dict | None = None,
+                                  folder_resolver=None) -> None:
     """Re-read active shipments' workbooks and update any whose vessel/voyage
     changed since import — a booking can be moved to a different vessel/voyage.
 
@@ -104,15 +113,18 @@ def _detect_vessel_voyage_changes(shipments: Shipments, vessels: MonitoredVessel
     unreadable workbook (e.g. old .xls the headless reader can't open) reads as
     no vessel and is left untouched, never overwritten with a blank.
 
-    `mtime_cache` (shipment_id -> workbook mtime), when given, skips re-reading a
-    workbook whose file has not changed since last checked — most scans then do
-    only a stat, not a full read over the network drive.
+    `folder_resolver` maps a stored folder_path to a folder handle: a filesystem
+    path stays a path; a Drive scan's 'drive:{id}' resolves to a Drive node. Only
+    a filesystem folder is mtime-gated (`mtime_cache`) — a Drive folder has no
+    local mtime, so it re-reads each scan (its modifiedTime is a future opt).
     """
     for row in shipments.active():
         if row["id"] in skip_ids or not row["folder_path"]:
             continue
-        if mtime_cache is not None:
-            wb = excel.find_main_workbook(row["folder_path"])
+        folder = (folder_resolver(row["folder_path"]) if folder_resolver
+                  else row["folder_path"])
+        if mtime_cache is not None and not hasattr(folder, "iterdir"):
+            wb = excel.find_main_workbook(folder)
             if wb is not None:
                 try:
                     mtime = os.path.getmtime(wb)
@@ -123,7 +135,7 @@ def _detect_vessel_voyage_changes(shipments: Shipments, vessels: MonitoredVessel
                         continue          # unchanged since last scan
                     mtime_cache[row["id"]] = mtime
         try:
-            fields = reread_fields(row["folder_path"])
+            fields = reread_fields(folder)
         except Exception:      # noqa: BLE001 - one bad workbook must not stop the scan
             continue
         new_vessel, new_voyage = fields.vessel_name, fields.voyage
@@ -146,7 +158,8 @@ def _detect_vessel_voyage_changes(shipments: Shipments, vessels: MonitoredVessel
 def run_scan(db: Database, drive_root, *, year: int | None = None, settings=None,
              read_fields=workbook.read_shipment_fields,
              reread_fields=workbook.read_shipment_fields,
-             mtime_cache: dict | None = None) -> ScanApplyResult:
+             mtime_cache: dict | None = None,
+             folder_resolver=None) -> ScanApplyResult:
     """Scan the Drive and import every newly-eligible shipment.
 
     Both `read_fields` (import) and `reread_fields` (the vessel/voyage re-read)
@@ -178,7 +191,7 @@ def run_scan(db: Database, drive_root, *, year: int | None = None, settings=None
     for candidate in plan.to_import:
         if (candidate.code, candidate.sequence) in known_keys:
             registry.record(candidate.code, candidate.sequence,
-                            str(candidate.folder), done=False, shipment_id=None)
+                            _folder_ref(candidate.folder), done=False, shipment_id=None)
             result.report.append(f"{candidate.label}: sudah ada, dilewati")
             continue
 
@@ -192,7 +205,7 @@ def run_scan(db: Database, drive_root, *, year: int | None = None, settings=None
         shipment_id = shipments.create({
             "exporter_code": candidate.code,
             "sequence_number": candidate.sequence,
-            "folder_path": str(candidate.folder),
+            "folder_path": _folder_ref(candidate.folder),
             "destination_port": fields.destination_port,
             "destination_country": fields.destination_country,
             "etd_belawan": fields.etd.isoformat() if fields.etd else None,
@@ -209,18 +222,19 @@ def run_scan(db: Database, drive_root, *, year: int | None = None, settings=None
         containers.populate(shipment_id, fields.containers,
                             size=fields.container_size_short)
         _ensure_vessel_monitored(vessels, fields.vessel_name, fields.voyage)
-        registry.record(candidate.code, candidate.sequence, str(candidate.folder),
+        registry.record(candidate.code, candidate.sequence, _folder_ref(candidate.folder),
                         done=False, shipment_id=shipment_id)
         imported_ids.add(shipment_id)
         result.imported.append(candidate.label)
 
     for candidate in plan.done:
-        registry.record(candidate.code, candidate.sequence, str(candidate.folder),
+        registry.record(candidate.code, candidate.sequence, _folder_ref(candidate.folder),
                         done=True)
         result.completed.append(candidate.label)
 
     # After importing, re-read the active shipments to catch a vessel/voyage that
     # moved after import (the folder scan otherwise never revisits them).
     _detect_vessel_voyage_changes(shipments, vessels, reread_fields,
-                                  imported_ids, result, mtime_cache)
+                                  imported_ids, result, mtime_cache,
+                                  folder_resolver)
     return result
