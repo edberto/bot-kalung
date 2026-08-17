@@ -1,0 +1,17 @@
+[Unit]
+Description=Bot Kalung server worker (Drive scan + BNCT poll -> Supabase)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/bot-kalung
+# Secrets + config live here (chmod 600); see deploy/oracle-deploy.md.
+EnvironmentFile=/opt/bot-kalung/secrets/server.env
+ExecStart=/opt/bot-kalung/.venv/bin/python -m bot_kalung.server
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
