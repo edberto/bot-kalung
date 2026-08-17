@@ -46,20 +46,33 @@ def _load_env_file(path: Path) -> None:
             os.environ.setdefault(key.strip(), value.strip())
 
 
+def _drive_credentials():
+    """Service-account credentials as a dict (from DRIVE_CREDENTIALS_JSON, for
+    cloud hosts that inject secrets as env vars) or a file path (DRIVE_CREDENTIALS
+    / GOOGLE_APPLICATION_CREDENTIALS, for a VM), falling back to the dev key."""
+    raw = os.environ.get("DRIVE_CREDENTIALS_JSON")
+    if raw:
+        import json
+        return json.loads(raw)
+    path = (os.environ.get("DRIVE_CREDENTIALS")
+            or os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"))
+    if not path or not Path(path).is_file():
+        path = _DEV_CREDS
+    if not Path(path).is_file():
+        raise SystemExit(
+            "Drive credentials required: set DRIVE_CREDENTIALS_JSON or "
+            "DRIVE_CREDENTIALS")
+    return path
+
+
 def _config() -> dict:
     _load_env_file(Path("secrets/supabase.env"))
     db_url = os.environ.get("SUPABASE_DB_URL")
     if not db_url:
         raise SystemExit("SUPABASE_DB_URL is required")
-    creds = (os.environ.get("DRIVE_CREDENTIALS")
-             or os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"))
-    if not creds or not Path(creds).is_file():
-        creds = _DEV_CREDS
-    if not Path(creds).is_file():
-        raise SystemExit("DRIVE_CREDENTIALS (service-account JSON) is required")
     return {
         "db_url": db_url,
-        "drive_creds": creds,
+        "drive_creds": _drive_credentials(),
         "scan_interval": int(os.environ.get("SCAN_INTERVAL_MINUTES", "30")) * 60,
         "poll_interval": int(os.environ.get("POLL_INTERVAL_MINUTES", "5")) * 60,
     }

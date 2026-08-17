@@ -42,12 +42,18 @@ def folder_url(ref: str) -> str:
 class DriveClient:
     """Thin Drive API wrapper: list a folder's children, download a file."""
 
-    def __init__(self, credentials_path: str):
+    def __init__(self, credentials):
+        """`credentials` is a path to the service-account JSON (local/VM deploy)
+        or the parsed JSON as a dict (cloud hosts inject secrets as env vars)."""
         from google.oauth2 import service_account
         from googleapiclient.discovery import build
 
-        creds = service_account.Credentials.from_service_account_file(
-            credentials_path, scopes=SCOPES)
+        if isinstance(credentials, dict):
+            creds = service_account.Credentials.from_service_account_info(
+                credentials, scopes=SCOPES)
+        else:
+            creds = service_account.Credentials.from_service_account_file(
+                credentials, scopes=SCOPES)
         self._svc = build("drive", "v3", credentials=creds,
                           cache_discovery=False)
 
