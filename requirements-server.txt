@@ -1,10 +1,12 @@
-# Server-only dependencies for the PC-free ingest (Drive API scan).
+# Complete dependency set for the headless server worker (Linux) — the PC-free
+# ingest + BNCT poll. Self-contained: install ONLY this, NOT requirements.txt
+# (which carries the desktop GUI/Windows deps — PyQt6, xlwings, pyinstaller —
+# that the server never uses).
 #
-# Kept separate from requirements.txt so the desktop build (PyInstaller) does not
-# bundle them — nothing the desktop imports pulls these in. Install alongside the
-# base requirements when running the headless/server scan:
-#     pip install -r requirements.txt -r requirements-server.txt
-google-api-python-client>=2.190
-google-auth>=2.50
-# Postgres (Supabase) backend for the server ingest.
-psycopg[binary]>=3.1
+#     pip install -r requirements-server.txt
+openpyxl>=3.1                       # .xlsx workbook reader
+xlrd>=2.0                           # .xls workbook reader
+requests>=2.31                      # BNCT portal HTTP
+google-api-python-client>=2.190     # Drive API scan
+google-auth>=2.50                   # service-account auth
+psycopg[binary]>=3.1                # Postgres (Supabase) backend

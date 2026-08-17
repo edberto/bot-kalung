@@ -1,0 +1,12 @@
+# Keep the server image lean and safe.
+secrets/                 # NEVER bake credentials into the image
+.venv/
+__pycache__/
+*.py[cod]
+dist/
+build/
+.git/
+tests/
+bot_kalung/ui/           # desktop GUI — the server never imports it
+bot_kalung/assets/       # desktop icons
+*.spec

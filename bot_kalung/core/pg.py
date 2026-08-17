@@ -12,13 +12,20 @@ The services' SQL is written for SQLite: `?` placeholders and `INSERT OR IGNORE`
 
 from __future__ import annotations
 
+import re
 from contextlib import contextmanager
+
+_ROWID_RE = re.compile(r"\browid\b")
 
 
 def _translate(sql: str) -> str:
     # psycopg treats % as the parameter marker, so escape any literal % (LIKE)
     # first, then turn the SQLite ? placeholders into %s.
     sql = sql.replace("%", "%%").replace("?", "%s")
+    # SQLite's `rowid` pseudo-column is used only as an insertion-order tiebreaker
+    # (ORDER BY <ts> DESC, rowid DESC) on append-mostly tables; ctid approximates
+    # it in Postgres.
+    sql = _ROWID_RE.sub("ctid", sql)
     if "INSERT OR IGNORE INTO" in sql:
         sql = sql.replace("INSERT OR IGNORE INTO", "INSERT INTO")
         sql = sql + " ON CONFLICT DO NOTHING"
