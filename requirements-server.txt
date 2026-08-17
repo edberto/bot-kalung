@@ -6,3 +6,5 @@
 #     pip install -r requirements.txt -r requirements-server.txt
 google-api-python-client>=2.190
 google-auth>=2.50
+# Postgres (Supabase) backend for the server ingest.
+psycopg[binary]>=3.1
