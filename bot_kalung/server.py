@@ -24,7 +24,8 @@ from datetime import datetime
 from pathlib import Path
 
 from .core.pg import PostgresDatabase
-from .services import bnct, drive_api, tracker
+from .core.settings import Settings
+from .services import bnct, drive_api, ntfy, tracker
 from .services.bnct_monitor import BnctMonitor, build_reading
 from .services.containers import Containers
 from .services.notifications import NotificationStore
@@ -97,6 +98,9 @@ def _poll_once(db, bnct_client) -> None:
     containers = Containers(db)
     notifications = NotificationStore(db)
 
+    # Notifications that already exist, so we push only the ones this cycle adds.
+    seen = {row["id"] for row in db.query("SELECT id FROM notifications")}
+
     vessels = bnct_client.fetch_vessels()
     for row in monitor.monitored():
         label = f"{row['exporter_code']}{row['sequence_number']}"
@@ -106,8 +110,29 @@ def _poll_once(db, bnct_client) -> None:
             vessels, row["vessel_name"] or "", row["voyage"] or "")
         board.process(row["id"], reading)
     _poll_containers(bnct_client, containers, notifications, vessels)
+    _push_new_notifications(db, seen)
     log.info("poll: %d vessels on portal, %d shipment monitors, %d board voyages",
              len(vessels), len(monitor.monitored()), len(board.monitored()))
+
+
+def _push_new_notifications(db, seen_ids: set) -> None:
+    """ntfy-push each notification created during this cycle (id not seen before).
+
+    Gated by the shared `ntfy_enabled` setting so the PWA's toggle controls it.
+    Fire-and-forget: ntfy.publish never raises, so a failed push cannot break a
+    poll. The whole database's notifications are cheap to re-list at this scale."""
+    settings = Settings(db)
+    if not settings.get_bool("ntfy_enabled"):
+        return
+    pushed = 0
+    for row in db.query(
+            "SELECT id, kind, title, body FROM notifications ORDER BY created_at"):
+        if row["id"] in seen_ids:
+            continue
+        if ntfy.publish(settings, row["title"], row["body"] or "", kind=row["kind"]):
+            pushed += 1
+    if pushed:
+        log.info("ntfy: pushed %d new notification(s)", pushed)
 
 
 def _poll_containers(bnct_client, containers, notifications, vessels) -> None:

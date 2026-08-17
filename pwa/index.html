@@ -1,0 +1,822 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f172a">
+<title>Bot Kalung</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+  :root {
+    --bg:#f1f5f9; --surface:#ffffff; --border:#e2e8f0; --text:#0f172a;
+    --muted:#64748b; --text-2:#334155; --accent:#2563eb; --danger:#dc2626; --ok:#16a34a;
+    --hover:#f8fafc; --sel:#eef2ff; --off:#f8fafc;
+    --unread-bg:#eff6ff; --unread-border:#bfdbfe;
+    --chip-bg:#eef2ff; --chip-border:#c7d2fe; --chip-text:#3730a3;
+    --banner-bg:#fffbeb; --banner-border:#fde68a; --banner-text:#92400e;
+    --shadow:0 1px 3px rgba(15,23,42,.08); --barh:58px;
+  }
+  /* dark — applied for the "system" setting when the OS is dark, unless forced light */
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+    --bg:#0b1220; --surface:#111a2e; --border:#243049; --text:#e2e8f0;
+    --muted:#94a3b8; --text-2:#cbd5e1; --accent:#3b82f6; --danger:#f87171; --ok:#22c55e;
+    --hover:#1a2438; --sel:#1e293b; --off:#0e1626;
+    --unread-bg:#172554; --unread-border:#1e3a8a;
+    --chip-bg:#1e293b; --chip-border:#334155; --chip-text:#c7d2fe;
+    --banner-bg:#3a2a06; --banner-border:#78591c; --banner-text:#fcd34d;
+    --shadow:0 1px 3px rgba(0,0,0,.4);
+  } }
+  /* dark — forced by the in-app toggle */
+  :root[data-theme="dark"] {
+    --bg:#0b1220; --surface:#111a2e; --border:#243049; --text:#e2e8f0;
+    --muted:#94a3b8; --text-2:#cbd5e1; --accent:#3b82f6; --danger:#f87171; --ok:#22c55e;
+    --hover:#1a2438; --sel:#1e293b; --off:#0e1626;
+    --unread-bg:#172554; --unread-border:#1e3a8a;
+    --chip-bg:#1e293b; --chip-border:#334155; --chip-text:#c7d2fe;
+    --banner-bg:#3a2a06; --banner-border:#78591c; --banner-text:#fcd34d;
+    --shadow:0 1px 3px rgba(0,0,0,.4);
+  }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { margin:0; }
+  body {
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    background:var(--bg); color:var(--text); font-size:15px;
+  }
+  .hidden { display:none !important; }
+  .muted { color:var(--muted); }
+  button { font:inherit; cursor:pointer; color:inherit; }
+  a { color:var(--accent); }
+
+  /* -- top bar -- */
+  header#appbar {
+    position:sticky; top:0; z-index:20; background:var(--surface);
+    border-bottom:1px solid var(--border); padding:12px 14px;
+    padding-top:calc(12px + env(safe-area-inset-top));
+    display:flex; align-items:center; gap:10px; min-height:52px;
+  }
+  header#appbar h1 { font-size:17px; margin:0; font-weight:800; flex:1;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .back { border:none; background:transparent; color:var(--accent);
+    font-size:22px; font-weight:600; padding:2px 4px; margin-left:-4px; line-height:1; }
+  .iconbtn { border:1px solid var(--border); background:var(--surface);
+    border-radius:8px; padding:7px 11px; color:var(--text); font-weight:600; font-size:14px; }
+  .iconbtn.danger { color:var(--danger); border-color:#fecaca; }
+
+  main#views { padding:14px 14px calc(var(--barh) + 24px); max-width:760px; margin:0 auto; }
+
+  /* -- bottom tab bar -- */
+  nav#tabbar {
+    position:fixed; left:0; right:0; bottom:0; z-index:20; height:var(--barh);
+    padding-bottom:env(safe-area-inset-bottom);
+    background:var(--surface); border-top:1px solid var(--border);
+    display:flex; justify-content:space-around; align-items:stretch;
+  }
+  nav#tabbar button {
+    flex:1; border:none; background:transparent; color:var(--muted);
+    font-size:11px; font-weight:600; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; gap:3px; position:relative;
+  }
+  nav#tabbar button .ic { font-size:19px; line-height:1; }
+  nav#tabbar button.on { color:var(--accent); }
+  .tabbadge { position:absolute; top:5px; left:calc(50% + 6px); background:var(--danger);
+    color:#fff; font-size:10px; font-weight:800; min-width:16px; height:16px;
+    border-radius:8px; padding:0 4px; display:flex; align-items:center; justify-content:center; }
+
+  /* -- login -- */
+  #login { max-width:380px; margin:14vh auto 0; padding:0 20px; }
+  #login h2 { margin:0 0 4px; font-size:24px; }
+  #login p { margin:0 0 20px; }
+  .field { margin-bottom:12px; }
+  .field input, select.big {
+    width:100%; padding:12px 14px; font-size:16px; border:1px solid var(--border);
+    border-radius:10px; background:var(--surface); color:var(--text); }
+  .field input:focus { outline:none; border-color:var(--accent); }
+  .primary { width:100%; padding:13px; background:var(--accent); color:#fff; border:none;
+    border-radius:10px; font-weight:700; font-size:16px; }
+  .primary:disabled { opacity:.6; }
+  .err { color:var(--danger); font-size:13px; margin-top:10px; min-height:18px; }
+
+  /* -- cards & bits -- */
+  .card { background:var(--surface); border:1px solid var(--border); border-radius:12px;
+    box-shadow:var(--shadow); padding:14px; margin-bottom:12px; }
+  .tap { cursor:pointer; } .tap:active { background:var(--hover); }
+  .card.unread { background:var(--unread-bg); border-color:var(--unread-border); }
+  .rowtop { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
+  .badge { color:#fff; font-weight:800; font-size:12px; border-radius:6px;
+    padding:2px 8px; letter-spacing:.3px; display:inline-block; }
+  .badge.sm { font-size:10px; padding:1px 6px; }
+  .vessel { font-weight:700; }
+  .metaline { color:var(--muted); font-size:13px; margin-top:2px; }
+  .etd { margin-left:auto; font-size:13px; font-weight:700; white-space:nowrap; }
+  .etd.soon { color:var(--danger); }
+  .grouphdr { font-size:12px; font-weight:800; letter-spacing:1px;
+    margin:16px 4px 6px; }
+  .chip { display:inline-block; background:var(--chip-bg); color:var(--chip-text); border:1px solid var(--chip-border);
+    border-radius:999px; padding:2px 9px; font-size:12px; font-weight:700; margin:2px 4px 2px 0; cursor:pointer; }
+  .sectlabel { font-size:12px; font-weight:800; letter-spacing:.6px; color:var(--muted);
+    text-transform:uppercase; margin:18px 2px 8px; }
+  .kv { display:flex; gap:8px; font-size:14px; padding:3px 0; }
+  .kv b { min-width:92px; color:var(--muted); font-weight:600; }
+  .item { display:flex; align-items:center; gap:10px; padding:10px 0; border-bottom:1px solid var(--border); }
+  .item:last-child { border-bottom:none; }
+  .item .t { flex:1; font-weight:600; min-width:0; }
+  .il { border-left:3px solid transparent; padding-left:10px; margin-left:-10px; }
+  select.status { border:1px solid var(--border); border-radius:8px; padding:7px 8px;
+    font-size:13px; font-weight:700; background:var(--surface); color:var(--text); max-width:44%; }
+  .cont .no { font-weight:700; font-variant-numeric:tabular-nums; }
+  .cont .st { font-size:12px; font-weight:700; margin-top:2px; }
+  .linkbtn { border:none; background:transparent; color:var(--accent); font-weight:700;
+    font-size:13px; padding:5px 6px; white-space:nowrap; }
+  .btnrow { display:flex; flex-wrap:wrap; gap:8px; margin-top:4px; }
+  textarea { width:100%; min-height:88px; border:1px solid var(--border); border-radius:10px;
+    padding:10px; font:inherit; font-size:15px; resize:vertical; background:var(--surface); color:var(--text); }
+  .savebar { display:flex; justify-content:flex-end; margin-top:8px; gap:8px; }
+  .banner { background:var(--banner-bg); border:1px solid var(--banner-border); color:var(--banner-text); border-radius:10px;
+    padding:10px 12px; font-size:13px; font-weight:600; margin-bottom:12px; }
+  .detailblock { font-size:13px; color:var(--text-2); line-height:1.5; margin-top:6px; white-space:pre-line; }
+  .dot { width:10px; height:10px; border-radius:50%; flex:none; }
+  .empty { text-align:center; color:var(--muted); padding:44px 20px; }
+  .spin { text-align:center; color:var(--muted); padding:30px; }
+  .filterbar { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:12px; align-items:center; }
+  .filterbar input, .filterbar select { padding:9px 11px; border:1px solid var(--border);
+    border-radius:9px; font-size:14px; background:var(--surface); color:var(--text); }
+  .filterbar input.grow { flex:1; min-width:140px; }
+
+  /* calendar */
+  .calhead { display:flex; align-items:center; gap:8px; margin-bottom:10px; }
+  .calhead .m { flex:1; text-align:center; font-weight:800; font-size:16px; }
+  .calgrid { display:grid; grid-template-columns:repeat(7,1fr); gap:3px; }
+  .caldow { text-align:center; font-size:10px; font-weight:800; color:var(--muted); padding:2px 0; }
+  .calcell { aspect-ratio:1; border:1px solid var(--border); border-radius:8px; background:var(--surface);
+    padding:3px; font-size:11px; display:flex; flex-direction:column; align-items:center; gap:2px; overflow:hidden; cursor:pointer; }
+  .calcell.off { background:var(--off); color:var(--muted); cursor:default; }
+  .calcell.today { border-color:var(--accent); border-width:2px; }
+  .calcell.sel { background:var(--sel); }
+  .caldots { display:flex; flex-wrap:wrap; gap:2px; justify-content:center; }
+  .caldots .d { width:6px; height:6px; border-radius:50%; }
+
+  /* menu list */
+  .menu .row { display:flex; align-items:center; gap:12px; padding:16px 14px; border-bottom:1px solid var(--border);
+    font-weight:700; }
+  .menu .row:last-child { border-bottom:none; }
+  .menu .row .ic { font-size:20px; }
+
+  /* settings */
+  .seg { display:flex; gap:8px; }
+  .seg button { flex:1; padding:9px 4px; border:1px solid var(--border); background:var(--surface);
+    border-radius:9px; font-weight:700; font-size:13px; color:var(--muted); }
+  .seg button.on { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .setrow { display:flex; align-items:center; gap:12px; padding:12px 0; border-bottom:1px solid var(--border); }
+  .setrow:last-child { border-bottom:none; }
+  .setrow .t { flex:1; min-width:0; }
+  .setrow .t small { display:block; color:var(--muted); font-weight:400; font-size:12px; margin-top:2px; }
+  .toggle { width:46px; height:28px; border-radius:999px; border:none; background:var(--border);
+    position:relative; transition:background .15s; flex:none; }
+  .toggle.on { background:var(--ok); }
+  .toggle::after { content:""; position:absolute; top:3px; left:3px; width:22px; height:22px;
+    border-radius:50%; background:#fff; transition:left .15s; }
+  .toggle.on::after { left:21px; }
+
+  .toast { position:fixed; left:50%; bottom:calc(var(--barh) + 18px); transform:translateX(-50%);
+    background:#0f172a; color:#fff; padding:10px 16px; border-radius:999px; font-size:13px;
+    font-weight:600; opacity:0; transition:opacity .2s; pointer-events:none; z-index:60; max-width:88%; text-align:center; }
+  .toast.show { opacity:.96; }
+
+  /* modal */
+  .modal-bg { position:fixed; inset:0; background:rgba(15,23,42,.45); z-index:70; display:flex;
+    align-items:center; justify-content:center; padding:24px; }
+  .modal { background:var(--surface); border-radius:14px; padding:18px; width:100%; max-width:360px; }
+  .modal h3 { margin:0 0 12px; font-size:17px; }
+  .modal input { width:100%; padding:11px 12px; font-size:16px; border:1px solid var(--border);
+    border-radius:10px; margin-bottom:14px; background:var(--surface); color:var(--text); }
+  .modal .acts { display:flex; justify-content:flex-end; gap:8px; }
+</style>
+</head>
+<body>
+
+<!-- LOGIN -->
+<section id="login">
+  <h2>Bot Kalung</h2>
+  <p class="muted">Masuk untuk melihat pengiriman.</p>
+  <form id="loginForm">
+    <div class="field"><input id="email" type="email" placeholder="Email" autocomplete="username" required></div>
+    <div class="field"><input id="password" type="password" placeholder="Kata sandi" autocomplete="current-password" required></div>
+    <button class="primary" id="loginBtn" type="submit">Masuk</button>
+    <div class="err" id="loginErr"></div>
+  </form>
+</section>
+
+<!-- APP -->
+<div id="app" class="hidden">
+  <header id="appbar">
+    <button class="back hidden" id="backBtn">‹</button>
+    <h1 id="title">Pengiriman Aktif</h1>
+    <button class="iconbtn" id="refreshBtn" title="Muat ulang">↻</button>
+  </header>
+  <main id="views"><div class="spin">Memuat…</div></main>
+  <nav id="tabbar">
+    <button data-tab="list"><span class="ic">📦</span>Aktif</button>
+    <button data-tab="board"><span class="ic">🚢</span>Kapal</button>
+    <button data-tab="calendar"><span class="ic">📅</span>Kalender</button>
+    <button data-tab="notif"><span class="ic">🔔</span>Notif<span class="tabbadge hidden" id="notifBadge">0</span></button>
+    <button data-tab="more"><span class="ic">☰</span>Lainnya</button>
+  </nav>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script type="module">
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+// Public config — safe to ship in the browser (RLS protects the data).
+const SUPABASE_URL = "https://zntvqlneyojzqvsfcshc.supabase.co";
+const SUPABASE_KEY = "sb_publishable__OJG7YXn4f4D7M-sXC7l9A_aRgs18TE";
+const BNCT_URL = "https://portal.bnct-id.com/sso/";
+const NTFY_TOPIC = "botkalung-lolo-9f0dadc10541b6cebb56";  // fixed shared topic (core.constants)
+const NTFY_SERVER = "https://ntfy.sh";
+const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+// -- constants ported from the desktop app --------------------------------
+const STATUS = [
+  ["pending","Pending","#6b7280"],["in_progress","Dikerjakan","#2563eb"],
+  ["draft_received","Draft diterima","#7c3aed"],["draft_revision","Revisi draft","#d97706"],
+  ["draft_ok","Draft OK","#0891b2"],["final","Final","#16a34a"],
+];
+const STATUS_COLOR = Object.fromEntries(STATUS.map(([v,,c])=>[v,c]));
+const EXPORTER_COLORS = { AMJ:"#2563eb", TTJ:"#7c3aed", NIT:"#16a34a", THREESTAR:"#dc2626" };
+const NOTIF_COLORS = { schedule:"#2563eb", alongside:"#16a34a", departing:"#dc2626", container:"#d97706" };
+const AUDIT = {
+  shipment_created:  { label:"Pengiriman dibuat", color:"#2563eb" },
+  shipment_completed:{ label:"Pengiriman ditandai selesai", color:"#059669" },
+  shipment_deleted:  { label:"Pengiriman dihapus", color:"#b91c1c" },
+};
+const STATE_COLS = [
+  ["notfound","Belum Terjadwal","#6b7280"], ["scheduled","Terjadwal","#2563eb"],
+  ["berthed","Sudah Sandar","#059669"], ["departed","Sudah Berangkat","#b91c1c"],
+];
+const MONTHS = ["Jan","Feb","Mar","Apr","Mei","Jun","Jul","Agu","Sep","Okt","Nov","Des"];
+const MONTHS_FULL = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
+const DOW = ["Sen","Sel","Rab","Kam","Jum","Sab","Min"];
+
+// -- helpers --------------------------------------------------------------
+const $ = (id) => document.getElementById(id);
+const el = (h) => { const t=document.createElement("template"); t.innerHTML=h.trim(); return t.content.firstChild; };
+const esc = (s) => (s==null?"":String(s)).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const pad = (n) => String(n).padStart(2,"0");
+const localYMD = (d=new Date()) => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+// The server (UTC) writes naive-UTC timestamps; we write UTC too so both agree,
+// and parse stored timestamps as UTC for display in the phone's local zone.
+const nowIso = () => new Date().toISOString().slice(0,19);
+const asUTC = (iso) => { let s=(iso||"").replace(" ","T"); return /[zZ]|[+-]\d\d:?\d\d$/.test(s)?s:s+"Z"; };
+function localDate(iso){ const p=(iso||"").slice(0,10).split("-"); return p.length<3?null:new Date(+p[0],+p[1]-1,+p[2]); }
+function relTime(iso){ if(!iso) return "belum pernah"; const t=new Date(asUTC(iso)); if(isNaN(t)) return iso; const s=Math.round((Date.now()-t)/1000); if(s<60) return "baru saja"; if(s<3600) return `${Math.floor(s/60)} menit lalu`; if(s<86400) return `${Math.floor(s/3600)} jam lalu`; return `${Math.floor(s/86400)} hari lalu`; }
+function toast(m){ const t=$("toast"); t.textContent=m; t.classList.add("show"); setTimeout(()=>t.classList.remove("show"),1900); }
+function badgeColor(code){ if(EXPORTER_COLORS[code]) return EXPORTER_COLORS[code]; let h=0; for(const c of (code||"")) h=(h*31+c.charCodeAt(0))%360; return `hsl(${h} 52% 40%)`; }
+function badge(code,seq){ return `<span class="badge" style="background:${badgeColor(code)}">${esc(code)}${seq??""}</span>`; }
+function fmtDate(iso){ const d=localDate(iso); if(!d||isNaN(d)) return iso||"—"; return `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`; }
+function fmtDT(iso){ if(!iso) return "—"; const d=new Date(asUTC(iso)); if(isNaN(d)) return iso; return `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`; }
+function daysUntil(iso){ const d=localDate(iso); if(!d||isNaN(d)) return null; const t=new Date(); t.setHours(0,0,0,0); return Math.round((d-t)/864e5); }
+function norm(s){ return (s||"").toUpperCase().replace(/[^A-Z0-9]/g,""); }
+function folderUrl(fp){ return fp && fp.startsWith("drive:") ? `https://drive.google.com/drive/folders/${fp.slice(6)}` : null; }
+function uuid(){ return crypto.randomUUID(); }
+
+// BNCT reading -> (color, status, detail lines). Port of ui/bnct_display.describe_record.
+function fmtv(v){ return (v===null||v===undefined||v==="")?"-":String(v); }
+function pct(a,p){ if(p===null||p===undefined||p===0||a===null||a===undefined) return ""; return `  (${Math.round(Math.max(0,Math.min(a,p))/p*100)}% selesai)`; }
+function schedLines(r){ return [["ETD",r.etd],["Clossing",r.clossing],["Clossing Reefer",r.clossing_reefer],["Open Billing",r.open_billing],["Open Stack",r.open_stacking]].filter(([,v])=>v).map(([l,v])=>`${l}: ${v}`); }
+function describeRecord(r){
+  if(!r || !r.found) return { color:"#6b7280", status:"Kapal belum terjadwal di BNCT.", detail:[] };
+  if(r.phase==="schedule") return { color:"#2563eb", status:"Terjadwal di BNCT", detail:schedLines(r) };
+  const ops = [
+    `Loading: sisa ${fmtv(r.loading_remain)} dari ${fmtv(r.loading_plan)}${pct(r.loading_actual,r.loading_plan)}`,
+    `Discharge: sisa ${fmtv(r.discharge_remain)} dari ${fmtv(r.discharge_plan)}`,
+    `Restow: sisa ${fmtv(r.restow_remain)} dari ${fmtv(r.restow_plan)}`,
+    `ATB ${fmtv(r.atb)}`,
+  ].concat(schedLines(r));
+  if(r.departing) return { color:"#b91c1c", status:"Kapal akan berangkat.", detail:ops };
+  return { color:"#059669", status:"Kapal sudah sandar", detail:ops };
+}
+function stateOf(r){ if(r.state) return r.state; if(r.last_departing) return "departed"; if(r.last_phase==="alongside") return "berthed"; if(r.last_found) return "scheduled"; return "notfound"; }
+
+// generic input modal -> Promise<string|null>
+function askInput({title, type="text", value="", placeholder=""}){
+  return new Promise((resolve)=>{
+    const bg=el(`<div class="modal-bg"><div class="modal"><h3>${esc(title)}</h3>
+      <input type="${type}" placeholder="${esc(placeholder)}"><div class="acts">
+      <button class="iconbtn" data-x>Batal</button><button class="iconbtn" style="color:var(--accent)" data-ok>OK</button></div></div></div>`);
+    const input=bg.querySelector("input"); input.value=value;
+    const done=(v)=>{ bg.remove(); resolve(v); };
+    bg.querySelector("[data-x]").onclick=()=>done(null);
+    bg.querySelector("[data-ok]").onclick=()=>done(input.value);
+    bg.onclick=(e)=>{ if(e.target===bg) done(null); };
+    input.onkeydown=(e)=>{ if(e.key==="Enter") done(input.value); };
+    document.body.appendChild(bg); setTimeout(()=>input.focus(),50);
+  });
+}
+
+// -- app state ------------------------------------------------------------
+const state = { view:"list", email:null, active:null, all:null, due:null, detailFrom:"list",
+                cal:{y:null,m:null,sel:null} };
+
+// -- auth -----------------------------------------------------------------
+$("loginForm").addEventListener("submit", async (e)=>{
+  e.preventDefault(); $("loginErr").textContent=""; $("loginBtn").disabled=true;
+  const { data, error } = await sb.auth.signInWithPassword({ email:$("email").value.trim(), password:$("password").value });
+  $("loginBtn").disabled=false;
+  if(error){ $("loginErr").textContent = error.message || "Gagal masuk."; return; }
+  state.email = data.user?.email || null; showApp();
+});
+$("refreshBtn").addEventListener("click", ()=>{ state.active=state.all=state.due=null; nav(state.view); refreshBadge(); });
+$("backBtn").addEventListener("click", ()=>nav(state.detailFrom));
+document.querySelectorAll("#tabbar button").forEach(b=>b.addEventListener("click", ()=>nav(b.dataset.tab)));
+
+async function boot(){
+  const { data } = await sb.auth.getSession();
+  if(data.session){ state.email = data.session.user?.email || null; showApp(); }
+  else $("login").classList.remove("hidden");
+}
+function showApp(){ $("login").classList.add("hidden"); $("app").classList.remove("hidden"); nav("list"); refreshBadge(); }
+
+// -- data loaders (cached in state) --------------------------------------
+async function getActive(){
+  if(state.active) return state.active;
+  const { data, error } = await sb.from("shipments")
+    .select("id,exporter_code,sequence_number,vessel_name,voyage,etd_belawan,etd_source,destination_port,destination_country,container_quantity,container_size_short,booking_number,quarantine_required,notes,folder_path,action_items(status),containers(container_no)")
+    .eq("status","active");
+  if(error) throw error;
+  state.active = data||[]; return state.active;
+}
+async function getAllShipments(){
+  if(state.all) return state.all;
+  const { data, error } = await sb.from("shipments")
+    .select("id,exporter_code,sequence_number,vessel_name,voyage,etd_belawan,etd_source,destination_port,destination_country,booking_number,completed_at,status");
+  if(error) throw error;
+  state.all = data||[]; return state.all;
+}
+async function getDueItems(){
+  if(state.due) return state.due;
+  const { data, error } = await sb.from("action_items")
+    .select("id,shipment_id,due_date,status,title,shipments(exporter_code,sequence_number)")
+    .not("due_date","is",null);
+  if(error) throw error;
+  state.due = data||[]; return state.due;
+}
+async function refreshBadge(){
+  const { count } = await sb.from("notifications").select("id",{count:"exact",head:true}).eq("read",0);
+  const b=$("notifBadge"); if(count>0){ b.textContent = count<100?count:"99+"; b.classList.remove("hidden"); } else b.classList.add("hidden");
+}
+
+// -- router ---------------------------------------------------------------
+const TITLES = { list:"Pengiriman Aktif", board:"Monitor Kapal", calendar:"Kalender",
+  notif:"Notifikasi", more:"Lainnya", history:"Riwayat", search:"Cari", audit:"Log Aktivitas",
+  settings:"Pengaturan", detail:"Pengiriman" };
+const SUBVIEWS = new Set(["detail","history","search","audit","settings"]);
+
+async function nav(view, param){
+  state.view = view;
+  $("title").textContent = TITLES[view] || "Bot Kalung";
+  $("backBtn").classList.toggle("hidden", !SUBVIEWS.has(view));
+  document.querySelectorAll("#tabbar button").forEach(b=>b.classList.toggle("on", b.dataset.tab===view));
+  $("views").innerHTML = `<div class="spin">Memuat…</div>`;
+  window.scrollTo(0,0);
+  try {
+    if(view==="list") await renderList();
+    else if(view==="detail") await renderDetail(param);
+    else if(view==="board") await renderBoard();
+    else if(view==="calendar") await renderCalendar();
+    else if(view==="notif") await renderNotif();
+    else if(view==="more") renderMore();
+    else if(view==="history") await renderHistory();
+    else if(view==="search") await renderSearch();
+    else if(view==="audit") await renderAudit();
+    else if(view==="settings") await renderSettings();
+  } catch(e){ $("views").innerHTML = `<div class="empty">Gagal memuat: ${esc(e.message||e)}</div>`; }
+}
+function openDetail(id){ state.detailFrom = SUBVIEWS.has(state.view)?state.detailFrom:state.view; nav("detail", id); }
+
+// -- ACTIVE LIST ----------------------------------------------------------
+function progressOf(s){ const it=s.action_items||[]; return [it.filter(i=>i.status==="final").length, it.length]; }
+async function renderList(){
+  const rows = [...await getActive()];
+  if(!rows.length){ $("views").innerHTML=`<div class="empty">Belum ada pengiriman aktif.</div>`; return; }
+  const groups={}; rows.forEach(r=>(groups[r.exporter_code]=groups[r.exporter_code]||[]).push(r));
+  const etdKey=(s)=>[s.etd_belawan?0:1, s.etd_belawan||""];
+  const cmp=(a,b)=>{ const ka=etdKey(a),kb=etdKey(b); return ka[0]-kb[0]||ka[1].localeCompare(kb[1]); };
+  Object.values(groups).forEach(g=>g.sort(cmp));
+  const order=Object.keys(groups).sort((a,b)=>{
+    const ka=[...groups[a]].sort(cmp)[0], kb=[...groups[b]].sort(cmp)[0];
+    return cmp(ka,kb)||a.localeCompare(b); });
+  const frag=document.createDocumentFragment();
+  for(const code of order){
+    frag.appendChild(el(`<div class="grouphdr" style="color:${badgeColor(code)}">${esc(code)} · ${groups[code].length}</div>`));
+    for(const r of groups[code]) frag.appendChild(shipCard(r));
+  }
+  $("views").innerHTML=""; $("views").appendChild(frag);
+}
+function shipCard(r){
+  const [done,total]=progressOf(r); const d=daysUntil(r.etd_belawan); const soon=d!==null&&d<=3;
+  const a=el(`<div class="card tap">
+    <div class="rowtop">${badge(r.exporter_code,r.sequence_number)}<span class="etd ${soon?"soon":""}">ETD ${fmtDate(r.etd_belawan)}</span></div>
+    <div class="vessel">${esc([r.vessel_name,r.voyage].filter(Boolean).join(" ")||"(tanpa kapal)")}</div>
+    <div class="metaline">${esc(r.destination_port||"—")} · ${r.container_quantity||"?"} × ${esc(r.container_size_short||"?")} · ${done}/${total} final</div></div>`);
+  a.onclick=()=>openDetail(r.id); return a;
+}
+
+// -- SHIPMENT DETAIL ------------------------------------------------------
+async function renderDetail(id){
+  const [{data:s, error}, chk] = await Promise.all([
+    sb.from("shipments").select("*,action_items(*),containers(*)").eq("id",id).single(),
+    sb.from("bnct_checks").select("*").eq("shipment_id",id).order("checked_at",{ascending:false}).limit(1),
+  ]);
+  if(error) throw error;
+  const items=(s.action_items||[]).sort((a,b)=>(a.position||0)-(b.position||0)||(a.created_at||"").localeCompare(b.created_at||""));
+  const conts=(s.containers||[]).sort((a,b)=>(a.container_no||"").localeCompare(b.container_no||""));
+  const done=items.filter(i=>i.status==="final").length, total=items.length;
+  const bnct = describeRecord((chk.data&&chk.data[0])||null);
+  const checkedAt = chk.data&&chk.data[0]?chk.data[0].checked_at:null;
+  $("title").textContent = `${s.exporter_code}${s.sequence_number}`;
+  const w=document.createElement("div");
+
+  // header card
+  w.appendChild(el(`<div class="card">
+    <div class="rowtop">${badge(s.exporter_code,s.sequence_number)}<span class="etd ${(daysUntil(s.etd_belawan)??9)<=3?"soon":""}">ETD ${fmtDate(s.etd_belawan)}</span></div>
+    <div class="vessel" style="font-size:17px">${esc([s.vessel_name,s.voyage].filter(Boolean).join(" ")||"(tanpa kapal)")}</div>
+    <div class="metaline">${done} dari ${total} item final</div>
+    <div class="kv" style="margin-top:8px"><b>Tujuan</b><span>${esc(s.destination_port||"—")}${s.destination_country?", "+esc(s.destination_country):""}</span></div>
+    <div class="kv"><b>Party</b><span>${s.container_quantity||"?"} × ${esc(s.container_size_short||"?")}</span></div>
+    <div class="kv"><b>Booking</b><span>${esc(s.booking_number||"—")}</span></div>
+    ${s.shipping_company?`<div class="kv"><b>Pelayaran</b><span>${esc(s.shipping_company)}</span></div>`:""}
+  </div>`));
+
+  // header actions
+  const acts=el(`<div class="btnrow" style="margin:-4px 0 12px"></div>`);
+  const etdBtn=el(`<button class="iconbtn">✎ Ubah ETD</button>`);
+  etdBtn.onclick=()=>editEtd(s);
+  acts.appendChild(etdBtn);
+  const url=folderUrl(s.folder_path);
+  if(url) acts.appendChild(el(`<a class="iconbtn" href="${url}" target="_blank" rel="noopener" style="text-decoration:none">📁 Buka Folder</a>`));
+  const doneBtn=el(`<button class="iconbtn" style="color:var(--ok)">✓ Tandai Selesai</button>`);
+  doneBtn.onclick=()=>markComplete(s);
+  acts.appendChild(doneBtn);
+  w.appendChild(acts);
+
+  if(s.quarantine_required) w.appendChild(el(`<div class="banner">⚠ Karantina diperlukan — pastikan Fumi/Phyto/COO diproses.</div>`));
+
+  // BNCT panel
+  w.appendChild(el(`<div class="sectlabel">Status Kapal (BNCT)</div>`));
+  const bc=el(`<div class="card"></div>`);
+  bc.appendChild(el(`<div style="display:flex;align-items:center;gap:8px"><span class="dot" style="background:${bnct.color}"></span><b style="color:${bnct.color}">${esc(bnct.status)}</b></div>`));
+  if(bnct.detail.length) bc.appendChild(el(`<div class="detailblock">${esc(bnct.detail.join("\n"))}</div>`));
+  if(checkedAt) bc.appendChild(el(`<div class="metaline" style="margin-top:8px">Diperiksa: ${fmtDT(checkedAt)}</div>`));
+  w.appendChild(bc);
+
+  // action items
+  w.appendChild(el(`<div class="sectlabel">Item Tindakan</div>`));
+  const ic=el(`<div class="card"></div>`);
+  if(!items.length) ic.appendChild(el(`<div class="muted">Tidak ada item.</div>`));
+  for(const it of items){
+    const row=el(`<div class="item il" style="border-left-color:${STATUS_COLOR[it.status]||"#6b7280"}"><div class="t">${esc(it.title)}${it.is_custom?' <span class="muted">(tambahan)</span>':""}</div></div>`);
+    const sel=el(`<select class="status">${STATUS.map(([v,l])=>`<option value="${v}" ${it.status===v?"selected":""}>${l}</option>`).join("")}</select>`);
+    sel.onchange=async ()=>{ const {error}=await sb.from("action_items").update({status:sel.value,updated_at:nowIso()}).eq("id",it.id); toast(error?"Gagal: "+error.message:"Status disimpan"); if(!error){ it.status=sel.value; row.style.borderLeftColor=STATUS_COLOR[sel.value]; } };
+    const del=el(`<button class="linkbtn" style="color:var(--danger)">✕</button>`);
+    del.onclick=async ()=>{ if(!confirm(`Hapus item "${it.title}"?`)) return; const {error}=await sb.from("action_items").delete().eq("id",it.id); if(error){toast("Gagal: "+error.message);return;} toast("Item dihapus"); row.remove(); };
+    row.appendChild(sel); row.appendChild(del); ic.appendChild(row);
+  }
+  const add=el(`<div class="savebar" style="justify-content:flex-start;margin-top:12px"><button class="iconbtn" style="color:var(--accent)">+ Tambah Item</button></div>`);
+  add.querySelector("button").onclick=async ()=>{
+    const title=await askInput({title:"Item tindakan baru",placeholder:"Judul item"}); if(!title||!title.trim()) return;
+    const pos=(items.length?Math.max(...items.map(i=>i.position||0)):0)+1000;
+    const {error}=await sb.from("action_items").insert({id:"custom:"+uuid(),shipment_id:id,code:"custom",title:title.trim(),status:"pending",position:pos,is_custom:1,created_at:nowIso()});
+    if(error){toast("Gagal: "+error.message);return;} toast("Item ditambahkan"); nav("detail",id);
+  };
+  ic.appendChild(add); w.appendChild(ic);
+
+  // containers
+  w.appendChild(el(`<div class="sectlabel">Kontainer (${conts.length})</div>`));
+  const cc=el(`<div class="card"></div>`);
+  if(!conts.length) cc.appendChild(el(`<div class="muted">Belum ada kontainer terbaca dari VGM.</div>`));
+  for(const c of conts){
+    const recv=c.last_status_code==="51";
+    const st=(c.last_status_code||c.last_status_text)?`${c.last_status_code||""}-${c.last_status_text||""}`.replace(/^-|-$/g,""):"Belum ada data";
+    const row=el(`<div class="item cont il" style="border-left-color:${recv?"#16a34a":"transparent"}">
+      <div class="t"><div class="no">${esc(c.container_no)}</div>
+      <div class="st" style="color:${recv?"var(--ok)":"var(--muted)"}">${esc(st)}${c.last_site?" · "+esc(c.last_site):""}</div></div></div>`);
+    const copy=el(`<button class="linkbtn">Salin</button>`);
+    copy.onclick=()=>{ navigator.clipboard.writeText(c.container_no).then(()=>toast("Nomor disalin")); };
+    const edit=el(`<button class="linkbtn">✎</button>`);
+    edit.onclick=async ()=>{ const v=await askInput({title:"Nomor kontainer",value:c.container_no}); if(!v) return; const num=v.trim().toUpperCase(); if(!num||num===c.container_no) return;
+      const {error}=await sb.from("containers").update({container_no:num,last_site:null,last_status_code:null,last_status_text:null,last_checked_at:null}).eq("id",c.id);
+      if(error){toast("Gagal: "+error.message);return;} toast("Nomor diubah"); nav("detail",id); };
+    row.appendChild(copy); row.appendChild(edit); cc.appendChild(row);
+  }
+  if(conts.length){
+    const bar=el(`<div class="savebar" style="justify-content:flex-start;margin-top:12px"><button class="iconbtn" style="color:var(--accent)">Buka di BNCT</button></div>`);
+    bar.querySelector("button").onclick=()=>{ navigator.clipboard.writeText(conts.map(c=>c.container_no).join("\n")).then(()=>toast(`${conts.length} nomor disalin`)); window.open(BNCT_URL,"_blank","noopener"); };
+    cc.appendChild(bar);
+  }
+  w.appendChild(cc);
+
+  // notes
+  w.appendChild(el(`<div class="sectlabel">Catatan</div>`));
+  const nc=el(`<div class="card"></div>`);
+  const ta=el(`<textarea placeholder="Catatan bebas…">${esc(s.notes||"")}</textarea>`);
+  const save=el(`<div class="savebar"><button class="iconbtn">Simpan Catatan</button></div>`);
+  save.querySelector("button").onclick=async ()=>{ const {error}=await sb.from("shipments").update({notes:ta.value.trim()||null}).eq("id",id); toast(error?"Gagal: "+error.message:"Catatan disimpan"); };
+  nc.appendChild(ta); nc.appendChild(save); w.appendChild(nc);
+
+  $("views").innerHTML=""; $("views").appendChild(w);
+}
+
+async function editEtd(s){
+  const v=await askInput({title:"Ubah ETD (seluruh voyage)",type:"date",value:(s.etd_belawan||"").slice(0,10)});
+  if(v===null) return; const iso=v||null;
+  let error;
+  if(s.vessel_name && s.voyage) ({error}=await sb.from("shipments").update({etd_belawan:iso,etd_source:"manual"}).eq("status","active").eq("vessel_name",s.vessel_name).eq("voyage",s.voyage));
+  else ({error}=await sb.from("shipments").update({etd_belawan:iso,etd_source:"manual"}).eq("id",s.id));
+  if(error){toast("Gagal: "+error.message);return;}
+  state.active=state.all=null; toast("ETD diperbarui"); nav("detail",s.id);
+}
+async function markComplete(s){
+  if(!confirm(`Tandai ${s.exporter_code}${s.sequence_number} selesai?`)) return;
+  const {error}=await sb.from("shipments").update({status:"completed",completed_at:nowIso()}).eq("id",s.id);
+  if(error){toast("Gagal: "+error.message);return;}
+  const vessel=[s.vessel_name,s.voyage].filter(Boolean).join(" ");
+  await sb.from("audit_log").insert({id:uuid(),created_at:nowIso(),actor:state.email,action:"shipment_completed",shipment_id:s.id,label:`${s.exporter_code}${s.sequence_number}`,detail:vessel});
+  state.active=state.all=null; toast("Ditandai selesai"); nav("list");
+}
+
+// -- MONITOR KAPAL BOARD --------------------------------------------------
+async function renderBoard(){
+  const [{data:vessels, error}, active] = await Promise.all([
+    sb.from("monitored_vessels").select("*").order("created_at",{ascending:false}), getActive() ]);
+  if(error) throw error;
+  const shipFor=(name,voy)=> active.filter(s=>s.vessel_name&&s.voyage&&norm(s.vessel_name)===norm(name)&&norm(s.voyage)===norm(voy));
+  const byState={}; (vessels||[]).forEach(v=>(byState[stateOf(v)]=byState[stateOf(v)]||[]).push(v));
+  if(!vessels||!vessels.length){ $("views").innerHTML=`<div class="empty">Belum ada kapal dipantau.</div>`; return; }
+  const w=document.createElement("div");
+  for(const [key,label,color] of STATE_COLS){
+    const list=byState[key]||[]; if(!list.length) continue;
+    w.appendChild(el(`<div class="grouphdr" style="color:${color}">${label} · ${list.length}</div>`));
+    for(const v of list){
+      let reading=null; try { reading = v.last_reading?JSON.parse(v.last_reading):null; } catch{}
+      const d=describeRecord(reading);
+      const ships=shipFor(v.vessel_name,v.voyage);
+      const card=el(`<div class="card"><div style="display:flex;align-items:center;gap:8px"><span class="dot" style="background:${color}"></span>
+        <b>${esc(v.vessel_name)} · ${esc(v.voyage||"—")}</b></div>
+        ${ships.length?`<div style="margin-top:8px">${ships.map(s=>`<span class="chip" data-sid="${s.id}">📦 ${esc(s.exporter_code)}${s.sequence_number}</span>`).join("")}</div>`:""}
+        ${d.detail.length?`<div class="detailblock">${esc(d.detail.join("\n"))}</div>`:""}
+        ${v.last_checked_at?`<div class="metaline" style="margin-top:8px">Diperiksa: ${fmtDT(v.last_checked_at)}</div>`:""}</div>`);
+      card.querySelectorAll(".chip[data-sid]").forEach(ch=>ch.onclick=()=>openDetail(ch.dataset.sid));
+      w.appendChild(card);
+    }
+  }
+  $("views").innerHTML=""; $("views").appendChild(w);
+}
+
+// -- CALENDAR -------------------------------------------------------------
+function calEntries(all, due, y, m){
+  const mk=`${y}-${String(m+1).padStart(2,"0")}`;
+  const inMonth=(iso)=>iso && iso.slice(0,7)===mk;
+  const out={};
+  const push=(day,e)=>{ (out[day]=out[day]||[]).push(e); };
+  const today=localYMD();
+  for(const it of due){ if(!inMonth(it.due_date)) continue; const day=+it.due_date.slice(8,10);
+    const s=it.shipments||{}; const overdue=it.status!=="final"&&it.due_date.slice(0,10)<today;
+    push(day,{kind:"step",sid:it.shipment_id,color:it.status==="final"?"#16a34a":overdue?"#dc2626":"#2563eb",
+      code:s.exporter_code||"", seq:s.sequence_number??"", text:it.title||"(tanpa judul)"}); }
+  for(const s of all){ if(!inMonth(s.etd_belawan)) continue; const day=+s.etd_belawan.slice(8,10);
+    const blue=s.etd_source==="bnct"||s.etd_source==="manual";
+    push(day,{kind:"etd",sid:s.id,color:blue?"#2563eb":"#d97706",
+      code:s.exporter_code, seq:s.sequence_number, text:`ETD ${[s.vessel_name,s.voyage].filter(Boolean).join(" ")||""}`.trim()}); }
+  return out;
+}
+async function renderCalendar(){
+  const [all, due] = await Promise.all([getAllShipments(), getDueItems()]);
+  const now=new Date();
+  if(state.cal.y===null){ state.cal.y=now.getFullYear(); state.cal.m=now.getMonth(); state.cal.sel=localYMD(now); }
+  const {y,m}=state.cal;
+  const mk=`${y}-${String(m+1).padStart(2,"0")}`;
+  const entries=calEntries(all,due,y,m);
+  const first=new Date(y,m,1); const startDow=(first.getDay()+6)%7; // Mon=0
+  const days=new Date(y,m+1,0).getDate();
+  const todayIso=localYMD(now);
+  const w=document.createElement("div");
+  const head=el(`<div class="calhead"><button class="iconbtn" data-prev>‹</button><div class="m">${MONTHS_FULL[m]} ${y}</div><button class="iconbtn" data-today>Hari ini</button><button class="iconbtn" data-next>›</button></div>`);
+  head.querySelector("[data-prev]").onclick=()=>{ if(--state.cal.m<0){state.cal.m=11;state.cal.y--;} nav("calendar"); };
+  head.querySelector("[data-next]").onclick=()=>{ if(++state.cal.m>11){state.cal.m=0;state.cal.y++;} nav("calendar"); };
+  head.querySelector("[data-today]").onclick=()=>{ state.cal.y=now.getFullYear(); state.cal.m=now.getMonth(); state.cal.sel=todayIso; nav("calendar"); };
+  w.appendChild(head);
+  const grid=el(`<div class="calgrid"></div>`);
+  DOW.forEach(d=>grid.appendChild(el(`<div class="caldow">${d}</div>`)));
+  for(let i=0;i<startDow;i++) grid.appendChild(el(`<div class="calcell off"></div>`));
+  for(let day=1;day<=days;day++){
+    const iso=`${mk}-${String(day).padStart(2,"0")}`;
+    const es=entries[day]||[];
+    const cell=el(`<div class="calcell ${iso===todayIso?"today":""} ${iso===state.cal.sel?"sel":""}"><div>${day}</div>
+      <div class="caldots">${es.slice(0,4).map(e=>`<span class="d" style="background:${e.color}"></span>`).join("")}</div></div>`);
+    cell.onclick=()=>{ state.cal.sel=iso; nav("calendar"); };
+    grid.appendChild(cell);
+  }
+  w.appendChild(grid);
+  // agenda for selected day
+  const sel=state.cal.sel; const selEntries=(sel&&sel.slice(0,7)===mk)?(entries[+sel.slice(8,10)]||[]):[];
+  w.appendChild(el(`<div class="sectlabel">${sel?fmtDate(sel):""}</div>`));
+  if(!selEntries.length) w.appendChild(el(`<div class="muted" style="padding:0 2px 20px">Tidak ada agenda.</div>`));
+  for(const e of selEntries){
+    const c=el(`<div class="card tap" style="padding:11px 14px"><div style="display:flex;align-items:center;gap:8px">
+      <span class="dot" style="background:${e.color}"></span>${badge(e.code,e.seq)}
+      <span style="font-weight:600">${esc(e.text)}</span></div></div>`);
+    c.onclick=()=>openDetail(e.sid); w.appendChild(c);
+  }
+  $("views").innerHTML=""; $("views").appendChild(w);
+}
+
+// -- NOTIFICATIONS --------------------------------------------------------
+async function renderNotif(){
+  const { data, error } = await sb.from("notifications").select("*").order("created_at",{ascending:false}).limit(100);
+  if(error) throw error;
+  const w=document.createElement("div");
+  const bar=el(`<div class="savebar" style="justify-content:flex-end;margin:-2px 0 8px"><button class="iconbtn">Tandai semua dibaca</button></div>`);
+  bar.querySelector("button").onclick=async ()=>{ await sb.from("notifications").update({read:1}).eq("read",0); toast("Semua dibaca"); refreshBadge(); nav("notif"); };
+  w.appendChild(bar);
+  if(!data||!data.length){ w.appendChild(el(`<div class="empty">Belum ada notifikasi.</div>`)); $("views").innerHTML=""; $("views").appendChild(w); return; }
+  for(const n of data){
+    const unread=!n.read; const color=NOTIF_COLORS[n.kind]||"#6b7280";
+    const c=el(`<div class="card tap ${unread?"unread":""}">
+      <div style="display:flex;gap:9px"><span class="dot" style="background:${color};margin-top:5px"></span>
+      <div style="flex:1;min-width:0"><b>${esc(n.title)}</b>${unread?' <span class="muted" style="font-size:11px">• baru</span>':""}
+      ${n.body?`<div class="metaline" style="color:var(--text-2);margin-top:2px">${esc(n.body)}</div>`:""}
+      <div class="metaline" style="margin-top:4px">${fmtDT(n.created_at)}</div></div></div></div>`);
+    c.onclick=async ()=>{ if(unread){ await sb.from("notifications").update({read:1}).eq("id",n.id); refreshBadge(); } if(n.shipment_id) openDetail(n.shipment_id); else nav("board"); };
+    w.appendChild(c);
+  }
+  $("views").innerHTML=""; $("views").appendChild(w);
+}
+
+// -- MORE menu ------------------------------------------------------------
+function renderMore(){
+  const w=el(`<div class="card menu" style="padding:0">
+    <div class="row tap" data-go="history"><span class="ic">🗂️</span>Riwayat</div>
+    <div class="row tap" data-go="search"><span class="ic">🔍</span>Cari</div>
+    <div class="row tap" data-go="audit"><span class="ic">📝</span>Log Aktivitas</div>
+    <div class="row tap" data-go="settings"><span class="ic">⚙️</span>Pengaturan</div></div>`);
+  w.querySelectorAll("[data-go]").forEach(r=>r.onclick=()=>nav(r.dataset.go));
+  const info=el(`<div class="metaline" style="text-align:center;margin-top:16px">Masuk sebagai ${esc(state.email||"")}</div>`);
+  $("views").innerHTML=""; $("views").appendChild(w); $("views").appendChild(info);
+}
+
+// -- SETTINGS -------------------------------------------------------------
+function applyTheme(t){ if(t==="system") document.documentElement.removeAttribute("data-theme"); else document.documentElement.setAttribute("data-theme", t); localStorage.setItem("theme", t); }
+async function getSetting(key){ const {data}=await sb.from("settings").select("value").eq("key",key).maybeSingle(); return data?data.value:null; }
+async function setSetting(key,value){ return sb.from("settings").upsert({key,value}); }
+async function changePassword(){
+  const p1=await askInput({title:"Kata sandi baru",type:"password",placeholder:"Minimal 6 karakter"}); if(!p1) return;
+  if(p1.length<6){ toast("Minimal 6 karakter"); return; }
+  const p2=await askInput({title:"Ulangi kata sandi baru",type:"password"}); if(p2===null) return;
+  if(p1!==p2){ toast("Kata sandi tidak cocok"); return; }
+  const {error}=await sb.auth.updateUser({password:p1}); toast(error?("Gagal: "+error.message):"Kata sandi diubah");
+}
+async function renderSettings(){
+  const w=document.createElement("div");
+
+  // Tampilan (theme)
+  w.appendChild(el(`<div class="sectlabel">Tampilan</div>`));
+  const cur=localStorage.getItem("theme")||"system";
+  const seg=el(`<div class="card"><div class="seg">
+    <button data-t="light" class="${cur==="light"?"on":""}">Terang</button>
+    <button data-t="dark" class="${cur==="dark"?"on":""}">Gelap</button>
+    <button data-t="system" class="${cur==="system"?"on":""}">Sistem</button></div></div>`);
+  seg.querySelectorAll("[data-t]").forEach(b=>b.onclick=()=>{ applyTheme(b.dataset.t); seg.querySelectorAll("[data-t]").forEach(x=>x.classList.toggle("on",x===b)); });
+  w.appendChild(seg);
+
+  // Akun
+  w.appendChild(el(`<div class="sectlabel">Akun</div>`));
+  const acc=el(`<div class="card"><div class="kv"><b>Email</b><span>${esc(state.email||"—")}</span></div></div>`);
+  const arow=el(`<div class="savebar" style="justify-content:flex-start;margin-top:10px;gap:8px"><button class="iconbtn">Ubah Kata Sandi</button><button class="iconbtn danger">Keluar</button></div>`);
+  const [pwBtn,outBtn]=arow.querySelectorAll("button");
+  pwBtn.onclick=changePassword;
+  outBtn.onclick=async ()=>{ if(confirm("Keluar dari akun?")){ await sb.auth.signOut(); location.reload(); } };
+  acc.appendChild(arow); w.appendChild(acc);
+
+  // Notifikasi HP (ntfy)
+  w.appendChild(el(`<div class="sectlabel">Notifikasi HP (ntfy)</div>`));
+  const nt=el(`<div class="card"></div>`);
+  const enabled=(await getSetting("ntfy_enabled"))!=="0";   // default on
+  const trow=el(`<div class="setrow"><div class="t">Kirim notifikasi ke HP<small>Server mengirim alert ke topik ntfy di bawah.</small></div></div>`);
+  const tg=el(`<button class="toggle ${enabled?"on":""}"></button>`);
+  tg.onclick=async ()=>{ const on=!tg.classList.contains("on"); tg.classList.toggle("on",on); const {error}=await setSetting("ntfy_enabled",on?"1":"0"); toast(error?"Gagal: "+error.message:(on?"Notifikasi HP aktif":"Notifikasi HP nonaktif")); };
+  trow.appendChild(tg); nt.appendChild(trow);
+  const sub=`${NTFY_SERVER}/${NTFY_TOPIC}`;
+  const srow=el(`<div class="setrow"><div class="t">Topik langganan<small style="word-break:break-all">${esc(sub)}</small></div></div>`);
+  const cp=el(`<button class="iconbtn">Salin</button>`); cp.onclick=()=>navigator.clipboard.writeText(sub).then(()=>toast("Disalin"));
+  srow.appendChild(cp); nt.appendChild(srow);
+  nt.appendChild(el(`<div class="metaline" style="margin-top:10px">Pasang aplikasi <b>ntfy</b> (App Store / Play Store), lalu subscribe ke topik <b>${esc(NTFY_TOPIC)}</b> untuk menerima alert di layar kunci — tanpa membuka aplikasi ini.</div>`));
+  w.appendChild(nt);
+
+  // Status Server
+  w.appendChild(el(`<div class="sectlabel">Status Server</div>`));
+  const sc=el(`<div class="card"><div class="muted">Memuat…</div></div>`); w.appendChild(sc);
+  sb.from("monitored_vessels").select("last_checked_at").order("last_checked_at",{ascending:false}).limit(1).then(({data})=>{
+    const last=data&&data[0]?data[0].last_checked_at:null;
+    const secs=last?Math.round((Date.now()-new Date(asUTC(last)))/1000):null;
+    const stale=secs===null||secs>1200;
+    sc.innerHTML="";
+    sc.appendChild(el(`<div style="display:flex;align-items:center;gap:8px"><span class="dot" style="background:${stale?"#d97706":"#16a34a"}"></span><b>${stale?"Mungkin tidak aktif":"Aktif"}</b></div>`));
+    sc.appendChild(el(`<div class="metaline" style="margin-top:6px">Pemeriksaan terakhir: ${last?relTime(last):"belum pernah"}</div>`));
+  });
+  const rl=el(`<div class="savebar" style="justify-content:flex-start"><button class="iconbtn">Muat ulang data</button></div>`);
+  rl.querySelector("button").onclick=()=>{ state.active=state.all=state.due=null; toast("Data dimuat ulang"); refreshBadge(); nav("settings"); };
+  w.appendChild(rl);
+
+  // Tentang
+  w.appendChild(el(`<div class="sectlabel">Tentang</div>`));
+  w.appendChild(el(`<div class="card"><div class="kv"><b>Aplikasi</b><span>Bot Kalung PWA</span></div>
+    <div class="kv"><b>Versi</b><span>1.0</span></div>
+    <div class="kv"><b>Database</b><span>${esc(SUPABASE_URL.replace("https://","").split(".")[0])}</span></div></div>`));
+
+  $("views").innerHTML=""; $("views").appendChild(w);
+}
+
+// -- HISTORY --------------------------------------------------------------
+async function renderHistory(){
+  const all = await getAllShipments();
+  const done = all.filter(s=>s.status==="completed").sort((a,b)=>(b.completed_at||"").localeCompare(a.completed_at||""));
+  const years=[...new Set(done.map(s=>s.etd_belawan?s.etd_belawan.slice(0,4):null).filter(Boolean))].sort().reverse();
+  const w=document.createElement("div");
+  w.appendChild(el(`<div class="filterbar"><input class="grow" placeholder="Cari eksportir/kapal/tujuan…" id="hq">
+    <select id="hy"><option value="">Semua tahun</option>${years.map(y=>`<option>${y}</option>`).join("")}</select></div>`));
+  const listWrap=el(`<div id="hlist"></div>`); w.appendChild(listWrap);
+  $("views").innerHTML=""; $("views").appendChild(w);
+  const draw=()=>{
+    const q=norm($("hq").value), yr=$("hy").value;
+    const rows=done.filter(s=>{
+      if(yr && (!s.etd_belawan||s.etd_belawan.slice(0,4)!==yr)) return false;
+      if(!q) return true;
+      return norm([s.exporter_code,s.sequence_number,s.vessel_name,s.voyage,s.booking_number,s.destination_port,s.destination_country].join(" ")).includes(q);
+    });
+    listWrap.innerHTML = rows.length?"":`<div class="empty">Tidak ada hasil.</div>`;
+    for(const s of rows){
+      const c=el(`<div class="card tap"><div class="rowtop">${badge(s.exporter_code,s.sequence_number)}
+        <span class="etd">Selesai ${fmtDate(s.completed_at)}</span></div>
+        <div class="vessel">${esc([s.vessel_name,s.voyage].filter(Boolean).join(" ")||"(tanpa kapal)")}</div>
+        <div class="metaline">${esc(s.destination_port||"—")} · Booking ${esc(s.booking_number||"—")} · ETD ${fmtDate(s.etd_belawan)}</div></div>`);
+      c.onclick=()=>openDetail(s.id); listWrap.appendChild(c);
+    }
+  };
+  $("hq").oninput=draw; $("hy").onchange=draw; draw();
+}
+
+// -- SEARCH ---------------------------------------------------------------
+async function renderSearch(){
+  const active = await getActive();
+  const w=document.createElement("div");
+  w.appendChild(el(`<div class="filterbar"><input class="grow" id="sq" placeholder='Nomor kontainer atau party (mis. "CMAU", "10", "40")'></div>`));
+  w.appendChild(el(`<div class="metaline" style="margin:-4px 2px 10px">Cari pengiriman aktif berdasarkan nomor kontainer atau party size.</div>`));
+  const res=el(`<div id="sres"></div>`); w.appendChild(res);
+  $("views").innerHTML=""; $("views").appendChild(w);
+  const draw=()=>{
+    const raw=$("sq").value.trim(); if(!raw){ res.innerHTML=`<div class="empty">Ketik untuk mencari.</div>`; return; }
+    const q=raw.toUpperCase(); const rows=[];
+    for(const s of active){
+      const conts=(s.containers||[]).map(c=>c.container_no);
+      const hitC=conts.find(n=>(n||"").toUpperCase().includes(q));
+      const party=`${s.container_quantity} X ${(s.container_size_short||"").toUpperCase()}`;
+      const hitP=String(s.container_quantity)===raw || party.includes(q);
+      if(hitC) rows.push([s,`Kontainer ${hitC}`]);
+      else if(hitP) rows.push([s,`Party ${s.container_quantity} × ${s.container_size_short||"?"}`]);
+    }
+    res.innerHTML = rows.length?"":`<div class="empty">Tidak ada pengiriman ditemukan.</div>`;
+    for(const [s,why] of rows){
+      const c=el(`<div class="card tap"><div class="rowtop">${badge(s.exporter_code,s.sequence_number)}<span class="metaline" style="margin-left:auto">${esc(why)}</span></div>
+        <div class="metaline">${esc([s.vessel_name,s.voyage].filter(Boolean).join(" ")||"(tanpa kapal)")} · ${esc(s.destination_port||"—")} · ${s.container_quantity} × ${esc(s.container_size_short||"?")}</div></div>`);
+      c.onclick=()=>openDetail(s.id); res.appendChild(c);
+    }
+  };
+  $("sq").oninput=draw; draw();
+}
+
+// -- AUDIT ----------------------------------------------------------------
+async function renderAudit(){
+  const { data, error } = await sb.from("audit_log").select("*").order("created_at",{ascending:false}).limit(200);
+  if(error) throw error;
+  if(!data||!data.length){ $("views").innerHTML=`<div class="empty">Belum ada aktivitas.</div>`; return; }
+  const w=document.createElement("div");
+  for(const a of data){
+    const meta=AUDIT[a.action]||{label:a.action,color:"#6b7280"};
+    const actor=(a.actor||"").split("@")[0];
+    const c=el(`<div class="card" style="padding:12px 14px"><div style="display:flex;gap:9px"><span class="dot" style="background:${meta.color};margin-top:5px"></span>
+      <div style="flex:1;min-width:0"><b>${esc(meta.label)} — ${esc(a.label||"")}</b>
+      ${a.detail?`<div class="metaline" style="margin-top:2px">${esc(a.detail)}</div>`:""}
+      <div class="metaline" style="margin-top:4px">oleh ${esc(actor||"—")} · ${fmtDT(a.created_at)}</div></div></div></div>`);
+    w.appendChild(c);
+  }
+  $("views").innerHTML=""; $("views").appendChild(w);
+}
+
+applyTheme(localStorage.getItem("theme")||"system");
+if("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(()=>{});
+boot();
+</script>
+</body>
+</html>
