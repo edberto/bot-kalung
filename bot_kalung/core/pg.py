@@ -52,8 +52,26 @@ class _Cursor:
 class PostgresDatabase:
     def __init__(self, dsn: str):
         self.dsn = dsn
+        self._pool = None
+
+    @property
+    def pool(self):
+        """Lazily-opened connection pool. Reusing warm connections avoids a
+        TCP+TLS handshake per query over the Supabase pooler — a poll cycle fires
+        many small queries, so this cuts real latency and connection churn. The
+        worker is single-threaded, so a tiny pool (1 warm, up to 4) is plenty."""
+        if self._pool is None:
+            from psycopg.rows import dict_row
+            from psycopg_pool import ConnectionPool
+
+            self._pool = ConnectionPool(
+                self.dsn, min_size=1, max_size=4,
+                kwargs={"row_factory": dict_row}, open=True)
+        return self._pool
 
     def connect(self):
+        """A standalone connection (used by initialize(); pooling covers the
+        hot query path)."""
         import psycopg
         from psycopg.rows import dict_row
 
@@ -89,24 +107,28 @@ class PostgresDatabase:
     # -- the Database surface the services use ------------------------------
 
     def query(self, sql: str, params=()) -> list:
-        with self.connect() as conn:
+        with self.pool.connection() as conn:
             return conn.execute(_translate(sql), params).fetchall()
 
     def query_one(self, sql: str, params=()):
-        with self.connect() as conn:
+        with self.pool.connection() as conn:
             return conn.execute(_translate(sql), params).fetchone()
 
     def execute(self, sql: str, params=()) -> None:
-        with self.connect() as conn:
+        with self.pool.connection() as conn:
             conn.execute(_translate(sql), params)
             conn.commit()
 
     @contextmanager
     def cursor(self, write: bool = False):
-        conn = self.connect()
-        try:
+        with self.pool.connection() as conn:
             yield _Cursor(conn.cursor())
             if write:
                 conn.commit()
-        finally:
-            conn.close()
+
+    def close(self) -> None:
+        """Close the pool (the long-running worker never calls this, but tests and
+        one-shot runs can)."""
+        if self._pool is not None:
+            self._pool.close()
+            self._pool = None
