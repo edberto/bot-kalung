@@ -135,6 +135,12 @@
   .banner { background:var(--banner-bg); border:1px solid var(--banner-border); color:var(--banner-text); border-radius:10px;
     padding:10px 12px; font-size:13px; font-weight:600; margin-bottom:12px; }
   .detailblock { font-size:13px; color:var(--text-2); line-height:1.5; margin-top:6px; white-space:pre-line; }
+  .bnct-h { font-size:11px; font-weight:800; letter-spacing:.4px; color:var(--text-2); text-transform:uppercase; margin:9px 0 3px; }
+  .bnct-table { width:100%; border-collapse:collapse; font-size:13px; margin:2px 0; }
+  .bnct-table th, .bnct-table td { padding:4px 8px; border-bottom:1px solid var(--border); text-align:left; }
+  .bnct-table th { color:var(--muted); font-weight:700; font-size:10px; text-transform:uppercase; letter-spacing:.3px; }
+  .bnct-table td.num, .bnct-table th.num { text-align:right; font-variant-numeric:tabular-nums; }
+  .bnct-table tr:last-child td { border-bottom:none; }
   .dot { width:10px; height:10px; border-radius:50%; flex:none; }
   .empty { text-align:center; color:var(--muted); padding:44px 20px; }
   .spin { text-align:center; color:var(--muted); padding:30px; }
@@ -228,7 +234,7 @@
     <button data-tab="list"><span class="ic">📦</span>Aktif</button>
     <button data-tab="calendar"><span class="ic">📅</span>Kalender</button>
     <button data-tab="notif"><span class="ic">🔔</span>Notif<span class="tabbadge hidden" id="notifBadge">0</span></button>
-    <button data-tab="more"><span class="ic">☰</span>Lainnya</button>
+    <button data-tab="more"><span class="ic">☰</span>Lainnya<span class="tabbadge hidden" id="moreBadge">0</span></button>
   </nav>
 </div>
 
@@ -303,6 +309,35 @@ function describeRecord(r){
 }
 function stateOf(r){ if(r.state) return r.state; if(r.last_departing) return "departed"; if(r.last_phase==="alongside") return "berthed"; if(r.last_found) return "scheduled"; return "notfound"; }
 
+// Render a stored BNCT reading as a table, split by phase (Schedule vs Alongside).
+function kvTable(pairs){
+  const rows=pairs.filter(([,v])=>v!==null&&v!==undefined&&v!=="")
+    .map(([k,v])=>`<tr><td style="color:var(--muted)">${esc(k)}</td><td class="num">${esc(v)}</td></tr>`).join("");
+  return rows?el(`<table class="bnct-table"><tbody>${rows}</tbody></table>`):null;
+}
+function opsTable(r){
+  const rows=[["Loading",r.loading_plan,r.loading_actual,r.loading_remain],
+              ["Discharge",r.discharge_plan,r.discharge_actual,r.discharge_remain],
+              ["Restow",r.restow_plan,r.restow_actual,r.restow_remain]];
+  const body=rows.map(([n,p,a,rem])=>`<tr><td>${n}</td><td class="num">${fmtv(p)}</td><td class="num">${fmtv(a)}</td><td class="num"><b>${fmtv(rem)}</b></td></tr>`).join("");
+  return el(`<table class="bnct-table"><thead><tr><th>Operasi</th><th class="num">Rencana</th><th class="num">Aktual</th><th class="num">Sisa</th></tr></thead><tbody>${body}</tbody></table>`);
+}
+function bnctTable(r){
+  if(!r || !r.found) return null;
+  const wrap=document.createElement("div");
+  if(r.phase==="schedule"){
+    wrap.appendChild(el(`<div class="bnct-h">Jadwal Kapal · Vessel Schedule</div>`));
+    const t=kvTable([["ETD",r.etd],["Clossing",r.clossing],["Clossing Reefer",r.clossing_reefer],["Open Billing",r.open_billing],["Open Stack",r.open_stacking]]);
+    if(t) wrap.appendChild(t);
+  } else {
+    wrap.appendChild(el(`<div class="bnct-h">Kapal Sandar · Vessel Alongside</div>`));
+    wrap.appendChild(opsTable(r));
+    const t=kvTable([["ATB",r.atb],["Berth",r.berth],["ETD",r.etd],["Clossing",r.clossing],["Open Stack",r.open_stacking]]);
+    if(t) wrap.appendChild(t);
+  }
+  return wrap;
+}
+
 // generic input modal -> Promise<string|null>
 function askInput({title, type="text", value="", placeholder=""}){
   return new Promise((resolve)=>{
@@ -340,7 +375,7 @@ async function boot(){
   if(data.session){ state.email = data.session.user?.email || null; showApp(); }
   else $("login").classList.remove("hidden");
 }
-function showApp(){ $("login").classList.add("hidden"); $("app").classList.remove("hidden"); nav("monitor"); refreshBadge(); }
+function showApp(){ $("login").classList.add("hidden"); $("app").classList.remove("hidden"); nav("monitor"); refreshBadge(); refreshForumBadge(); subscribeRealtime(); }
 
 // -- data loaders (cached in state) --------------------------------------
 async function getActive(){
@@ -370,12 +405,39 @@ async function refreshBadge(){
   const { count } = await sb.from("notifications").select("id",{count:"exact",head:true}).eq("read",0);
   const b=$("notifBadge"); if(count>0){ b.textContent = count<100?count:"99+"; b.classList.remove("hidden"); } else b.classList.add("hidden");
 }
+async function refreshForumBadge(){
+  const seen = localStorage.getItem("forumSeen") || "1970-01-01";
+  let q = sb.from("board_notes").select("id",{count:"exact",head:true}).gt("created_at", seen);
+  if(state.email) q = q.neq("author_email", state.email);
+  const { count } = await q;
+  const b=$("moreBadge"); if(count>0){ b.textContent = count<100?count:"99+"; b.classList.remove("hidden"); } else b.classList.add("hidden");
+}
+
+// -- realtime: live sync across clients -----------------------------------
+let rtDebounce=null;
+const RT_LIST_VIEWS = new Set(["monitor","list","calendar","notif","forum","audit","history","vessels"]);
+function onRemoteChange(){
+  clearTimeout(rtDebounce);
+  rtDebounce=setTimeout(()=>{
+    state.active=state.all=state.due=null;
+    if(RT_LIST_VIEWS.has(state.view)) nav(state.view);   // detail/note/search left alone (may be mid-edit)
+    refreshBadge(); refreshForumBadge();
+  }, 700);
+}
+function subscribeRealtime(){
+  if(state.rtOn) return; state.rtOn=true;
+  const ch=sb.channel("app-changes");
+  for(const t of ["shipments","action_items","containers","notifications","monitored_vessels","board_notes"])
+    ch.on("postgres_changes",{event:"*",schema:"public",table:t},onRemoteChange);
+  ch.subscribe();
+  document.addEventListener("visibilitychange",()=>{ if(!document.hidden) onRemoteChange(); });
+}
 
 // -- router ---------------------------------------------------------------
 const TITLES = { monitor:"Monitor", list:"Pengiriman Aktif", calendar:"Kalender",
   notif:"Notifikasi", more:"Lainnya", history:"Riwayat", search:"Cari", audit:"Log Aktivitas",
-  settings:"Pengaturan", forum:"Forum", note:"Catatan", vessels:"Kelola Kapal", detail:"Pengiriman" };
-const SUBVIEWS = new Set(["detail","history","search","audit","settings","forum","note","vessels"]);
+  settings:"Pengaturan", forum:"Forum", note:"Catatan", vessels:"Kelola Kapal", scan:"Pindai Folder", detail:"Pengiriman" };
+const SUBVIEWS = new Set(["detail","history","search","audit","settings","forum","note","vessels","scan"]);
 
 async function nav(view, param){
   state.view = view;
@@ -398,6 +460,7 @@ async function nav(view, param){
     else if(view==="forum") await renderForum();
     else if(view==="note") await renderNoteThread(param);
     else if(view==="vessels") await renderManageVessels();
+    else if(view==="scan") await renderScan();
   } catch(e){ $("views").innerHTML = `<div class="empty">Gagal memuat: ${esc(e.message||e)}</div>`; }
 }
 function openDetail(id){ state.detailFrom = SUBVIEWS.has(state.view)?state.detailFrom:state.view; nav("detail", id); }
@@ -440,7 +503,8 @@ async function renderDetail(id){
   const items=(s.action_items||[]).sort((a,b)=>(a.position||0)-(b.position||0)||(a.created_at||"").localeCompare(b.created_at||""));
   const conts=(s.containers||[]).sort((a,b)=>(a.container_no||"").localeCompare(b.container_no||""));
   const done=items.filter(i=>i.status==="final").length, total=items.length;
-  const bnct = describeRecord((chk.data&&chk.data[0])||null);
+  const chkRow = (chk.data&&chk.data[0])||null;
+  const bnct = describeRecord(chkRow);
   const checkedAt = chk.data&&chk.data[0]?chk.data[0].checked_at:null;
   $("title").textContent = `${s.exporter_code}${s.sequence_number}`;
   const w=document.createElement("div");
@@ -466,6 +530,9 @@ async function renderDetail(id){
   const doneBtn=el(`<button class="iconbtn" style="color:var(--ok)">✓ Tandai Selesai</button>`);
   doneBtn.onclick=()=>markComplete(s);
   acts.appendChild(doneBtn);
+  const delBtn=el(`<button class="iconbtn danger">🗑 Hapus</button>`);
+  delBtn.onclick=()=>deleteShipment(s);
+  acts.appendChild(delBtn);
   w.appendChild(acts);
 
   if(s.quarantine_required) w.appendChild(el(`<div class="banner">⚠ Karantina diperlukan — pastikan Fumi/Phyto/COO diproses.</div>`));
@@ -474,7 +541,7 @@ async function renderDetail(id){
   w.appendChild(el(`<div class="sectlabel">Status Kapal (BNCT)</div>`));
   const bc=el(`<div class="card"></div>`);
   bc.appendChild(el(`<div style="display:flex;align-items:center;gap:8px"><span class="dot" style="background:${bnct.color}"></span><b style="color:${bnct.color}">${esc(bnct.status)}</b></div>`));
-  if(bnct.detail.length) bc.appendChild(el(`<div class="detailblock">${esc(bnct.detail.join("\n"))}</div>`));
+  const bnctTbl=bnctTable(chkRow); if(bnctTbl) bc.appendChild(bnctTbl);
   if(checkedAt) bc.appendChild(el(`<div class="metaline" style="margin-top:8px">Diperiksa: ${fmtDT(checkedAt)}</div>`));
   w.appendChild(bc);
 
@@ -515,6 +582,8 @@ async function renderDetail(id){
     edit.onclick=async ()=>{ const v=await askInput({title:"Nomor kontainer",value:c.container_no}); if(!v) return; const num=v.trim().toUpperCase(); if(!num||num===c.container_no) return;
       const {error}=await sb.from("containers").update({container_no:num,last_site:null,last_status_code:null,last_status_text:null,last_checked_at:null}).eq("id",c.id);
       if(error){toast("Gagal: "+error.message);return;} toast("Nomor diubah"); nav("detail",id); };
+    const pf=folderUrl(c.photo_folder_ref);
+    if(pf) row.appendChild(el(`<a class="linkbtn" href="${pf}" target="_blank" rel="noopener" style="text-decoration:none">Foto</a>`));
     row.appendChild(copy); row.appendChild(edit); cc.appendChild(row);
   }
   if(conts.length){
@@ -552,6 +621,14 @@ async function markComplete(s){
   await sb.from("audit_log").insert({id:uuid(),created_at:nowIso(),actor:state.email,action:"shipment_completed",shipment_id:s.id,label:`${s.exporter_code}${s.sequence_number}`,detail:vessel});
   state.active=state.all=null; toast("Ditandai selesai"); nav("list");
 }
+async function deleteShipment(s){
+  if(!confirm(`Hapus pengiriman ${s.exporter_code}${s.sequence_number}? Baris database + item/kontainer terkait ikut terhapus. Folder Google Drive TIDAK tersentuh.`)) return;
+  const label=`${s.exporter_code}${s.sequence_number}`, vessel=[s.vessel_name,s.voyage].filter(Boolean).join(" ");
+  const {error}=await sb.from("shipments").delete().eq("id",s.id);
+  if(error){toast("Gagal: "+error.message);return;}
+  await sb.from("audit_log").insert({id:uuid(),created_at:nowIso(),actor:state.email,action:"shipment_deleted",shipment_id:s.id,label,detail:vessel});
+  state.active=state.all=null; toast("Pengiriman dihapus"); nav("list");
+}
 
 // -- MONITOR (active voyages grouped by BNCT phase, with shipment readiness) --
 const PHASE_ORDER = [
@@ -565,14 +642,6 @@ function phaseOf(mv){
   if(r&&r.found){ if(r.phase==="alongside") return r.departing?"departing":"berthed"; if(r.phase==="schedule") return "scheduled"; }
   if(mv){ const st=stateOf(mv); if(st==="departed") return "departed"; if(st==="berthed") return "berthed"; if(st==="scheduled") return "scheduled"; }
   return "notfound";
-}
-function opsLine(r){
-  if(!r||!r.found) return "";
-  if(r.phase==="schedule"){ const b=[]; if(r.open_stacking) b.push(`Open Stack ${r.open_stacking}`); if(r.clossing) b.push(`Clossing ${r.clossing}`); if(r.etd) b.push(`ETD BNCT ${r.etd}`); return b.join(" · "); }
-  const b=[`Loading sisa ${fmtv(r.loading_remain)}/${fmtv(r.loading_plan)}${pct(r.loading_actual,r.loading_plan)}`];
-  if(r.discharge_remain!=null&&r.discharge_remain!=="") b.push(`Disc sisa ${fmtv(r.discharge_remain)}`);
-  if(r.atb) b.push(`ATB ${r.atb}`);
-  return b.join(" · ");
 }
 function shipSort(a,b){ return (a.exporter_code||"").localeCompare(b.exporter_code||"")||((a.sequence_number||0)-(b.sequence_number||0)); }
 function shipMiniRow(s){
@@ -617,15 +686,16 @@ async function renderMonitor(){
     const nships=list.reduce((n,v)=>n+v.ships.length,0);
     w.appendChild(el(`<div class="grouphdr" style="color:${color}">${label} · ${nships}</div>`));
     for(const v of list){
-      const r=readingOf(v.mv); const ops=opsLine(r); const d=daysUntil(v.etd);
+      const r=readingOf(v.mv); const d=daysUntil(v.etd);
       const card=el(`<div class="card">
         <div style="display:flex;align-items:center;gap:8px">
           <span class="dot" style="background:${color}"></span>
           <b style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(v.vessel)} · ${esc(v.voyage)}</b>
           <span class="etd ${d!=null&&d<=3?"soon":""}">${fmtDate(v.etd)}${d!=null&&d>=0?` · ${d}h`:""}</span>
         </div>
-        ${ops?`<div class="metaline" style="margin-top:5px">${esc(ops)}</div>`:""}
+        <div class="bnctslot"></div>
         <div class="holder" style="margin-top:8px"></div></div>`);
+      const tbl=bnctTable(r); if(tbl) card.querySelector(".bnctslot").appendChild(tbl);
       const holder=card.querySelector(".holder");
       v.ships.sort(shipSort).forEach(s=>holder.appendChild(shipMiniRow(s)));
       w.appendChild(card);
@@ -719,6 +789,7 @@ function renderMore(){
   const w=el(`<div class="card menu" style="padding:0">
     <div class="row tap" data-go="forum"><span class="ic">💬</span>Forum</div>
     <div class="row tap" data-go="vessels"><span class="ic">🚢</span>Kelola Kapal</div>
+    <div class="row tap" data-go="scan"><span class="ic">🔄</span>Pindai Folder</div>
     <div class="row tap" data-go="history"><span class="ic">🗂️</span>Riwayat</div>
     <div class="row tap" data-go="search"><span class="ic">🔍</span>Cari</div>
     <div class="row tap" data-go="audit"><span class="ic">📝</span>Log Aktivitas</div>
@@ -773,8 +844,26 @@ async function renderSettings(){
   const srow=el(`<div class="setrow"><div class="t">Topik langganan<small style="word-break:break-all">${esc(sub)}</small></div></div>`);
   const cp=el(`<button class="iconbtn">Salin</button>`); cp.onclick=()=>navigator.clipboard.writeText(sub).then(()=>toast("Disalin"));
   srow.appendChild(cp); nt.appendChild(srow);
+  const nsrow=el(`<div class="setrow"><div class="t">Server ntfy<small>Default ${esc(NTFY_SERVER)} — ubah jika pakai server sendiri.</small></div></div>`);
+  const nsInp=el(`<input value="${esc((await getSetting("ntfy_server"))||NTFY_SERVER)}" style="width:150px;padding:8px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-size:14px">`);
+  nsInp.onchange=async ()=>{ const v=nsInp.value.trim()||NTFY_SERVER; nsInp.value=v; const {error}=await setSetting("ntfy_server",v); toast(error?"Gagal: "+error.message:"Server ntfy disimpan"); };
+  nsrow.appendChild(nsInp); nt.appendChild(nsrow);
   nt.appendChild(el(`<div class="metaline" style="margin-top:10px">Pasang aplikasi <b>ntfy</b> (App Store / Play Store), lalu subscribe ke topik <b>${esc(NTFY_TOPIC)}</b> untuk menerima alert di layar kunci — tanpa membuka aplikasi ini.</div>`));
   w.appendChild(nt);
+
+  // Pemantauan Server (cadence — honored by the worker each cycle)
+  w.appendChild(el(`<div class="sectlabel">Pemantauan Server</div>`));
+  const mon=el(`<div class="card"></div>`);
+  const mkNum=(label,hint,val,key,min,max)=>{
+    const row=el(`<div class="setrow"><div class="t">${label}<small>${hint}</small></div></div>`);
+    const inp=el(`<input type="number" min="${min}" max="${max}" value="${esc(val)}" style="width:76px;text-align:right;padding:8px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-size:15px">`);
+    inp.onchange=async ()=>{ let n=parseInt(inp.value,10); if(isNaN(n)){ inp.value=val; return; } n=Math.max(min,Math.min(max,n)); inp.value=String(n); const {error}=await setSetting(key,String(n)); toast(error?"Gagal: "+error.message:"Interval disimpan"); };
+    row.appendChild(inp); return row;
+  };
+  mon.appendChild(mkNum("Poll BNCT (menit)","Frekuensi cek status kapal & kontainer.",(await getSetting("poll_interval_minutes"))||"5","poll_interval_minutes",1,120));
+  mon.appendChild(mkNum("Pindai Drive (menit)","Frekuensi pindai folder untuk pengiriman baru.",(await getSetting("scan_interval_minutes"))||"30","scan_interval_minutes",5,240));
+  mon.appendChild(el(`<div class="metaline" style="margin-top:10px">Perubahan berlaku pada siklus server berikutnya.</div>`));
+  w.appendChild(mon);
 
   // Status Server
   w.appendChild(el(`<div class="sectlabel">Status Server</div>`));
@@ -978,6 +1067,7 @@ async function renderForum(){
   if(!tops.length) w.appendChild(el(`<div class="empty">Belum ada catatan. Tulis yang pertama untuk tim.</div>`));
   for(const n of tops) w.appendChild(noteCard(n, {active, shipBy, replies:replyCount[n.id]||0, compact:true}));
   $("views").innerHTML=""; $("views").appendChild(w);
+  localStorage.setItem("forumSeen", nowIso()); refreshForumBadge();   // mark forum read
 }
 async function renderNoteThread(id){
   const [{data:notes, error}, active, all] = await Promise.all([
@@ -1049,6 +1139,45 @@ async function renderManageVessels(){
     w.appendChild(card);
   }
   $("views").innerHTML=""; $("views").appendChild(w);
+}
+
+// -- PINDAI FOLDER (request an on-demand scan; read the worker's report) ----
+function scanReportCard(raw){
+  let r=null; try { r=raw?JSON.parse(raw):null; } catch {}
+  if(!r) return el(`<div class="empty">Belum ada laporan pindai.</div>`);
+  const line=(title,arr,color)=> (arr&&arr.length)?`<div class="kv"><b style="color:${color};min-width:130px">${title}</b><span>${esc(arr.join(", "))}</span></div>`:"";
+  return el(`<div class="card">
+    <div class="metaline">Pindai terakhir: ${r.at?fmtDT(r.at):"—"}</div>
+    ${r.summary?`<div style="font-weight:600;margin:6px 0">${esc(r.summary)}</div>`:""}
+    ${line("Baru diimpor",r.imported,"#16a34a")}
+    ${line("Perubahan kapal",r.vessel_changes,"#2563eb")}
+    ${line("Selesai (dilewati)",r.completed,"#6b7280")}
+    ${line("Peringatan",r.warnings,"#d97706")}
+    ${!(r.imported||[]).length&&!(r.vessel_changes||[]).length?`<div class="metaline" style="margin-top:6px">Tidak ada pengiriman baru.</div>`:""}
+  </div>`);
+}
+async function renderScan(){
+  const w=document.createElement("div");
+  const btn=el(`<button class="primary" style="margin-bottom:6px">🔄 Pindai Sekarang</button>`);
+  const iv=(await getSetting("scan_interval_minutes"))||"30";
+  w.appendChild(btn);
+  w.appendChild(el(`<div class="metaline" style="margin:0 2px 14px">Server memindai folder Drive otomatis tiap ${esc(iv)} menit. Tombol ini memicu pindai segera — hasilnya muncul dalam ~1 menit.</div>`));
+  const rep=el(`<div></div>`); w.appendChild(rep);
+  $("views").innerHTML=""; $("views").appendChild(w);
+  const draw=async ()=>{ rep.innerHTML=""; rep.appendChild(scanReportCard(await getSetting("last_scan_report"))); };
+  btn.onclick=async ()=>{
+    btn.disabled=true; btn.textContent="Meminta…";
+    const before=await getSetting("last_scan_report");
+    const {error}=await setSetting("scan_requested_at", nowIso());
+    if(error){ toast("Gagal: "+error.message); btn.disabled=false; btn.textContent="🔄 Pindai Sekarang"; return; }
+    toast("Permintaan pindai dikirim");
+    let tries=0;
+    const poll=setInterval(async ()=>{ tries++;
+      const now=await getSetting("last_scan_report");
+      if(now!==before || tries>=20){ clearInterval(poll); btn.disabled=false; btn.textContent="🔄 Pindai Sekarang"; draw(); if(now!==before) toast("Pindai selesai"); }
+    }, 4000);
+  };
+  draw();
 }
 
 if("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(()=>{});
