@@ -16,8 +16,10 @@ Run:  python -m bot_kalung.server          # loop forever
 
 from __future__ import annotations
 
+import json
 import logging
 import os
+import re
 import sys
 import time
 from datetime import datetime
@@ -90,6 +92,70 @@ def _scan_once(db, drive_client) -> None:
              len(result.completed))
     for warning in result.warnings:
         log.warning("scan: %s", warning)
+    _store_scan_report(db, result)
+    try:
+        _resolve_photo_folders(db, drive_client)
+    except Exception:      # noqa: BLE001 - photo linking must never fail a scan
+        log.exception("photo resolution failed")
+
+
+def _store_scan_report(db, result) -> None:
+    """Persist the scan outcome to `settings.last_scan_report` (JSON) so the PWA's
+    Pindai Folder screen can show it."""
+    report = {
+        "at": datetime.now().isoformat(timespec="seconds"),
+        "summary": result.summary,
+        "imported": list(result.imported),
+        "vessel_changes": list(result.vessel_changes),
+        "completed": list(result.completed),
+        "warnings": list(result.warnings),
+    }
+    try:
+        Settings(db).set("last_scan_report", json.dumps(report))
+    except Exception:      # noqa: BLE001 - reporting is best-effort
+        log.exception("could not store scan report")
+
+
+def _resolve_photo_folders(db, drive_client) -> None:
+    """Best-effort: match each active shipment's containers to their photo subfolder
+    under the shipment's 'Foto' dir and store the Drive ref, so the PWA can link to
+    it. Only fills containers without a ref yet, so repeat scans are near-free."""
+    rows = db.query(
+        "SELECT c.id, c.container_no, s.folder_path FROM containers c "
+        "JOIN shipments s ON s.id = c.shipment_id "
+        "WHERE s.status='active' AND c.photo_folder_ref IS NULL "
+        "AND s.folder_path IS NOT NULL")
+    if not rows:
+        return
+    by_folder: dict[str, list] = {}
+    for row in rows:
+        by_folder.setdefault(row["folder_path"], []).append(row)
+
+    def norm(value: str | None) -> str:
+        return re.sub(r"[^A-Z0-9]", "", (value or "").upper())
+
+    filled = 0
+    for folder_ref, conts in by_folder.items():
+        if not drive_api.is_drive_ref(folder_ref):
+            continue
+        try:
+            node = drive_api.node_from_ref(folder_ref, drive_client)
+            foto = next((ch for ch in node.iterdir()
+                         if ch.is_dir() and ch.name.strip().lower() == "foto"), None)
+            if foto is None:
+                continue
+            subdirs = [ch for ch in foto.iterdir() if ch.is_dir()]
+        except Exception:      # noqa: BLE001 - one bad folder must not stop the rest
+            continue
+        for row in conts:
+            number = norm(row["container_no"])
+            match = next((d for d in subdirs if number and number in norm(d.name)), None)
+            if match is not None:
+                db.execute("UPDATE containers SET photo_folder_ref=? WHERE id=?",
+                           (match.ref, row["id"]))
+                filled += 1
+    if filled:
+        log.info("photos: linked %d container folder(s)", filled)
 
 
 def _poll_once(db, bnct_client) -> None:
@@ -180,6 +246,19 @@ def _safe(fn, label: str) -> None:
         log.exception("%s failed: %s", label, exc)
 
 
+def _interval(settings, key: str, default_secs: int) -> float:
+    """Cadence in seconds from the settings table (stored in minutes), so the PWA
+    can retune it, falling back to the env/default. A bad value never stalls the
+    loop."""
+    try:
+        raw = settings.get(key)
+        if raw:
+            return max(60.0, int(raw) * 60)
+    except Exception:      # noqa: BLE001
+        pass
+    return default_secs
+
+
 def main() -> None:
     logging.basicConfig(
         level=logging.INFO,
@@ -195,17 +274,32 @@ def main() -> None:
         _safe(lambda: _scan_once(db, drive_client), "scan")
         return
 
-    log.info("worker started (scan every %ds, poll every %ds)",
+    settings = Settings(db)
+    log.info("worker started (default scan every %ds, poll every %ds; "
+             "intervals overridable from the PWA)",
              cfg["scan_interval"], cfg["poll_interval"])
     last_scan = last_poll = 0.0
+    try:
+        last_scan_req = settings.get("scan_requested_at") or ""   # ignore a stale one at boot
+    except Exception:      # noqa: BLE001
+        last_scan_req = ""
     while True:
         now = time.monotonic()
-        if now - last_poll >= cfg["poll_interval"]:
+        poll_interval = _interval(settings, "poll_interval_minutes", cfg["poll_interval"])
+        scan_interval = _interval(settings, "scan_interval_minutes", cfg["scan_interval"])
+        if now - last_poll >= poll_interval:
             _safe(lambda: _poll_once(db, bnct_client), "poll")
             last_poll = time.monotonic()
-        if now - last_scan >= cfg["scan_interval"]:
+        try:
+            scan_req = settings.get("scan_requested_at") or ""    # on-demand from the PWA
+        except Exception:      # noqa: BLE001
+            scan_req = last_scan_req
+        if now - last_scan >= scan_interval or scan_req != last_scan_req:
+            if scan_req != last_scan_req:
+                log.info("scan: on-demand request (%s)", scan_req)
             _safe(lambda: _scan_once(db, drive_client), "scan")
             last_scan = time.monotonic()
+            last_scan_req = scan_req
         time.sleep(20)
 
 
