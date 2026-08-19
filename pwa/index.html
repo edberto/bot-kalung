@@ -88,7 +88,7 @@
   #login h2 { margin:0 0 4px; font-size:24px; }
   #login p { margin:0 0 20px; }
   .field { margin-bottom:12px; }
-  .field input, select.big {
+  .field input, input.big, select.big {
     width:100%; padding:12px 14px; font-size:16px; border:1px solid var(--border);
     border-radius:10px; background:var(--surface); color:var(--text); }
   .field input:focus { outline:none; border-color:var(--accent); }
@@ -194,7 +194,7 @@
   /* modal */
   .modal-bg { position:fixed; inset:0; background:rgba(15,23,42,.45); z-index:70; display:flex;
     align-items:center; justify-content:center; padding:24px; }
-  .modal { background:var(--surface); border-radius:14px; padding:18px; width:100%; max-width:360px; }
+  .modal { background:var(--surface); border-radius:14px; padding:18px; width:100%; max-width:360px; max-height:85vh; overflow-y:auto; }
   .modal h3 { margin:0 0 12px; font-size:17px; }
   .modal input { width:100%; padding:11px 12px; font-size:16px; border:1px solid var(--border);
     border-radius:10px; margin-bottom:14px; background:var(--surface); color:var(--text); }
@@ -374,8 +374,8 @@ async function refreshBadge(){
 // -- router ---------------------------------------------------------------
 const TITLES = { monitor:"Monitor", list:"Pengiriman Aktif", calendar:"Kalender",
   notif:"Notifikasi", more:"Lainnya", history:"Riwayat", search:"Cari", audit:"Log Aktivitas",
-  settings:"Pengaturan", detail:"Pengiriman" };
-const SUBVIEWS = new Set(["detail","history","search","audit","settings"]);
+  settings:"Pengaturan", forum:"Forum", note:"Catatan", vessels:"Kelola Kapal", detail:"Pengiriman" };
+const SUBVIEWS = new Set(["detail","history","search","audit","settings","forum","note","vessels"]);
 
 async function nav(view, param){
   state.view = view;
@@ -395,6 +395,9 @@ async function nav(view, param){
     else if(view==="search") await renderSearch();
     else if(view==="audit") await renderAudit();
     else if(view==="settings") await renderSettings();
+    else if(view==="forum") await renderForum();
+    else if(view==="note") await renderNoteThread(param);
+    else if(view==="vessels") await renderManageVessels();
   } catch(e){ $("views").innerHTML = `<div class="empty">Gagal memuat: ${esc(e.message||e)}</div>`; }
 }
 function openDetail(id){ state.detailFrom = SUBVIEWS.has(state.view)?state.detailFrom:state.view; nav("detail", id); }
@@ -598,6 +601,9 @@ async function renderMonitor(){
   const byPhase={};
   for(const k in voyages){ const v=voyages[k]; v.phase=phaseOf(v.mv); (byPhase[v.phase]=byPhase[v.phase]||[]).push(v); }
   const w=document.createElement("div");
+  const manage=el(`<div class="savebar" style="justify-content:flex-end;margin:-2px 0 6px"><button class="iconbtn">🚢 Kelola Kapal</button></div>`);
+  manage.querySelector("button").onclick=()=>nav("vessels");
+  w.appendChild(manage);
   for(const [key,label,color] of PHASE_ORDER){
     if(key==="novessel"){
       if(!novessel.length) continue;
@@ -711,6 +717,8 @@ async function renderNotif(){
 // -- MORE menu ------------------------------------------------------------
 function renderMore(){
   const w=el(`<div class="card menu" style="padding:0">
+    <div class="row tap" data-go="forum"><span class="ic">💬</span>Forum</div>
+    <div class="row tap" data-go="vessels"><span class="ic">🚢</span>Kelola Kapal</div>
     <div class="row tap" data-go="history"><span class="ic">🗂️</span>Riwayat</div>
     <div class="row tap" data-go="search"><span class="ic">🔍</span>Cari</div>
     <div class="row tap" data-go="audit"><span class="ic">📝</span>Log Aktivitas</div>
@@ -869,6 +877,180 @@ async function renderAudit(){
 }
 
 applyTheme(localStorage.getItem("theme")||"system");
+// -- FORUM (shared team notes) --------------------------------------------
+function noteAuthor(email){ return (email||"—").split("@")[0]; }
+function linkChipHtml(n, active, shipBy){
+  if(n.link_type==="shipment"){
+    const s=shipBy[n.shipment_id];
+    const label = s?`${s.exporter_code}${s.sequence_number}`:"pengiriman";
+    const vv = s&&s.vessel_name?` · ${esc([s.vessel_name,s.voyage].filter(Boolean).join(" "))}`:"";
+    return `<span class="chip" data-open="s:${esc(n.shipment_id||"")}">📦 ${esc(label)}${vv}</span>`;
+  }
+  if(n.link_type==="voyage"){
+    const ships=active.filter(s=>s.vessel_name&&s.voyage&&norm(s.vessel_name)===norm(n.vessel_name)&&norm(s.voyage)===norm(n.voyage));
+    return `<span class="chip" data-open="monitor">🚢 ${esc(n.vessel_name)} · ${esc(n.voyage)}</span>`+
+      ships.map(s=>`<span class="chip" data-open="s:${s.id}">${esc(s.exporter_code)}${s.sequence_number}</span>`).join("");
+  }
+  return "";
+}
+function noteCard(n, {active, shipBy, replies=0, compact=false}){
+  const mine = n.author_email && n.author_email===state.email;
+  const author = noteAuthor(n.author_email);
+  const card=el(`<div class="card ${compact?"tap":""}"></div>`);
+  card.appendChild(el(`<div style="display:flex;align-items:center;gap:8px">
+    <span class="dot" style="background:${badgeColor(author.toUpperCase())}"></span><b>${esc(author)}</b>
+    <span class="metaline" style="margin-left:auto">${fmtDT(n.created_at)}${n.edited_at?" · diedit":""}</span></div>`));
+  card.appendChild(el(`<div style="white-space:pre-wrap;margin-top:6px">${esc(n.body)}</div>`));
+  const chips=linkChipHtml(n, active, shipBy);
+  if(chips) card.appendChild(el(`<div style="margin-top:8px">${chips}</div>`));
+  const foot=el(`<div class="btnrow" style="margin-top:10px;align-items:center"></div>`);
+  if(compact) foot.appendChild(el(`<span class="metaline">💬 ${replies} balasan</span>`));
+  if(mine){
+    const ed=el(`<button class="linkbtn">Ubah</button>`);
+    ed.onclick=async (e)=>{ e.stopPropagation(); const d=await noteModal(n); if(!d) return;
+      const {error}=await sb.from("board_notes").update({body:d.body,link_type:d.link_type,shipment_id:d.shipment_id,vessel_name:d.vessel_name,voyage:d.voyage,edited_at:nowIso()}).eq("id",n.id);
+      if(error){toast("Gagal: "+error.message);return;} toast("Catatan diperbarui"); nav(state.view==="note"?"note":"forum", n.id); };
+    const del=el(`<button class="linkbtn" style="color:var(--danger)">Hapus</button>`);
+    del.onclick=async (e)=>{ e.stopPropagation(); if(!confirm("Hapus catatan ini beserta balasannya?")) return;
+      await sb.from("board_notes").delete().or(`id.eq.${n.id},parent_id.eq.${n.id}`); toast("Dihapus"); nav("forum"); };
+    foot.appendChild(ed); foot.appendChild(del);
+  }
+  if(foot.children.length) card.appendChild(foot);
+  card.querySelectorAll("[data-open]").forEach(ch=>ch.onclick=(e)=>{ e.stopPropagation(); const v=ch.dataset.open;
+    if(v==="monitor") nav("monitor"); else if(v.startsWith("s:")) openDetail(v.slice(2)); });
+  if(compact) card.onclick=()=>openNote(n.id);
+  return card;
+}
+function openNote(id){ state.detailFrom="forum"; nav("note", id); }
+
+function noteModal(existing){
+  return getActive().then(active=>new Promise((resolve)=>{
+    const voyMap={};
+    for(const s of active){ if(s.vessel_name&&s.voyage){ const k=norm(s.vessel_name)+"|"+norm(s.voyage); (voyMap[k]=voyMap[k]||{vessel:s.vessel_name,voyage:s.voyage,n:0}).n++; } }
+    const shipOpts=active.slice().sort(shipSort).map(s=>`<option value="s:${s.id}">${esc(s.exporter_code)}${s.sequence_number} — ${esc([s.vessel_name,s.voyage].filter(Boolean).join(" ")||"tanpa kapal")}</option>`).join("");
+    const voyOpts=Object.values(voyMap).map(v=>`<option value="v:${esc(v.vessel)}|${esc(v.voyage)}">${esc(v.vessel)} · ${esc(v.voyage)} (${v.n})</option>`).join("");
+    const bg=el(`<div class="modal-bg"><div class="modal">
+      <h3>${existing?"Ubah catatan":"Catatan baru"}</h3>
+      <textarea id="nmBody" style="min-height:96px" placeholder="Tulis catatan untuk tim…"></textarea>
+      <div class="muted" style="margin:10px 2px 4px;font-size:12px">Tautkan ke (opsional)</div>
+      <select id="nmType" class="big" style="margin-bottom:10px">
+        <option value="">Tidak ditautkan</option><option value="shipment">Pengiriman</option><option value="voyage">Voyage</option></select>
+      <select id="nmRes" class="big hidden" style="margin-bottom:14px"></select>
+      <div class="acts"><button class="iconbtn" data-x>Batal</button><button class="iconbtn" style="color:var(--accent)" data-ok>Simpan</button></div>
+    </div></div>`);
+    const body=bg.querySelector("#nmBody"), type=bg.querySelector("#nmType"), res=bg.querySelector("#nmRes");
+    body.value=existing?existing.body:"";
+    function syncRes(){
+      if(type.value==="shipment"){ res.innerHTML=shipOpts; res.classList.remove("hidden"); }
+      else if(type.value==="voyage"){ res.innerHTML=voyOpts; res.classList.remove("hidden"); }
+      else res.classList.add("hidden");
+    }
+    if(existing&&existing.link_type==="shipment"){ type.value="shipment"; syncRes(); res.value="s:"+existing.shipment_id; }
+    else if(existing&&existing.link_type==="voyage"){ type.value="voyage"; syncRes(); res.value="v:"+existing.vessel_name+"|"+existing.voyage; }
+    else syncRes();
+    type.onchange=syncRes;
+    const done=(v)=>{ bg.remove(); resolve(v); };
+    bg.querySelector("[data-x]").onclick=()=>done(null);
+    bg.querySelector("[data-ok]").onclick=()=>{
+      const text=body.value.trim(); if(!text){ toast("Catatan kosong"); return; }
+      const out={ body:text, link_type:null, shipment_id:null, vessel_name:null, voyage:null };
+      if(type.value==="shipment" && res.value.startsWith("s:")){ out.link_type="shipment"; out.shipment_id=res.value.slice(2); }
+      else if(type.value==="voyage" && res.value.startsWith("v:")){ out.link_type="voyage"; const p=res.value.slice(2).split("|"); out.vessel_name=p[0]; out.voyage=p[1]; }
+      done(out);
+    };
+    bg.onclick=(e)=>{ if(e.target===bg) done(null); };
+    document.body.appendChild(bg); setTimeout(()=>body.focus(),50);
+  }));
+}
+async function renderForum(){
+  const [{data:notes, error}, active, all] = await Promise.all([
+    sb.from("board_notes").select("*").order("created_at",{ascending:false}), getActive(), getAllShipments() ]);
+  if(error) throw error;
+  const shipBy={}; all.forEach(s=>shipBy[s.id]=s);
+  const tops=(notes||[]).filter(n=>!n.parent_id);
+  const replyCount={}; (notes||[]).forEach(n=>{ if(n.parent_id) replyCount[n.parent_id]=(replyCount[n.parent_id]||0)+1; });
+  const w=document.createElement("div");
+  const compose=el(`<button class="primary" style="margin-bottom:14px">✏️  Tulis catatan</button>`);
+  compose.onclick=async ()=>{ const d=await noteModal(null); if(!d) return;
+    const {error}=await sb.from("board_notes").insert({id:"note:"+uuid(),author_email:state.email,body:d.body,link_type:d.link_type,shipment_id:d.shipment_id,vessel_name:d.vessel_name,voyage:d.voyage,created_at:nowIso()});
+    if(error){toast("Gagal: "+error.message);return;} toast("Catatan terkirim"); nav("forum"); };
+  w.appendChild(compose);
+  if(!tops.length) w.appendChild(el(`<div class="empty">Belum ada catatan. Tulis yang pertama untuk tim.</div>`));
+  for(const n of tops) w.appendChild(noteCard(n, {active, shipBy, replies:replyCount[n.id]||0, compact:true}));
+  $("views").innerHTML=""; $("views").appendChild(w);
+}
+async function renderNoteThread(id){
+  const [{data:notes, error}, active, all] = await Promise.all([
+    sb.from("board_notes").select("*").or(`id.eq.${id},parent_id.eq.${id}`).order("created_at",{ascending:true}),
+    getActive(), getAllShipments() ]);
+  if(error) throw error;
+  const note=(notes||[]).find(n=>n.id===id);
+  if(!note){ $("views").innerHTML=`<div class="empty">Catatan tidak ditemukan.</div>`; return; }
+  const replies=(notes||[]).filter(n=>n.parent_id===id);
+  const shipBy={}; all.forEach(s=>shipBy[s.id]=s);
+  const w=document.createElement("div");
+  w.appendChild(noteCard(note, {active, shipBy, compact:false}));
+  w.appendChild(el(`<div class="sectlabel">${replies.length} Balasan</div>`));
+  for(const r of replies){
+    const mine=r.author_email===state.email; const author=noteAuthor(r.author_email);
+    const rc=el(`<div class="card" style="padding:11px 14px"><div style="display:flex;align-items:center;gap:8px">
+      <span class="dot" style="background:${badgeColor(author.toUpperCase())}"></span><b>${esc(author)}</b>
+      <span class="metaline" style="margin-left:auto">${fmtDT(r.created_at)}</span></div>
+      <div style="white-space:pre-wrap;margin-top:6px">${esc(r.body)}</div></div>`);
+    if(mine){ const del=el(`<button class="linkbtn" style="color:var(--danger)">Hapus</button>`);
+      del.onclick=async ()=>{ if(!confirm("Hapus balasan?")) return; await sb.from("board_notes").delete().eq("id",r.id); toast("Dihapus"); nav("note",id); };
+      const foot=el(`<div class="savebar" style="justify-content:flex-start;margin-top:6px"></div>`); foot.appendChild(del); rc.appendChild(foot); }
+    w.appendChild(rc);
+  }
+  const comp=el(`<div class="card"><textarea id="replyBox" placeholder="Tulis balasan…"></textarea><div class="savebar"><button class="iconbtn" style="color:var(--accent)">Kirim Balasan</button></div></div>`);
+  comp.querySelector("button").onclick=async ()=>{ const b=comp.querySelector("#replyBox").value.trim(); if(!b){toast("Balasan kosong");return;}
+    const {error}=await sb.from("board_notes").insert({id:"reply:"+uuid(),parent_id:id,author_email:state.email,body:b,created_at:nowIso()});
+    if(error){toast("Gagal: "+error.message);return;} toast("Balasan terkirim"); nav("note",id); };
+  w.appendChild(comp);
+  $("views").innerHTML=""; $("views").appendChild(w);
+}
+
+// -- KELOLA KAPAL (manage monitored vessels) ------------------------------
+const MV_STATE = { notfound:["Belum Terjadwal","#6b7280"], scheduled:["Terjadwal","#2563eb"],
+  berthed:["Sudah Sandar","#059669"], departed:["Sudah Berangkat","#b91c1c"] };
+async function renderManageVessels(){
+  const { data:vessels, error } = await sb.from("monitored_vessels")
+    .select("id,vessel_name,voyage,state,last_phase,last_found,last_departing").order("vessel_name");
+  if(error) throw error;
+  const groups={}; (vessels||[]).forEach(v=>(groups[v.vessel_name]=groups[v.vessel_name]||[]).push(v));
+  const w=document.createElement("div");
+  const add=el(`<div class="card">
+    <div class="sectlabel" style="margin-top:0">Tambah kapal</div>
+    <input id="mvName" class="big" placeholder="Nama kapal" style="margin-bottom:8px">
+    <input id="mvVoy" class="big" placeholder="Voyage awal (mis. 184E)" style="margin-bottom:10px">
+    <div class="savebar" style="justify-content:flex-start;margin-top:0"><button class="iconbtn" style="color:var(--accent)">Tambah</button></div>
+    <div class="metaline" style="margin-top:8px">Server mengisi 3 voyage berikutnya otomatis pada pemeriksaan berikutnya.</div></div>`);
+  add.querySelector("button").onclick=async ()=>{
+    const name=w.querySelector("#mvName").value.trim(), voy=w.querySelector("#mvVoy").value.trim();
+    if(!name||!voy){ toast("Isi nama & voyage"); return; }
+    const {error}=await sb.from("monitored_vessels").insert({id:"mv:"+uuid(),vessel_name:name,voyage:voy,created_at:nowIso()});
+    if(error){toast("Gagal: "+error.message);return;} toast("Kapal ditambahkan"); nav("vessels"); };
+  w.appendChild(add);
+  const names=Object.keys(groups).sort((a,b)=>a.toLowerCase().localeCompare(b.toLowerCase()));
+  if(!names.length) w.appendChild(el(`<div class="empty">Belum ada kapal yang dipantau.</div>`));
+  for(const name of names){
+    const rows=groups[name].sort((a,b)=>{ const va=(a.voyage||"").match(/\d+/), vb=(b.voyage||"").match(/\d+/); return (va?+va[0]:-1)-(vb?+vb[0]:-1)||(a.voyage||"").localeCompare(b.voyage||""); });
+    const card=el(`<div class="card"></div>`);
+    const head=el(`<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><b style="flex:1">${esc(name)}</b><button class="linkbtn" style="color:var(--danger)">Hapus Kapal</button></div>`);
+    head.querySelector("button").onclick=async ()=>{ if(!confirm(`Hapus kapal ${name} dan semua voyage-nya?`)) return; await sb.from("monitored_vessels").delete().eq("vessel_name",name); toast("Kapal dihapus"); nav("vessels"); };
+    card.appendChild(head);
+    for(const v of rows){
+      const st=stateOf(v); const meta=MV_STATE[st]||["?","#6b7280"];
+      const row=el(`<div class="vrow"><span class="statuspill" style="background:${meta[1]}">${meta[0]}</span>
+        <b style="flex:1">${esc(v.voyage||"—")}</b><button class="linkbtn" style="color:var(--danger)">✕</button></div>`);
+      row.querySelector("button").onclick=async ()=>{ if(!confirm(`Hapus voyage ${v.voyage}?`)) return; await sb.from("monitored_vessels").delete().eq("id",v.id); toast("Voyage dihapus"); nav("vessels"); };
+      card.appendChild(row);
+    }
+    w.appendChild(card);
+  }
+  $("views").innerHTML=""; $("views").appendChild(w);
+}
+
 if("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(()=>{});
 boot();
 </script>

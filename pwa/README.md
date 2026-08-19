@@ -20,9 +20,13 @@ HTTPS. Five tabs across the bottom:
 - **Kalender** — month grid of ETDs + action-item due dates, tap a day for its
   agenda.
 - **Notif** — notification feed with an unread badge, mark-read, tap-to-shipment.
-- **Lainnya** — Riwayat (completed shipments + filters), Cari (container / party
-  search), Log Aktivitas (audit trail), **Pengaturan** (dark mode, account /
-  change password, ntfy toggle, server status), and sign-out.
+- **Lainnya** — **Forum** (shared team notes: post a note, optionally tie it to a
+  shipment or a voyage — voyage notes list the impacted shipments — and reply in a
+  thread; everyone on the team sees them), **Kelola Kapal** (add/remove monitored
+  vessels + voyages; the server fills each vessel's 3-voyage window on its next
+  poll), Riwayat (completed shipments + filters), Cari (container / party search),
+  Log Aktivitas (audit trail), **Pengaturan** (dark mode, account / change
+  password, ntfy toggle, server status), and sign-out.
 
 Staying **desktop-only** (by design): delete shipment & resequence (they rewrite
 Drive folders / Excel / PDFs), open-Excel-locally, and manual scan (the server
