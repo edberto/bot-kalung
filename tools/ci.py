@@ -5,19 +5,24 @@ Microsoft Excel (COM) and the team's Google Drive mounted at G:\\. So the
 pipeline runs on a developer's machine and degrades gracefully where those are
 absent (those tests report SKIP, not FAIL).
 
+Tests are split into two suites (see tests/README.md):
+    tests/server/   server + shared code — no PyQt6/Excel, runs on the server deps
+    tests/desktop/  the PyQt6 UI app + desktop-only services
+
 Stages, in order:
     lint    pyflakes over the package, app.py, tools/ and tests/
-    test    every tests/test_*.py, classified PASS / SKIP / FAIL
+    test    every tests/{server,desktop}/test_*.py, classified PASS / SKIP / FAIL
     schema  schema-migration verification (and optional --migrate of a real DB)
     build   PyInstaller build + the packaged exe's --selftest   [opt-in]
 
 Usage:
-    python tools/ci.py                 # lint + test + schema (the CI gate)
-    python tools/ci.py --fast          # lint + fast tests + schema (git hook)
-    python tools/ci.py --build         # everything, including the exe build
-    python tools/ci.py --all           # alias for --build
-    python tools/ci.py --migrate PATH  # also apply the schema to a real DB
-    python tools/ci.py --only test     # run a single stage
+    python tools/ci.py                        # lint + test + schema (the CI gate)
+    python tools/ci.py --fast                 # lint + fast tests + schema (git hook)
+    python tools/ci.py --build                # everything, including the exe build
+    python tools/ci.py --all                  # alias for --build
+    python tools/ci.py --migrate PATH         # also apply the schema to a real DB
+    python tools/ci.py --only test            # run a single stage
+    python tools/ci.py --only test --suite server   # just the server suite (no PyQt6)
 
 Exit code is non-zero if any stage fails, so it works as a git hook and a
 release gate. Run it with the project's venv Python so imports resolve.
@@ -99,9 +104,16 @@ def _classify(returncode: int, output: str) -> str:
     return "SKIP"
 
 
-def stage_test(fast: bool) -> bool:
-    header("test" + (" (fast — Excel/Drive tests skipped)" if fast else ""))
-    files = sorted(p for p in (ROOT / "tests").glob("test_*.py"))
+SUITES = {"server": ["server"], "desktop": ["desktop"], "all": ["server", "desktop"]}
+
+
+def stage_test(fast: bool, suite: str = "all") -> bool:
+    # tests/ is split into server/ (server + shared, no PyQt6/Excel) and desktop/
+    # (PyQt6 UI + desktop-only services). --suite picks one; default runs both.
+    label = "test" + (f" [{suite}]" if suite != "all" else "")
+    header(label + (" (fast — Excel/Drive tests skipped)" if fast else ""))
+    files = sorted(p for d in SUITES[suite]
+                   for p in (ROOT / "tests" / d).glob("test_*.py"))
     ok = True
     width = max(len(p.stem) for p in files)
     for path in files:
@@ -301,6 +313,8 @@ def main() -> int:
                         help="apply the current schema to a real database")
     parser.add_argument("--only", choices=ALL_STAGES,
                         help="run just one stage")
+    parser.add_argument("--suite", choices=list(SUITES), default="all",
+                        help="which test suite to run (default: all)")
     args = parser.parse_args()
 
     if args.only:
@@ -318,7 +332,7 @@ def main() -> int:
         if stage == "lint":
             results[stage] = stage_lint()
         elif stage == "test":
-            results[stage] = stage_test(args.fast)
+            results[stage] = stage_test(args.fast, args.suite)
         elif stage == "schema":
             results[stage] = stage_schema(args.migrate)
         elif stage == "build":
