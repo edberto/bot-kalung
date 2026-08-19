@@ -143,6 +143,14 @@
     border-radius:9px; font-size:14px; background:var(--surface); color:var(--text); }
   .filterbar input.grow { flex:1; min-width:140px; }
 
+  /* monitor voyage rows */
+  .vrow { display:flex; align-items:center; gap:8px; padding:8px 0; border-top:1px solid var(--border); }
+  .vbar { flex:1; height:6px; background:var(--border); border-radius:3px; overflow:hidden; min-width:40px; }
+  .vbar span { display:block; height:100%; border-radius:3px; }
+  .vnum { font-size:12px; font-weight:700; color:var(--muted); min-width:30px; text-align:right; }
+  .vstack { font-size:12px; font-weight:700; color:var(--muted); white-space:nowrap; }
+  .vstack.on { color:var(--ok); }
+
   /* calendar */
   .calhead { display:flex; align-items:center; gap:8px; margin-bottom:10px; }
   .calhead .m { flex:1; text-align:center; font-weight:800; font-size:16px; }
@@ -216,8 +224,8 @@
   </header>
   <main id="views"><div class="spin">Memuat…</div></main>
   <nav id="tabbar">
+    <button data-tab="monitor"><span class="ic">🚢</span>Monitor</button>
     <button data-tab="list"><span class="ic">📦</span>Aktif</button>
-    <button data-tab="board"><span class="ic">🚢</span>Kapal</button>
     <button data-tab="calendar"><span class="ic">📅</span>Kalender</button>
     <button data-tab="notif"><span class="ic">🔔</span>Notif<span class="tabbadge hidden" id="notifBadge">0</span></button>
     <button data-tab="more"><span class="ic">☰</span>Lainnya</button>
@@ -251,10 +259,6 @@ const AUDIT = {
   shipment_completed:{ label:"Pengiriman ditandai selesai", color:"#059669" },
   shipment_deleted:  { label:"Pengiriman dihapus", color:"#b91c1c" },
 };
-const STATE_COLS = [
-  ["notfound","Belum Terjadwal","#6b7280"], ["scheduled","Terjadwal","#2563eb"],
-  ["berthed","Sudah Sandar","#059669"], ["departed","Sudah Berangkat","#b91c1c"],
-];
 const MONTHS = ["Jan","Feb","Mar","Apr","Mei","Jun","Jul","Agu","Sep","Okt","Nov","Des"];
 const MONTHS_FULL = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
 const DOW = ["Sen","Sel","Rab","Kam","Jum","Sab","Min"];
@@ -336,13 +340,13 @@ async function boot(){
   if(data.session){ state.email = data.session.user?.email || null; showApp(); }
   else $("login").classList.remove("hidden");
 }
-function showApp(){ $("login").classList.add("hidden"); $("app").classList.remove("hidden"); nav("list"); refreshBadge(); }
+function showApp(){ $("login").classList.add("hidden"); $("app").classList.remove("hidden"); nav("monitor"); refreshBadge(); }
 
 // -- data loaders (cached in state) --------------------------------------
 async function getActive(){
   if(state.active) return state.active;
   const { data, error } = await sb.from("shipments")
-    .select("id,exporter_code,sequence_number,vessel_name,voyage,etd_belawan,etd_source,destination_port,destination_country,container_quantity,container_size_short,booking_number,quarantine_required,notes,folder_path,action_items(status),containers(container_no)")
+    .select("id,exporter_code,sequence_number,vessel_name,voyage,etd_belawan,etd_source,destination_port,destination_country,container_quantity,container_size_short,booking_number,quarantine_required,notes,folder_path,action_items(status),containers(container_no,last_status_code)")
     .eq("status","active");
   if(error) throw error;
   state.active = data||[]; return state.active;
@@ -368,7 +372,7 @@ async function refreshBadge(){
 }
 
 // -- router ---------------------------------------------------------------
-const TITLES = { list:"Pengiriman Aktif", board:"Monitor Kapal", calendar:"Kalender",
+const TITLES = { monitor:"Monitor", list:"Pengiriman Aktif", calendar:"Kalender",
   notif:"Notifikasi", more:"Lainnya", history:"Riwayat", search:"Cari", audit:"Log Aktivitas",
   settings:"Pengaturan", detail:"Pengiriman" };
 const SUBVIEWS = new Set(["detail","history","search","audit","settings"]);
@@ -383,7 +387,7 @@ async function nav(view, param){
   try {
     if(view==="list") await renderList();
     else if(view==="detail") await renderDetail(param);
-    else if(view==="board") await renderBoard();
+    else if(view==="monitor") await renderMonitor();
     else if(view==="calendar") await renderCalendar();
     else if(view==="notif") await renderNotif();
     else if(view==="more") renderMore();
@@ -546,28 +550,78 @@ async function markComplete(s){
   state.active=state.all=null; toast("Ditandai selesai"); nav("list");
 }
 
-// -- MONITOR KAPAL BOARD --------------------------------------------------
-async function renderBoard(){
+// -- MONITOR (active voyages grouped by BNCT phase, with shipment readiness) --
+const PHASE_ORDER = [
+  ["departing","Akan Berangkat","#b91c1c"], ["berthed","Sudah Sandar","#059669"],
+  ["scheduled","Terjadwal","#2563eb"], ["notfound","Belum Terjadwal","#6b7280"],
+  ["novessel","Belum ada kapal","#94a3b8"], ["departed","Sudah Berangkat","#334155"],
+];
+function readingOf(mv){ if(!mv||!mv.last_reading) return null; try { return JSON.parse(mv.last_reading); } catch { return null; } }
+function phaseOf(mv){
+  const r=readingOf(mv);
+  if(r&&r.found){ if(r.phase==="alongside") return r.departing?"departing":"berthed"; if(r.phase==="schedule") return "scheduled"; }
+  if(mv){ const st=stateOf(mv); if(st==="departed") return "departed"; if(st==="berthed") return "berthed"; if(st==="scheduled") return "scheduled"; }
+  return "notfound";
+}
+function opsLine(r){
+  if(!r||!r.found) return "";
+  if(r.phase==="schedule"){ const b=[]; if(r.open_stacking) b.push(`Open Stack ${r.open_stacking}`); if(r.clossing) b.push(`Clossing ${r.clossing}`); if(r.etd) b.push(`ETD BNCT ${r.etd}`); return b.join(" · "); }
+  const b=[`Loading sisa ${fmtv(r.loading_remain)}/${fmtv(r.loading_plan)}${pct(r.loading_actual,r.loading_plan)}`];
+  if(r.discharge_remain!=null&&r.discharge_remain!=="") b.push(`Disc sisa ${fmtv(r.discharge_remain)}`);
+  if(r.atb) b.push(`ATB ${r.atb}`);
+  return b.join(" · ");
+}
+function shipSort(a,b){ return (a.exporter_code||"").localeCompare(b.exporter_code||"")||((a.sequence_number||0)-(b.sequence_number||0)); }
+function shipMiniRow(s){
+  const [done,total]=progressOf(s);
+  const conts=s.containers||[]; const atStack=conts.filter(c=>c.last_status_code==="51").length;
+  const pctv=total?Math.round(done/total*100):0; const full=total&&done===total;
+  const row=el(`<div class="vrow tap">${badge(s.exporter_code,s.sequence_number)}
+    <div class="vbar"><span style="width:${pctv}%;background:${full?"var(--ok)":"var(--accent)"}"></span></div>
+    <span class="vnum">${done}/${total}</span>
+    <span class="vstack ${atStack?"on":""}">📦 ${conts.length?`${atStack}/${conts.length}`:"—"}</span></div>`);
+  row.onclick=()=>openDetail(s.id); return row;
+}
+async function renderMonitor(){
   const [{data:vessels, error}, active] = await Promise.all([
-    sb.from("monitored_vessels").select("*").order("created_at",{ascending:false}), getActive() ]);
+    sb.from("monitored_vessels").select("vessel_name,voyage,state,last_phase,last_found,last_departing,last_reading,last_checked_at"),
+    getActive() ]);
   if(error) throw error;
-  const shipFor=(name,voy)=> active.filter(s=>s.vessel_name&&s.voyage&&norm(s.vessel_name)===norm(name)&&norm(s.voyage)===norm(voy));
-  const byState={}; (vessels||[]).forEach(v=>(byState[stateOf(v)]=byState[stateOf(v)]||[]).push(v));
-  if(!vessels||!vessels.length){ $("views").innerHTML=`<div class="empty">Belum ada kapal dipantau.</div>`; return; }
+  const mvBy={}; (vessels||[]).forEach(v=>{ if(v.vessel_name&&v.voyage) mvBy[norm(v.vessel_name)+"|"+norm(v.voyage)]=v; });
+  const voyages={}; const novessel=[];
+  for(const s of active){
+    if(!s.vessel_name||!s.voyage){ novessel.push(s); continue; }
+    const k=norm(s.vessel_name)+"|"+norm(s.voyage);
+    (voyages[k]=voyages[k]||{vessel:s.vessel_name,voyage:s.voyage,etd:s.etd_belawan,mv:mvBy[k]||null,ships:[]}).ships.push(s);
+  }
+  if(!Object.keys(voyages).length && !novessel.length){ $("views").innerHTML=`<div class="empty">Belum ada pengiriman aktif.</div>`; return; }
+  const byPhase={};
+  for(const k in voyages){ const v=voyages[k]; v.phase=phaseOf(v.mv); (byPhase[v.phase]=byPhase[v.phase]||[]).push(v); }
   const w=document.createElement("div");
-  for(const [key,label,color] of STATE_COLS){
-    const list=byState[key]||[]; if(!list.length) continue;
-    w.appendChild(el(`<div class="grouphdr" style="color:${color}">${label} · ${list.length}</div>`));
+  for(const [key,label,color] of PHASE_ORDER){
+    if(key==="novessel"){
+      if(!novessel.length) continue;
+      w.appendChild(el(`<div class="grouphdr" style="color:${color}">${label} · ${novessel.length}</div>`));
+      const card=el(`<div class="card"></div>`);
+      novessel.sort(shipSort).forEach(s=>card.appendChild(shipMiniRow(s)));
+      w.appendChild(card); continue;
+    }
+    const list=(byPhase[key]||[]).sort((a,b)=>{ const da=daysUntil(a.etd), db=daysUntil(b.etd); return ((da==null)-(db==null))||((da??0)-(db??0)); });
+    if(!list.length) continue;
+    const nships=list.reduce((n,v)=>n+v.ships.length,0);
+    w.appendChild(el(`<div class="grouphdr" style="color:${color}">${label} · ${nships}</div>`));
     for(const v of list){
-      let reading=null; try { reading = v.last_reading?JSON.parse(v.last_reading):null; } catch{}
-      const d=describeRecord(reading);
-      const ships=shipFor(v.vessel_name,v.voyage);
-      const card=el(`<div class="card"><div style="display:flex;align-items:center;gap:8px"><span class="dot" style="background:${color}"></span>
-        <b>${esc(v.vessel_name)} · ${esc(v.voyage||"—")}</b></div>
-        ${ships.length?`<div style="margin-top:8px">${ships.map(s=>`<span class="chip" data-sid="${s.id}">📦 ${esc(s.exporter_code)}${s.sequence_number}</span>`).join("")}</div>`:""}
-        ${d.detail.length?`<div class="detailblock">${esc(d.detail.join("\n"))}</div>`:""}
-        ${v.last_checked_at?`<div class="metaline" style="margin-top:8px">Diperiksa: ${fmtDT(v.last_checked_at)}</div>`:""}</div>`);
-      card.querySelectorAll(".chip[data-sid]").forEach(ch=>ch.onclick=()=>openDetail(ch.dataset.sid));
+      const r=readingOf(v.mv); const ops=opsLine(r); const d=daysUntil(v.etd);
+      const card=el(`<div class="card">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span class="dot" style="background:${color}"></span>
+          <b style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(v.vessel)} · ${esc(v.voyage)}</b>
+          <span class="etd ${d!=null&&d<=3?"soon":""}">${fmtDate(v.etd)}${d!=null&&d>=0?` · ${d}h`:""}</span>
+        </div>
+        ${ops?`<div class="metaline" style="margin-top:5px">${esc(ops)}</div>`:""}
+        <div class="holder" style="margin-top:8px"></div></div>`);
+      const holder=card.querySelector(".holder");
+      v.ships.sort(shipSort).forEach(s=>holder.appendChild(shipMiniRow(s)));
       w.appendChild(card);
     }
   }
@@ -648,7 +702,7 @@ async function renderNotif(){
       <div style="flex:1;min-width:0"><b>${esc(n.title)}</b>${unread?' <span class="muted" style="font-size:11px">• baru</span>':""}
       ${n.body?`<div class="metaline" style="color:var(--text-2);margin-top:2px">${esc(n.body)}</div>`:""}
       <div class="metaline" style="margin-top:4px">${fmtDT(n.created_at)}</div></div></div></div>`);
-    c.onclick=async ()=>{ if(unread){ await sb.from("notifications").update({read:1}).eq("id",n.id); refreshBadge(); } if(n.shipment_id) openDetail(n.shipment_id); else nav("board"); };
+    c.onclick=async ()=>{ if(unread){ await sb.from("notifications").update({read:1}).eq("id",n.id); refreshBadge(); } if(n.shipment_id) openDetail(n.shipment_id); else nav("monitor"); };
     w.appendChild(c);
   }
   $("views").innerHTML=""; $("views").appendChild(w);

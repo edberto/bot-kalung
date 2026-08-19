@@ -4,23 +4,29 @@ A small, installable web app that reads the hosted Supabase DB the server worker
 fills. No desktop, no Excel, no `G:` drive — it talks straight to Supabase over
 HTTPS. Five tabs across the bottom:
 
-- **Aktif** — active shipments (grouped by exporter, sorted by ETD) → tap for
+- **Monitor** (home) — the operational view: active **voyages grouped by BNCT
+  phase** (Akan Berangkat / Sudah Sandar / Terjadwal / Belum Terjadwal / Belum
+  ada kapal). Each voyage card shows its status ops line (loading/discharge sisa,
+  ATB, or open-stack/closing) + ETD, and under it every shipment riding that
+  voyage with a **doc-progress bar** (n/n final) and **container-at-stack** count
+  (📦 n/m). Answers "what's each voyage's status and are its shipments ready?" at
+  a glance. Supersedes the old standalone Kapal board.
+- **Aktif** — active shipments grouped by exporter, sorted by ETD → tap for
   detail: live **BNCT vessel status** (loading/discharge/restow, ETD, ATB,
   closing, departing), **action items** (status dropdown, add/delete),
   **containers** (live status, copy number, edit, "Buka di BNCT"), **notes**.
   Header actions: **Ubah ETD** (whole voyage), **Buka Folder** (Drive link),
   **Tandai Selesai**.
-- **Kapal** — the Monitor Kapal board: vessels grouped by state (belum
-  terjadwal / terjadwal / sandar / berangkat) with their shipment chips.
 - **Kalender** — month grid of ETDs + action-item due dates, tap a day for its
   agenda.
 - **Notif** — notification feed with an unread badge, mark-read, tap-to-shipment.
 - **Lainnya** — Riwayat (completed shipments + filters), Cari (container / party
-  search), Log Aktivitas (audit trail), and sign-out.
+  search), Log Aktivitas (audit trail), **Pengaturan** (dark mode, account /
+  change password, ntfy toggle, server status), and sign-out.
 
 Staying **desktop-only** (by design): delete shipment & resequence (they rewrite
-Drive folders / Excel / PDFs), open-Excel-locally, Settings, and manual scan (the
-server already scans every 30 min).
+Drive folders / Excel / PDFs), open-Excel-locally, and manual scan (the server
+already scans every 30 min).
 
 It is plain static files (`index.html` + a service worker + a manifest). Nothing
 to build. It cannot be a Claude Artifact — the Artifact sandbox blocks calls to
