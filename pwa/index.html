@@ -288,6 +288,13 @@ function fmtDate(iso){ const d=localDate(iso); if(!d||isNaN(d)) return iso||"—
 function fmtDT(iso){ if(!iso) return "—"; const d=new Date(asUTC(iso)); if(isNaN(d)) return iso; return `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`; }
 function daysUntil(iso){ const d=localDate(iso); if(!d||isNaN(d)) return null; const t=new Date(); t.setHours(0,0,0,0); return Math.round((d-t)/864e5); }
 function norm(s){ return (s||"").toUpperCase().replace(/[^A-Z0-9]/g,""); }
+// Fuzzy vessel+voyage matching — ports bnct._name_matches / _voyage_matches so
+// the PWA joins voyages the same way the server does (e.g. "26RY132N" ~ "132N").
+const _NAME_PREFIX = /^(mv|m\/v|mt|km|tb)\.?\s+/i;
+function normName(n){ return (n||"").replace(_NAME_PREFIX,"").toUpperCase().replace(/[^A-Z0-9]/g,""); }
+function nameMatches(a,b){ a=normName(a); b=normName(b); return !!a&&!!b&&(a===b||a.includes(b)||b.includes(a)); }
+function voyageMatches(a,b){ a=norm(a); b=norm(b); if(a.length<3||b.length<3) return false; return a===b||a.endsWith(b)||b.endsWith(a)||a.includes(b)||b.includes(a); }
+function vesselMatches(n1,v1,n2,v2){ return nameMatches(n1,n2)&&voyageMatches(v1,v2); }
 function folderUrl(fp){ return fp && fp.startsWith("drive:") ? `https://drive.google.com/drive/folders/${fp.slice(6)}` : null; }
 function uuid(){ return crypto.randomUUID(); }
 
@@ -659,16 +666,22 @@ async function renderMonitor(){
     sb.from("monitored_vessels").select("vessel_name,voyage,state,last_phase,last_found,last_departing,last_reading,last_checked_at"),
     getActive() ]);
   if(error) throw error;
-  const mvBy={}; (vessels||[]).forEach(v=>{ if(v.vessel_name&&v.voyage) mvBy[norm(v.vessel_name)+"|"+norm(v.voyage)]=v; });
+  const monitored=(vessels||[]).filter(v=>v.vessel_name&&v.voyage);
   const voyages={}; const novessel=[];
   for(const s of active){
     if(!s.vessel_name||!s.voyage){ novessel.push(s); continue; }
     const k=norm(s.vessel_name)+"|"+norm(s.voyage);
-    (voyages[k]=voyages[k]||{vessel:s.vessel_name,voyage:s.voyage,etd:s.etd_belawan,mv:mvBy[k]||null,ships:[]}).ships.push(s);
+    (voyages[k]=voyages[k]||{vessel:s.vessel_name,voyage:s.voyage,etd:s.etd_belawan,mv:null,ships:[]}).ships.push(s);
   }
   if(!Object.keys(voyages).length && !novessel.length){ $("views").innerHTML=`<div class="empty">Belum ada pengiriman aktif.</div>`; return; }
   const byPhase={};
-  for(const k in voyages){ const v=voyages[k]; v.phase=phaseOf(v.mv); (byPhase[v.phase]=byPhase[v.phase]||[]).push(v); }
+  for(const k in voyages){
+    const v=voyages[k];
+    // match to a monitored vessel the same fuzzy way the server does (voyage
+    // "26RY132N" ~ "132N"), not exact string equality
+    v.mv = monitored.find(m=>vesselMatches(v.vessel, v.voyage, m.vessel_name, m.voyage)) || null;
+    v.phase=phaseOf(v.mv); (byPhase[v.phase]=byPhase[v.phase]||[]).push(v);
+  }
   const w=document.createElement("div");
   const manage=el(`<div class="savebar" style="justify-content:flex-end;margin:-2px 0 6px"><button class="iconbtn">🚢 Kelola Kapal</button></div>`);
   manage.querySelector("button").onclick=()=>nav("vessels");
