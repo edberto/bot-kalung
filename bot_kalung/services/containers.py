@@ -56,6 +56,41 @@ class Containers:
                     "(id, shipment_id, container_no, size) VALUES (?,?,?,?)",
                     (new_id(), shipment_id, number, size))
 
+    def sync(self, shipment_id: str, container_numbers,
+             size: str | None = None) -> bool:
+        """Reconcile a shipment's containers to the VGM list — the source of truth
+        — so a typo fix, a partial fill being completed, or numbers entered after
+        import all propagate on the next scan. Adds new numbers, drops ones no
+        longer present, and leaves unchanged ones intact so their live BNCT status
+        / photo ref survive.
+
+        No-op on an empty list: a failed or not-yet-filled VGM read must never wipe
+        real containers. Returns True if it changed anything.
+        """
+        wanted, seen = [], set()
+        for number in container_numbers:
+            number = (number or "").strip().upper()
+            if number and number not in seen:
+                seen.add(number)
+                wanted.append(number)
+        if not wanted:
+            return False
+        existing = {row.container_no.upper(): row
+                    for row in self.for_shipment(shipment_id)}
+        to_add = [n for n in wanted if n not in existing]
+        to_remove = [row for number, row in existing.items() if number not in seen]
+        if not to_add and not to_remove:
+            return False
+        with self.db.cursor(write=True) as cur:
+            for row in to_remove:
+                cur.execute("DELETE FROM containers WHERE id=?", (row.id,))
+            for number in to_add:
+                cur.execute(
+                    "INSERT OR IGNORE INTO containers "
+                    "(id, shipment_id, container_no, size) VALUES (?,?,?,?)",
+                    (new_id(), shipment_id, number, size))
+        return True
+
     # -- reads ----------------------------------------------------------
 
     def for_shipment(self, shipment_id: str) -> list[ContainerRow]:

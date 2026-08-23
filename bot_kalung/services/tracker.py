@@ -106,14 +106,14 @@ def _detect_vessel_voyage_changes(shipments: Shipments, vessels: MonitoredVessel
                                   folder_resolver=None) -> None:
     """Re-read active shipments' workbooks to (a) update any whose vessel/voyage
     changed since import — a booking can be moved to a different vessel/voyage —
-    and (b) backfill containers for a shipment imported before its VGM listed any.
+    and (b) reconcile containers to the VGM (its source of truth), so a typo fix,
+    a partial fill being completed, or numbers entered after import all propagate.
 
-    An existing container correction is never clobbered: containers are re-read
-    ONLY when the shipment has none stored, so a shipment imported with the
-    container cells still blank picks them up once they are filled. Changes land
-    in `result.vessel_changes` / `result.report`. An unreadable workbook (e.g. an
-    old .xls the headless reader can't open) reads as no vessel and is left
-    untouched, never overwritten with a blank.
+    Container sync is safe: it no-ops on an empty/failed VGM read (never wipes),
+    keeps unchanged numbers so their live BNCT status survives, and only adds/drops
+    the difference. Changes land in `result.vessel_changes` / `result.report`. An
+    unreadable workbook (e.g. an old .xls the headless reader can't open) reads as
+    no vessel and is left untouched, never overwritten with a blank.
 
     `folder_resolver` maps a stored folder_path to a folder handle: a filesystem
     path stays a path; a Drive scan's 'drive:{id}' resolves to a Drive node. Only
@@ -141,18 +141,18 @@ def _detect_vessel_voyage_changes(shipments: Shipments, vessels: MonitoredVessel
         except Exception:      # noqa: BLE001 - one bad workbook must not stop the scan
             continue
 
-        # Backfill containers a shipment was imported without (party filled but
-        # the VGM container cells still blank at import). Only when none are
-        # stored, so a later manual correction is never clobbered.
-        if fields.containers and not containers.for_shipment(row["id"]):
-            containers.populate(row["id"], fields.containers,
-                                size=fields.container_size_short)
+        # Reconcile containers to the VGM on every scan — it is the source of
+        # truth, so a typo fix, a partial fill being completed, or numbers entered
+        # after import all propagate. sync() no-ops on an empty read (never wipes),
+        # keeps unchanged numbers (their BNCT status survives), drops removed ones.
+        if fields.containers and containers.sync(
+                row["id"], fields.containers, size=fields.container_size_short):
             if fields.container_quantity:
                 shipments.set_party(row["id"], fields.container_quantity,
                                     fields.container_size_short)
             result.report.append(
                 f"{row['exporter_code']}{row['sequence_number']}: "
-                f"{len(fields.containers)} kontainer terisi dari VGM")
+                f"kontainer disinkronkan dari VGM ({len(fields.containers)})")
 
         new_vessel, new_voyage = fields.vessel_name, fields.voyage
         if not new_vessel or not new_voyage:

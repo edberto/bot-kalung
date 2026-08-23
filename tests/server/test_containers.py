@@ -138,6 +138,35 @@ with tempfile.TemporaryDirectory() as tmp:
     except ValueError:
         check("a blank number is rejected", True)
 
+    # ---- sync reconciles containers to the VGM (source of truth) ---------
+    sid2 = new_id()
+    db.execute(
+        "INSERT INTO shipments (id, exporter_code, sequence_number, status, "
+        "created_at) VALUES (?,?,?, 'active', '2026-08-14')",
+        (sid2, "HCIT", 2))
+    containers.populate(sid2, ["AAAU1111111", "BBBU2222222"], size="40'HC")
+    keep = next(r for r in containers.for_shipment(sid2)
+                if r.container_no == "AAAU1111111")
+    containers.update_status(keep.id, site="TPKB", status_code="51",
+                             status_text="STACK RECEIVING", type="HQ",
+                             checked_at="2026-08-14T10:00:00")
+
+    # BBBU dropped, CCCU added (e.g. a typo fix), AAAU unchanged
+    changed = containers.sync(sid2, ["AAAU1111111", "cccu3333333"], size="40'HC")
+    nums = sorted(r.container_no for r in containers.for_shipment(sid2))
+    check("sync reports a change", changed is True)
+    check("sync adds new, drops missing, keeps unchanged",
+          nums == ["AAAU1111111", "CCCU3333333"])
+    kept = next(r for r in containers.for_shipment(sid2)
+                if r.container_no == "AAAU1111111")
+    check("sync preserves the BNCT status of an unchanged container",
+          kept.at_stack_receiving and kept.last_site == "TPKB")
+    check("sync is a no-op when already in sync (dupes/blanks/case ignored)",
+          containers.sync(sid2, ["CCCU3333333", "", "aaau1111111"]) is False)
+    check("sync never wipes on an empty read",
+          containers.sync(sid2, []) is False
+          and len(containers.for_shipment(sid2)) == 2)
+
 print()
 if failures:
     print(f"{len(failures)} FAILED: {failures}")
