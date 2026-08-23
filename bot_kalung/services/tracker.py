@@ -100,18 +100,20 @@ class ScanApplyResult:
 
 
 def _detect_vessel_voyage_changes(shipments: Shipments, vessels: MonitoredVessels,
-                                  reread_fields, skip_ids: set[str],
-                                  result: ScanApplyResult,
+                                  containers: Containers, reread_fields,
+                                  skip_ids: set[str], result: ScanApplyResult,
                                   mtime_cache: dict | None = None,
                                   folder_resolver=None) -> None:
-    """Re-read active shipments' workbooks and update any whose vessel/voyage
-    changed since import — a booking can be moved to a different vessel/voyage.
+    """Re-read active shipments' workbooks to (a) update any whose vessel/voyage
+    changed since import — a booking can be moved to a different vessel/voyage —
+    and (b) backfill containers for a shipment imported before its VGM listed any.
 
-    Only vessel + voyage: containers are deliberately NOT re-read, so a manual
-    container-number correction is never clobbered. Silent — changes land in
-    `result.vessel_changes` (and the Monitor Kapal link is re-pointed). An
-    unreadable workbook (e.g. old .xls the headless reader can't open) reads as
-    no vessel and is left untouched, never overwritten with a blank.
+    An existing container correction is never clobbered: containers are re-read
+    ONLY when the shipment has none stored, so a shipment imported with the
+    container cells still blank picks them up once they are filled. Changes land
+    in `result.vessel_changes` / `result.report`. An unreadable workbook (e.g. an
+    old .xls the headless reader can't open) reads as no vessel and is left
+    untouched, never overwritten with a blank.
 
     `folder_resolver` maps a stored folder_path to a folder handle: a filesystem
     path stays a path; a Drive scan's 'drive:{id}' resolves to a Drive node. Only
@@ -138,6 +140,20 @@ def _detect_vessel_voyage_changes(shipments: Shipments, vessels: MonitoredVessel
             fields = reread_fields(folder)
         except Exception:      # noqa: BLE001 - one bad workbook must not stop the scan
             continue
+
+        # Backfill containers a shipment was imported without (party filled but
+        # the VGM container cells still blank at import). Only when none are
+        # stored, so a later manual correction is never clobbered.
+        if fields.containers and not containers.for_shipment(row["id"]):
+            containers.populate(row["id"], fields.containers,
+                                size=fields.container_size_short)
+            if fields.container_quantity:
+                shipments.set_party(row["id"], fields.container_quantity,
+                                    fields.container_size_short)
+            result.report.append(
+                f"{row['exporter_code']}{row['sequence_number']}: "
+                f"{len(fields.containers)} kontainer terisi dari VGM")
+
         new_vessel, new_voyage = fields.vessel_name, fields.voyage
         if not new_vessel or not new_voyage:
             continue           # unreadable / incomplete — don't overwrite
@@ -234,7 +250,7 @@ def run_scan(db: Database, drive_root, *, year: int | None = None, settings=None
 
     # After importing, re-read the active shipments to catch a vessel/voyage that
     # moved after import (the folder scan otherwise never revisits them).
-    _detect_vessel_voyage_changes(shipments, vessels, reread_fields,
+    _detect_vessel_voyage_changes(shipments, vessels, containers, reread_fields,
                                   imported_ids, result, mtime_cache,
                                   folder_resolver)
     return result

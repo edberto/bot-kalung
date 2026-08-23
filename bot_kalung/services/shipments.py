@@ -447,6 +447,14 @@ class Shipments:
             "UPDATE shipments SET vessel_name=?, voyage=? WHERE id=?",
             (vessel_name or None, voyage or None, shipment_id))
 
+    def set_party(self, shipment_id: str, quantity: int | None,
+                  size: str | None) -> None:
+        """Update the party (container count + size). Used when a re-scan
+        backfills containers a shipment was imported without."""
+        self.db.execute(
+            "UPDATE shipments SET container_quantity=?, container_size_short=? "
+            "WHERE id=?", (quantity, size or None, shipment_id))
+
     def set_voyage_etd(self, vessel_name: str | None, voyage: str | None,
                        iso: str | None) -> int:
         """Set the ETD for every active shipment on this vessel+voyage — a
