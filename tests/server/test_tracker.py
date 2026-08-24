@@ -156,10 +156,10 @@ with tempfile.TemporaryDirectory() as tmp:
     check("a renamed folder does not create a duplicate",
           rescan.imported == []
           and len(db.query("SELECT id FROM shipments")) == before)
-    check("the existing shipment row is left untouched",
+    check("the re-discovered shipment is re-pointed at the current folder for its number",
           db.query_one("SELECT folder_path FROM shipments WHERE exporter_code='AMJ'"
                        " AND sequence_number=2")["folder_path"]
-          .endswith("2.5x40-karachi"))
+          .endswith("2.5x40-karachi-Buyer-Renamed"))
     check("the re-discovered key is re-registered so later scans skip it",
           ("AMJ", 2) in tracker.ScannedRegistry(db).registered_keys())
 

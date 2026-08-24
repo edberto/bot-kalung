@@ -62,6 +62,9 @@ class ScanResult:
     to_import: list[Candidate] = field(default_factory=list)   # new, not done
     done: list[Candidate] = field(default_factory=list)        # complete (skip)
     report: list[str] = field(default_factory=list)            # discovery notes
+    # Every discovered folder keyed by (code, seq) — lets the tracker re-point a
+    # shipment whose folder was renumbered on Drive after import.
+    by_key: dict[tuple[str, int], Candidate] = field(default_factory=dict)
 
 
 # -- done-detection (Bill of Lading scan) --------------------------------
@@ -144,6 +147,10 @@ def scan(drive_root, year: int, registered: set[tuple[str, int]],
         if skipped:
             note += f", {skipped} tanpa workbook dilewati"
         result.report.append(note)
+
+    result.by_key = {(code, seq): cand
+                     for code, slot in by_code.items()
+                     for seq, cand in slot.items()}
 
     # Per code, only the largest contiguous run of sequences is eligible;
     # within it, split already-complete folders from ones to import.

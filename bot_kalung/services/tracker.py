@@ -102,12 +102,14 @@ class ScanApplyResult:
 def _detect_vessel_voyage_changes(shipments: Shipments, vessels: MonitoredVessels,
                                   containers: Containers, reread_fields,
                                   skip_ids: set[str], result: ScanApplyResult,
+                                  by_key: dict | None = None,
                                   mtime_cache: dict | None = None,
                                   folder_resolver=None) -> None:
-    """Re-read active shipments' workbooks to (a) update any whose vessel/voyage
-    changed since import — a booking can be moved to a different vessel/voyage —
-    and (b) reconcile containers to the VGM (its source of truth), so a typo fix,
-    a partial fill being completed, or numbers entered after import all propagate.
+    """Re-read active shipments' workbooks to (a) re-point any whose Drive folder
+    was renumbered after import — `{code}{seq}` follows the folder that now carries
+    that number, not the frozen import-time one — (b) update a vessel/voyage that
+    moved, and (c) reconcile containers to the VGM (its source of truth), so a typo
+    fix, a partial fill being completed, or numbers entered after import propagate.
 
     Container sync is safe: it no-ops on an empty/failed VGM read (never wipes),
     keeps unchanged numbers so their live BNCT status survives, and only adds/drops
@@ -115,17 +117,33 @@ def _detect_vessel_voyage_changes(shipments: Shipments, vessels: MonitoredVessel
     unreadable workbook (e.g. an old .xls the headless reader can't open) reads as
     no vessel and is left untouched, never overwritten with a blank.
 
-    `folder_resolver` maps a stored folder_path to a folder handle: a filesystem
-    path stays a path; a Drive scan's 'drive:{id}' resolves to a Drive node. Only
-    a filesystem folder is mtime-gated (`mtime_cache`) — a Drive folder has no
-    local mtime, so it re-reads each scan (its modifiedTime is a future opt).
+    `by_key` maps `(code, seq)` -> the folder that currently carries that number
+    (from the scan's discovery). `folder_resolver` maps a stored folder_path to a
+    folder handle for shipments not in `by_key`. Only a filesystem folder is
+    mtime-gated (`mtime_cache`) — a Drive folder re-reads each scan.
     """
+    by_key = by_key or {}
     for row in shipments.active():
-        if row["id"] in skip_ids or not row["folder_path"]:
+        if row["id"] in skip_ids:
             continue
-        folder = (folder_resolver(row["folder_path"]) if folder_resolver
-                  else row["folder_path"])
-        if mtime_cache is not None and not hasattr(folder, "iterdir"):
+        # Prefer the folder that CURRENTLY carries this (code, seq): if it was
+        # renumbered on Drive after import, re-point the shipment so its number
+        # follows the folder. Otherwise fall back to the stored folder_path.
+        current = by_key.get((row["exporter_code"], row["sequence_number"]))
+        if current is not None:
+            folder = current.folder
+            current_ref = _folder_ref(folder)
+            if current_ref != (row["folder_path"] or ""):
+                shipments.set_folder_path(row["id"], current_ref)
+                result.report.append(
+                    f"{row['exporter_code']}{row['sequence_number']}: "
+                    "folder dipetakan ulang (nomor folder berubah)")
+        elif row["folder_path"]:
+            folder = (folder_resolver(row["folder_path"]) if folder_resolver
+                      else row["folder_path"])
+        else:
+            continue
+        if mtime_cache is not None and not hasattr(folder, "ref"):  # local path, not a Drive node
             wb = excel.find_main_workbook(folder)
             if wb is not None:
                 try:
@@ -251,6 +269,6 @@ def run_scan(db: Database, drive_root, *, year: int | None = None, settings=None
     # After importing, re-read the active shipments to catch a vessel/voyage that
     # moved after import (the folder scan otherwise never revisits them).
     _detect_vessel_voyage_changes(shipments, vessels, containers, reread_fields,
-                                  imported_ids, result, mtime_cache,
+                                  imported_ids, result, plan.by_key, mtime_cache,
                                   folder_resolver)
     return result

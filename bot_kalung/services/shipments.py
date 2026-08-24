@@ -455,6 +455,14 @@ class Shipments:
             "UPDATE shipments SET container_quantity=?, container_size_short=? "
             "WHERE id=?", (quantity, size or None, shipment_id))
 
+    def set_folder_path(self, shipment_id: str, folder_path: str | None) -> None:
+        """Re-point a shipment at its Drive folder. Used when a folder was
+        renumbered after import, so `{code}{seq}` follows the folder that now
+        carries that number rather than the frozen import-time one."""
+        self.db.execute(
+            "UPDATE shipments SET folder_path=? WHERE id=?",
+            (folder_path or None, shipment_id))
+
     def set_voyage_etd(self, vessel_name: str | None, voyage: str | None,
                        iso: str | None) -> int:
         """Set the ETD for every active shipment on this vessel+voyage — a
