@@ -205,12 +205,22 @@
   .modal input { width:100%; padding:11px 12px; font-size:16px; border:1px solid var(--border);
     border-radius:10px; margin-bottom:14px; background:var(--surface); color:var(--text); }
   .modal .acts { display:flex; justify-content:flex-end; gap:8px; }
+
+  /* splash — shown until we know whether a session exists, so the login page
+     never flashes for an already-logged-in user */
+  #splash { position:fixed; inset:0; z-index:100; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; gap:14px; background:var(--bg); color:var(--muted); }
+  #splash .mk { width:60px; height:60px; border-radius:15px; background:#0f172a; color:#60a5fa;
+    display:flex; align-items:center; justify-content:center; font-weight:800; font-size:24px; letter-spacing:1px; }
 </style>
 </head>
 <body>
 
+<!-- SPLASH (hidden once the session check completes) -->
+<div id="splash"><div class="mk">BK</div><div>Memuat…</div></div>
+
 <!-- LOGIN -->
-<section id="login">
+<section id="login" class="hidden">
   <h2>Bot Kalung</h2>
   <p class="muted">Masuk untuk melihat pengiriman.</p>
   <form id="loginForm">
@@ -249,7 +259,9 @@ const SUPABASE_KEY = "sb_publishable__OJG7YXn4f4D7M-sXC7l9A_aRgs18TE";
 const BNCT_URL = "https://portal.bnct-id.com/sso/";
 const NTFY_TOPIC = "botkalung-lolo-9f0dadc10541b6cebb56";  // fixed shared topic (core.constants)
 const NTFY_SERVER = "https://ntfy.sh";
-const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
+const sb = createClient(SUPABASE_URL, SUPABASE_KEY, {
+  auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false },
+});
 
 // -- constants ported from the desktop app --------------------------------
 const STATUS = [
@@ -380,11 +392,13 @@ $("backBtn").addEventListener("click", ()=>nav(state.detailFrom));
 document.querySelectorAll("#tabbar button").forEach(b=>b.addEventListener("click", ()=>nav(b.dataset.tab)));
 
 async function boot(){
-  const { data } = await sb.auth.getSession();
-  if(data.session){ state.email = data.session.user?.email || null; showApp(); }
+  let session=null;
+  try { session=(await sb.auth.getSession()).data.session; } catch(e){}
+  $("splash").classList.add("hidden");
+  if(session){ state.email = session.user?.email || null; showApp(); }
   else $("login").classList.remove("hidden");
 }
-function showApp(){ $("login").classList.add("hidden"); $("app").classList.remove("hidden"); nav("monitor"); refreshBadge(); refreshForumBadge(); subscribeRealtime(); }
+function showApp(){ $("splash").classList.add("hidden"); $("login").classList.add("hidden"); $("app").classList.remove("hidden"); nav("monitor"); refreshBadge(); refreshForumBadge(); subscribeRealtime(); }
 
 // -- data loaders (cached in state) --------------------------------------
 async function getActive(){
@@ -448,7 +462,11 @@ const TITLES = { monitor:"Monitor", list:"Pengiriman Aktif", calendar:"Kalender"
   settings:"Pengaturan", forum:"Forum", note:"Catatan", vessels:"Kelola Kapal", scan:"Pindai Folder", detail:"Pengiriman" };
 const SUBVIEWS = new Set(["detail","history","search","audit","settings","forum","note","vessels","scan"]);
 
-async function nav(view, param){
+// A future-dated JWT (device/server clock skew) rejects a request; it clears once
+// the token refreshes or the skew window passes, so we refresh + retry once.
+function isClockSkewError(e){ return /issued at future|before issued|clock|jw[st].*(future|valid)/i.test((e&&(e.message||e.error_description||e))+""); }
+
+async function nav(view, param, _retried){
   state.view = view;
   $("title").textContent = TITLES[view] || "Bot Kalung";
   $("backBtn").classList.toggle("hidden", !SUBVIEWS.has(view));
@@ -470,7 +488,14 @@ async function nav(view, param){
     else if(view==="note") await renderNoteThread(param);
     else if(view==="vessels") await renderManageVessels();
     else if(view==="scan") await renderScan();
-  } catch(e){ $("views").innerHTML = `<div class="empty">Gagal memuat: ${esc(e.message||e)}</div>`; }
+  } catch(e){
+    if(!_retried && isClockSkewError(e)){
+      try { await sb.auth.refreshSession(); } catch(_){}
+      await new Promise(r=>setTimeout(r, 1500));
+      return nav(view, param, true);
+    }
+    $("views").innerHTML = `<div class="empty">Gagal memuat: ${esc(e.message||e)}</div>`;
+  }
 }
 function openDetail(id){ state.detailFrom = SUBVIEWS.has(state.view)?state.detailFrom:state.view; nav("detail", id); }
 
