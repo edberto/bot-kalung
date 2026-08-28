@@ -1,6 +1,6 @@
 // Minimal service worker: cache the app shell so it opens offline. Data always
 // comes from the network (Supabase) — we never cache API responses.
-const SHELL = "kalung-shell-v7";
+const SHELL = "kalung-shell-v8";
 const ASSETS = ["./", "./index.html", "./manifest.webmanifest", "./icon-192.png", "./icon-512.png"];
 
 self.addEventListener("install", (e) => {

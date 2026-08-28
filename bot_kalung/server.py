@@ -229,14 +229,15 @@ def _poll_containers(bnct_client, containers, notifications, vessels) -> None:
         previous = containers.update_status(
             row["id"], site=card.site, status_code=card.status_code,
             status_text=card.status_text, type=card.type, checked_at=stamp)
-        if previous != bnct.STACK_RECEIVING_CODE and card.at_stack_receiving:
+        # Fire once, on the transition INTO the received/done range (status >= 50).
+        if not bnct.is_container_done(previous) and card.at_stack_receiving:
             label = f"{row['exporter_code']}{row['sequence_number']}"
             notifications.add(
                 "container", row["shipment_id"],
-                f"{label}: {row['container_no']} STACK RECEIVING",
-                f"Kontainer {row['container_no']} sedang diterima di stack BNCT "
-                f"({card.site}). Kapal {row['vessel_name']} {row['voyage'] or ''}"
-                .rstrip() + ".", created_at=stamp)
+                f"{label}: {row['container_no']} {card.status_text or 'diterima'}",
+                f"Kontainer {row['container_no']} sudah diterima di BNCT "
+                f"({card.status} · {card.site}). Kapal {row['vessel_name']} "
+                f"{row['voyage'] or ''}".rstrip() + ".", created_at=stamp)
 
 
 def _safe(fn, label: str) -> None:

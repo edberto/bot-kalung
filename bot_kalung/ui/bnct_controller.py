@@ -124,12 +124,12 @@ class _PollWorker(QThread):
                 row["id"], site=card.site, status_code=card.status_code,
                 status_text=card.status_text, type=card.type, checked_at=stamp)
             result["container_checked"].append(row["shipment_id"])
-            # Notify only on the transition INTO 51, so it fires once.
-            if previous != bnct.STACK_RECEIVING_CODE and card.at_stack_receiving:
+            # Notify only on the transition INTO the received range (>= 50), once.
+            if not bnct.is_container_done(previous) and card.at_stack_receiving:
                 label = f"{row['exporter_code']}{row['sequence_number']}"
-                title = f"{label}: {row['container_no']} STACK RECEIVING"
-                body = (f"Kontainer {row['container_no']} sedang diterima di stack "
-                        f"BNCT ({card.site}). Kapal {row['vessel_name']} "
+                title = f"{label}: {row['container_no']} {card.status_text or 'diterima'}"
+                body = (f"Kontainer {row['container_no']} sudah diterima di BNCT "
+                        f"({card.status} · {card.site}). Kapal {row['vessel_name']} "
                         f"{row['voyage'] or ''}.".rstrip())
                 self._notifications.add("container", row["shipment_id"], title,
                                         body, created_at=stamp)

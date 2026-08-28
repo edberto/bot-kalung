@@ -295,6 +295,8 @@ function normName(n){ return (n||"").replace(_NAME_PREFIX,"").toUpperCase().repl
 function nameMatches(a,b){ a=normName(a); b=normName(b); return !!a&&!!b&&(a===b||a.includes(b)||b.includes(a)); }
 function voyageMatches(a,b){ a=norm(a); b=norm(b); if(a.length<3||b.length<3) return false; return a===b||a.endsWith(b)||b.endsWith(a)||a.includes(b)||b.includes(a); }
 function vesselMatches(n1,v1,n2,v2){ return nameMatches(n1,n2)&&voyageMatches(v1,v2); }
+// A container is received/done (green) once its numeric BNCT status is >= 50.
+function isDoneCode(code){ const n=parseInt(code,10); return !isNaN(n) && n>=50; }
 function folderUrl(fp){ return fp && fp.startsWith("drive:") ? `https://drive.google.com/drive/folders/${fp.slice(6)}` : null; }
 function uuid(){ return crypto.randomUUID(); }
 
@@ -578,25 +580,22 @@ async function renderDetail(id){
   const cc=el(`<div class="card"></div>`);
   if(!conts.length) cc.appendChild(el(`<div class="muted">Belum ada kontainer terbaca dari VGM.</div>`));
   for(const c of conts){
-    const recv=c.last_status_code==="51";
+    const recv=isDoneCode(c.last_status_code);
     const st=(c.last_status_code||c.last_status_text)?`${c.last_status_code||""}-${c.last_status_text||""}`.replace(/^-|-$/g,""):"Belum ada data";
     const row=el(`<div class="item cont il" style="border-left-color:${recv?"#16a34a":"transparent"}">
       <div class="t"><div class="no">${esc(c.container_no)}</div>
       <div class="st" style="color:${recv?"var(--ok)":"var(--muted)"}">${esc(st)}${c.last_site?" · "+esc(c.last_site):""}</div></div></div>`);
     const copy=el(`<button class="linkbtn">Salin</button>`);
     copy.onclick=()=>{ navigator.clipboard.writeText(c.container_no).then(()=>toast("Nomor disalin")); };
+    const bnctBtn=el(`<button class="linkbtn">BNCT</button>`);
+    bnctBtn.onclick=()=>{ navigator.clipboard.writeText(c.container_no).then(()=>toast("Nomor disalin — tempel di BNCT")); window.open(BNCT_URL,"_blank","noopener"); };
     const edit=el(`<button class="linkbtn">✎</button>`);
     edit.onclick=async ()=>{ const v=await askInput({title:"Nomor kontainer",value:c.container_no}); if(!v) return; const num=v.trim().toUpperCase(); if(!num||num===c.container_no) return;
       const {error}=await sb.from("containers").update({container_no:num,last_site:null,last_status_code:null,last_status_text:null,last_checked_at:null}).eq("id",c.id);
       if(error){toast("Gagal: "+error.message);return;} toast("Nomor diubah"); nav("detail",id); };
     const pf=folderUrl(c.photo_folder_ref);
     if(pf) row.appendChild(el(`<a class="linkbtn" href="${pf}" target="_blank" rel="noopener" style="text-decoration:none">Foto</a>`));
-    row.appendChild(copy); row.appendChild(edit); cc.appendChild(row);
-  }
-  if(conts.length){
-    const bar=el(`<div class="savebar" style="justify-content:flex-start;margin-top:12px"><button class="iconbtn" style="color:var(--accent)">Buka di BNCT</button></div>`);
-    bar.querySelector("button").onclick=()=>{ navigator.clipboard.writeText(conts.map(c=>c.container_no).join("\n")).then(()=>toast(`${conts.length} nomor disalin`)); window.open(BNCT_URL,"_blank","noopener"); };
-    cc.appendChild(bar);
+    row.appendChild(copy); row.appendChild(bnctBtn); row.appendChild(edit); cc.appendChild(row);
   }
   w.appendChild(cc);
 
@@ -653,7 +652,7 @@ function phaseOf(mv){
 function shipSort(a,b){ return (a.exporter_code||"").localeCompare(b.exporter_code||"")||((a.sequence_number||0)-(b.sequence_number||0)); }
 function shipMiniRow(s){
   const [done,total]=progressOf(s);
-  const conts=s.containers||[]; const atStack=conts.filter(c=>c.last_status_code==="51").length;
+  const conts=s.containers||[]; const atStack=conts.filter(c=>isDoneCode(c.last_status_code)).length;
   const pctv=total?Math.round(done/total*100):0; const full=total&&done===total;
   const row=el(`<div class="vrow tap">${badge(s.exporter_code,s.sequence_number)}
     <div class="vbar"><span style="width:${pctv}%;background:${full?"var(--ok)":"var(--accent)"}"></span></div>

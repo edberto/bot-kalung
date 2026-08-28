@@ -11,7 +11,7 @@ import sqlite3
 from dataclasses import dataclass
 
 from ..core.db import Database, new_id
-from .bnct import STACK_RECEIVING_CODE
+from .bnct import is_container_done
 
 
 @dataclass
@@ -34,7 +34,8 @@ class ContainerRow:
 
     @property
     def at_stack_receiving(self) -> bool:
-        return self.last_status_code == STACK_RECEIVING_CODE
+        """Container received/done — status 50 (GATE IN) and above."""
+        return is_container_done(self.last_status_code)
 
 
 class Containers:

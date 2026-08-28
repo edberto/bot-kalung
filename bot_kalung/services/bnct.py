@@ -128,8 +128,19 @@ class BnctReading:
 
 # Container endpoint sites (uppercase, unlike the lowercase vessel SITES).
 CONTAINER_SITES = ("PTP", "TPKB")
-# The status that fires the "container is being received at the stack" alert.
-STACK_RECEIVING_CODE = "51"
+# A container is treated as received/done (and the alert fires) once its numeric
+# BNCT status reaches this threshold — 50 (GATE IN) and above (51 STACK
+# RECEIVING, …). Set to 50 per the user (2026-08).
+CONTAINER_DONE_MIN = 50
+
+
+def is_container_done(code) -> bool:
+    """True when a BNCT status code is numeric and >= CONTAINER_DONE_MIN. A None
+    or non-numeric code (e.g. an unread container) is not done."""
+    try:
+        return int(code) >= CONTAINER_DONE_MIN
+    except (TypeError, ValueError):
+        return False
 
 
 @dataclass
@@ -154,7 +165,8 @@ class BnctContainer:
 
     @property
     def at_stack_receiving(self) -> bool:
-        return self.status_code == STACK_RECEIVING_CODE
+        """Container received/done — status 50 (GATE IN) and above."""
+        return is_container_done(self.status_code)
 
 
 # -- HTML token extraction ---------------------------------------------------
