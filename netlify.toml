@@ -1,0 +1,18 @@
+# Netlify continuous deployment for the Bot Kalung PWA.
+#
+# The repository root holds the Python desktop/server app; only the static PWA
+# under pwa/ is published. There is no build step — it's plain static files, so
+# the command is empty and Netlify just serves the publish directory. Pushes to
+# the production branch (master) deploy automatically once the repo is linked in
+# the Netlify UI (see pwa/README.md).
+
+[build]
+  publish = "pwa"
+  command = ""
+
+# A service worker must revalidate every load so a new version (bumped SHELL
+# cache in sw.js) is picked up promptly rather than served stale from the CDN.
+[[headers]]
+  for = "/sw.js"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"

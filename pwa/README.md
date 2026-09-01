@@ -84,10 +84,27 @@ Any static host works. Two easy $0 options:
 Either way: open the URL on your phone → browser menu → **Add to Home Screen**.
 It then launches full-screen like a native app, with the BK icon.
 
-## 4. Updating it later
-Re-drag the folder (Netlify) or re-upload (Cloudflare). Bump the `SHELL` cache
-name in `sw.js` (e.g. `kalung-shell-v2`) when you change `index.html` so phones
-don't serve a stale cached copy.
+## 4. Continuous deployment from GitHub (recommended — no more manual uploads)
+Link the repo to Netlify once, and every push to **master** deploys the PWA
+automatically. The repo root has a `netlify.toml` that publishes only `pwa/` with
+no build step, so nothing else in the repo is served.
+
+**Link your existing site (keeps the same URL):**
+1. Netlify → your site → **Site configuration → Build & deploy → Continuous
+   deployment** → **Link repository** (a.k.a. "Link site to Git").
+2. Authorize **GitHub** and pick **`edberto/bot-kalung`**.
+3. Netlify reads `netlify.toml` automatically — **Publish directory** `pwa`,
+   **Build command** empty, **Production branch** `master`. Save.
+4. Push to master → Netlify builds and deploys within ~30s. Watch **Deploys**.
+
+(Or **Add new site → Import an existing project → GitHub** to create a fresh site
+from the repo; you can rename it afterward.)
+
+When you change `index.html`, bump the `SHELL` cache name in `sw.js` (e.g.
+`kalung-shell-v11`) so phones fetch the new shell instead of a stale cached copy.
+
+**Manual fallback:** you can still drag the `pwa/` folder onto
+<https://app.netlify.com/drop> if you ever want a one-off deploy.
 
 ## Troubleshooting
 - **Login fails ("Invalid login credentials")** — the user wasn't created, or
