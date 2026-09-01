@@ -309,6 +309,9 @@ function voyageMatches(a,b){ a=norm(a); b=norm(b); if(a.length<3||b.length<3) re
 function vesselMatches(n1,v1,n2,v2){ return nameMatches(n1,n2)&&voyageMatches(v1,v2); }
 // A container is received/done (green) once its numeric BNCT status is >= 50.
 function isDoneCode(code){ const n=parseInt(code,10); return !isNaN(n) && n>=50; }
+// BNCT dates read "DD/MM/YYYY HH:MM" — return the ISO date, for a monitored
+// vessel with no shipment (whose ETD comes from the reading, not a shipment).
+function parseBnctDate(s){ const m=/(\d{1,2})\/(\d{1,2})\/(\d{4})/.exec(s||""); return m?`${m[3]}-${m[2].padStart(2,"0")}-${m[1].padStart(2,"0")}`:null; }
 function folderUrl(fp){ return fp && fp.startsWith("drive:") ? `https://drive.google.com/drive/folders/${fp.slice(6)}` : null; }
 function uuid(){ return crypto.randomUUID(); }
 
@@ -697,15 +700,22 @@ async function renderMonitor(){
     const k=norm(s.vessel_name)+"|"+norm(s.voyage);
     (voyages[k]=voyages[k]||{vessel:s.vessel_name,voyage:s.voyage,etd:s.etd_belawan,mv:null,ships:[]}).ships.push(s);
   }
-  if(!Object.keys(voyages).length && !novessel.length){ $("views").innerHTML=`<div class="empty">Belum ada pengiriman aktif.</div>`; return; }
-  const byPhase={};
+  const byPhase={}; const usedMv=new Set();
   for(const k in voyages){
     const v=voyages[k];
     // match to a monitored vessel the same fuzzy way the server does (voyage
     // "26RY132N" ~ "132N"), not exact string equality
     v.mv = monitored.find(m=>vesselMatches(v.vessel, v.voyage, m.vessel_name, m.voyage)) || null;
+    if(v.mv) usedMv.add(v.mv);
     v.phase=phaseOf(v.mv); (byPhase[v.phase]=byPhase[v.phase]||[]).push(v);
   }
+  // Monitored vessels the user tracks that no active shipment uses — still show them.
+  for(const m of monitored){
+    if(usedMv.has(m)) continue;
+    const v={vessel:m.vessel_name, voyage:m.voyage, etd:parseBnctDate(readingOf(m)&&readingOf(m).etd), mv:m, ships:[]};
+    v.phase=phaseOf(m); (byPhase[v.phase]=byPhase[v.phase]||[]).push(v);
+  }
+  if(!Object.keys(byPhase).length && !novessel.length){ $("views").innerHTML=`<div class="empty">Belum ada pengiriman atau kapal dipantau.</div>`; return; }
   const w=document.createElement("div");
   const manage=el(`<div class="savebar" style="justify-content:flex-end;margin:-2px 0 6px"><button class="iconbtn">🚢 Kelola Kapal</button></div>`);
   manage.querySelector("button").onclick=()=>nav("vessels");
@@ -720,8 +730,7 @@ async function renderMonitor(){
     }
     const list=(byPhase[key]||[]).sort((a,b)=>{ const da=daysUntil(a.etd), db=daysUntil(b.etd); return ((da==null)-(db==null))||((da??0)-(db??0)); });
     if(!list.length) continue;
-    const nships=list.reduce((n,v)=>n+v.ships.length,0);
-    w.appendChild(el(`<div class="grouphdr" style="color:${color}">${label} · ${nships}</div>`));
+    w.appendChild(el(`<div class="grouphdr" style="color:${color}">${label} · ${list.length}</div>`));
     for(const v of list){
       const r=readingOf(v.mv); const d=daysUntil(v.etd);
       const card=el(`<div class="card">
@@ -734,7 +743,8 @@ async function renderMonitor(){
         <div class="holder" style="margin-top:8px"></div></div>`);
       const tbl=bnctTable(r); if(tbl) card.querySelector(".bnctslot").appendChild(tbl);
       const holder=card.querySelector(".holder");
-      v.ships.sort(shipSort).forEach(s=>holder.appendChild(shipMiniRow(s)));
+      if(v.ships.length) v.ships.sort(shipSort).forEach(s=>holder.appendChild(shipMiniRow(s)));
+      else holder.appendChild(el(`<div class="metaline">Tidak ada pengiriman aktif — dipantau saja.</div>`));
       w.appendChild(card);
     }
   }
