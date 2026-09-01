@@ -116,8 +116,8 @@ with tempfile.TemporaryDirectory() as tmp:
     voyages = {r["voyage"] for r in integra}
     check("import auto-adds the shipment's vessel to Monitor Kapal",
           "162E" in voyages)
-    check("auto-add fills the 3-voyage window",
-          {"162E", "163E", "164E"} <= voyages)
+    check("auto-add does NOT fill a window (auto-window off by default)",
+          "163E" not in voyages and "164E" not in voyages)
     check("the vessel voyage is added once, not per shipment",
           sum(1 for r in integra if r["voyage"] == "162E") == 1)
 

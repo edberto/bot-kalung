@@ -11,7 +11,8 @@ from . import theme
 
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import (
-    QDialog, QHBoxLayout, QLabel, QLineEdit, QScrollArea, QVBoxLayout, QWidget,
+    QCheckBox, QDialog, QHBoxLayout, QLabel, QLineEdit, QScrollArea, QVBoxLayout,
+    QWidget,
 )
 
 from ..services.vessel_monitor import MonitoredVessels, state_of
@@ -68,6 +69,11 @@ class VesselManagerDialog(QDialog):
         form.addWidget(self.voyage_field)
         form.addWidget(add_button)
         outer.addLayout(form)
+
+        # Off by default: a vessel tracks only the voyages entered by hand. Tick to
+        # auto-roll a 3-voyage window forward as voyages depart.
+        self.auto_window_check = QCheckBox("Lacak voyage berikutnya otomatis")
+        outer.addWidget(self.auto_window_check)
 
         self.message = InlineMessage()
         outer.addWidget(self.message)
@@ -166,10 +172,12 @@ class VesselManagerDialog(QDialog):
         if not name or not voyage:
             self.message.show_error("Isi nama kapal dan voyage awal.")
             return
-        if not self._safely(lambda: self.vessels.add_vessel(name, voyage)):
+        auto = 1 if self.auto_window_check.isChecked() else 0
+        if not self._safely(lambda: self.vessels.add_vessel(name, voyage, auto_window=auto)):
             return
         self.name_field.clear()
         self.voyage_field.clear()
+        self.auto_window_check.setChecked(False)
         self.message.show_success(f"Memantau {name} mulai voyage {voyage}.")
         self.refresh()
         self.changed.emit()

@@ -1152,7 +1152,7 @@ const MV_STATE = { notfound:["Belum Terjadwal","#6b7280"], scheduled:["Terjadwal
   berthed:["Sudah Sandar","#059669"], departed:["Sudah Berangkat","#b91c1c"] };
 async function renderManageVessels(){
   const { data:vessels, error } = await sb.from("monitored_vessels")
-    .select("id,vessel_name,voyage,state,last_phase,last_found,last_departing").order("vessel_name");
+    .select("id,vessel_name,voyage,state,last_phase,last_found,last_departing,auto_window").order("vessel_name");
   if(error) throw error;
   const groups={}; (vessels||[]).forEach(v=>(groups[v.vessel_name]=groups[v.vessel_name]||[]).push(v));
   const w=document.createElement("div");
@@ -1160,21 +1160,28 @@ async function renderManageVessels(){
     <div class="sectlabel" style="margin-top:0">Tambah kapal</div>
     <input id="mvName" class="big" placeholder="Nama kapal" style="margin-bottom:8px">
     <input id="mvVoy" class="big" placeholder="Voyage awal (mis. 184E)" style="margin-bottom:10px">
+    <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;font-size:14px"><input type="checkbox" id="mvAuto"> Lacak voyage berikutnya otomatis</label>
     <div class="savebar" style="justify-content:flex-start;margin-top:0"><button class="iconbtn" style="color:var(--accent)">Tambah</button></div>
-    <div class="metaline" style="margin-top:8px">Server mengisi 3 voyage berikutnya otomatis pada pemeriksaan berikutnya.</div></div>`);
+    <div class="metaline" style="margin-top:8px">Tanpa centang: hanya voyage ini yang dilacak. Dengan centang: server mengisi & menggeser window 3 voyage otomatis.</div></div>`);
   add.querySelector("button").onclick=async ()=>{
     const name=w.querySelector("#mvName").value.trim(), voy=w.querySelector("#mvVoy").value.trim();
     if(!name||!voy){ toast("Isi nama & voyage"); return; }
-    const {error}=await sb.from("monitored_vessels").insert({id:"mv:"+uuid(),vessel_name:name,voyage:voy,created_at:nowIso()});
+    const auto=w.querySelector("#mvAuto").checked?1:0;
+    const {error}=await sb.from("monitored_vessels").insert({id:"mv:"+uuid(),vessel_name:name,voyage:voy,auto_window:auto,created_at:nowIso()});
     if(error){toast("Gagal: "+error.message);return;} toast("Kapal ditambahkan"); nav("vessels"); };
   w.appendChild(add);
   const names=Object.keys(groups).sort((a,b)=>a.toLowerCase().localeCompare(b.toLowerCase()));
   if(!names.length) w.appendChild(el(`<div class="empty">Belum ada kapal yang dipantau.</div>`));
   for(const name of names){
     const rows=groups[name].sort((a,b)=>{ const va=(a.voyage||"").match(/\d+/), vb=(b.voyage||"").match(/\d+/); return (va?+va[0]:-1)-(vb?+vb[0]:-1)||(a.voyage||"").localeCompare(b.voyage||""); });
+    const auto=rows.some(r=>r.auto_window);
     const card=el(`<div class="card"></div>`);
-    const head=el(`<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><b style="flex:1">${esc(name)}</b><button class="linkbtn" style="color:var(--danger)">Hapus Kapal</button></div>`);
-    head.querySelector("button").onclick=async ()=>{ if(!confirm(`Hapus kapal ${name} dan semua voyage-nya?`)) return; await sb.from("monitored_vessels").delete().eq("vessel_name",name); toast("Kapal dihapus"); nav("vessels"); };
+    const head=el(`<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><b style="flex:1">${esc(name)}</b></div>`);
+    const autoBtn=el(`<button class="linkbtn" style="color:${auto?"var(--ok)":"var(--muted)"}">${auto?"🔁 Auto aktif":"Auto nonaktif"}</button>`);
+    autoBtn.onclick=async ()=>{ const {error}=await sb.from("monitored_vessels").update({auto_window:auto?0:1}).eq("vessel_name",name); if(error){toast("Gagal: "+error.message);return;} toast(auto?"Auto-lacak dimatikan":"Auto-lacak dinyalakan"); nav("vessels"); };
+    const delBtn=el(`<button class="linkbtn" style="color:var(--danger)">Hapus Kapal</button>`);
+    delBtn.onclick=async ()=>{ if(!confirm(`Hapus kapal ${name} dan semua voyage-nya?`)) return; await sb.from("monitored_vessels").delete().eq("vessel_name",name); toast("Kapal dihapus"); nav("vessels"); };
+    head.appendChild(autoBtn); head.appendChild(delBtn);
     card.appendChild(head);
     for(const v of rows){
       const st=stateOf(v); const meta=MV_STATE[st]||["?","#6b7280"];

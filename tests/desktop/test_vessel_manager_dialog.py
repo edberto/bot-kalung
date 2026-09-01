@@ -53,8 +53,9 @@ with tempfile.TemporaryDirectory() as tmp:
     check("add is refused without a voyage", group("WAN HAI 101") == [])
 
     dialog.voyage_field.setText("N379")
+    dialog.auto_window_check.setChecked(True)      # opt in to the rolling window
     dialog._add()
-    check("adding creates a 3-voyage window",
+    check("adding (with auto-window) creates a 3-voyage window",
           sorted(r["voyage"] for r in group("WAN HAI 101"))
           == ["N379", "N380", "N381"])
     check("add fires 'changed'", changes and len(changes) == 1)
@@ -68,7 +69,7 @@ with tempfile.TemporaryDirectory() as tmp:
     check("delete-voyage fires 'changed'", len(changes) == 2)
 
     # ---- delete the whole vessel ------------------------------------------
-    store.add_vessel("INTEGRA", "182E")
+    store.add_vessel("INTEGRA", "182E", auto_window=1)
     dialog.refresh()
     check("a second vessel shows in the dialog",
           set(store.groups()) == {"WAN HAI 101", "INTEGRA"})

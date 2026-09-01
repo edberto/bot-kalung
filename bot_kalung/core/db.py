@@ -139,7 +139,8 @@ CREATE TABLE IF NOT EXISTS monitored_vessels (
     last_departing  INTEGER NOT NULL DEFAULT 0,
     last_summary    TEXT,
     last_reading    TEXT,
-    state           TEXT
+    state           TEXT,
+    auto_window     INTEGER NOT NULL DEFAULT 0
 );
 
 -- Registry for the folder-scan tracker (post-refactor). One row per

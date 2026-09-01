@@ -69,6 +69,14 @@ def state_of(row) -> str:
     return "notfound"
 
 
+def _auto_window(row) -> bool:
+    """Whether this vessel auto-tracks subsequent voyages (0 for a pre-column row)."""
+    try:
+        return bool(row["auto_window"])
+    except (KeyError, IndexError):
+        return False
+
+
 def advance_state(current: str, reading: BnctReading) -> str:
     """The new state: the furthest-forward of the current and observed states.
 
@@ -93,20 +101,27 @@ class MonitoredVessels:
     def __init__(self, db: Database):
         self.db = db
 
-    def add(self, vessel_name: str, voyage: str = "") -> str:
+    def add(self, vessel_name: str, voyage: str = "", auto_window: int = 0) -> str:
         vid = new_id()
         self.db.execute(
-            "INSERT INTO monitored_vessels (id, vessel_name, voyage, created_at) "
-            "VALUES (?,?,?,?)",
-            (vid, vessel_name.strip(), voyage.strip(), _now()))
+            "INSERT INTO monitored_vessels (id, vessel_name, voyage, auto_window, "
+            "created_at) VALUES (?,?,?,?,?)",
+            (vid, vessel_name.strip(), voyage.strip(), 1 if auto_window else 0, _now()))
         return vid
 
     def add_vessel(self, vessel_name: str, start_voyage: str,
-                   window: int = 3) -> str:
-        """Start monitoring a vessel from `start_voyage`, filling the window."""
-        vid = self.add(vessel_name, start_voyage)
+                   window: int = 3, auto_window: int = 0) -> str:
+        """Start monitoring a vessel from `start_voyage`. Fills a rolling window of
+        upcoming voyages only when `auto_window` is set."""
+        vid = self.add(vessel_name, start_voyage, auto_window=auto_window)
         self.ensure_window(vessel_name.strip(), window)
         return vid
+
+    def set_auto_window(self, vessel_name: str, on: bool) -> None:
+        """Toggle auto-tracking of subsequent voyages for a whole vessel."""
+        self.db.execute(
+            "UPDATE monitored_vessels SET auto_window=? WHERE vessel_name=?",
+            (1 if on else 0, vessel_name.strip()))
 
     def ensure_window(self, vessel_name: str, target: int = 3) -> None:
         """Top up to `target` non-departed voyages by adding the next voyage(s)
@@ -117,6 +132,10 @@ class MonitoredVessels:
         """
         try:
             rows = self._group_rows(vessel_name)
+            # Only roll the window forward for a vessel the user opted in — others
+            # track exactly the voyages entered by hand (auto_window off).
+            if not rows or not any(_auto_window(r) for r in rows):
+                return
             voyages = [r["voyage"] for r in rows if r["voyage"]]
             if not voyages:
                 return
@@ -128,7 +147,7 @@ class MonitoredVessels:
                 nxt = next_voyage(max(voyages, key=_voyage_int))
                 if not nxt or nxt.upper() in seen:
                     break                  # no digits / would duplicate
-                self.add(vessel_name.strip(), nxt)
+                self.add(vessel_name.strip(), nxt, auto_window=1)
                 voyages.append(nxt)
                 seen.add(nxt.upper())
                 non_departed += 1

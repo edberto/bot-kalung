@@ -257,8 +257,8 @@ with tempfile.TemporaryDirectory() as tmp:
     def non_departed(name):
         return sum(1 for r in store._group_rows(name) if state_of(r) != "departed")
 
-    store.add_vessel("WAN HAI 101", "N379")
-    check("adding a vessel fills a 3-voyage window",
+    store.add_vessel("WAN HAI 101", "N379", auto_window=1)
+    check("adding a vessel (auto_window) fills a 3-voyage window",
           voyages("WAN HAI 101") == ["N379", "N380", "N381"])
 
     n379 = row_for("WAN HAI 101", "N379")["id"]
@@ -276,7 +276,7 @@ with tempfile.TemporaryDirectory() as tmp:
     check("deleting a non-departed voyage refills to 3",
           non_departed("WAN HAI 101") == 3)
 
-    store.add_vessel("INTEGRA", "182E")
+    store.add_vessel("INTEGRA", "182E", auto_window=1)
     check("a numeric-prefix voyage rolls too (182E/183E/184E)",
           voyages("INTEGRA") == ["182E", "183E", "184E"])
     check("the two vessels are grouped separately",
