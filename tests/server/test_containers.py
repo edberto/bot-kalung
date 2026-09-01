@@ -163,9 +163,9 @@ with tempfile.TemporaryDirectory() as tmp:
           kept.at_stack_receiving and kept.last_site == "TPKB")
     check("sync is a no-op when already in sync (dupes/blanks/case ignored)",
           containers.sync(sid2, ["CCCU3333333", "", "aaau1111111"]) is False)
-    check("sync never wipes on an empty read",
-          containers.sync(sid2, []) is False
-          and len(containers.for_shipment(sid2)) == 2)
+    check("sync reconciles to empty (a cleared VGM drops stale containers)",
+          containers.sync(sid2, []) is True
+          and len(containers.for_shipment(sid2)) == 0)
 
 print()
 if failures:

@@ -59,14 +59,14 @@ class Containers:
 
     def sync(self, shipment_id: str, container_numbers,
              size: str | None = None) -> bool:
-        """Reconcile a shipment's containers to the VGM list — the source of truth
-        — so a typo fix, a partial fill being completed, or numbers entered after
-        import all propagate on the next scan. Adds new numbers, drops ones no
-        longer present, and leaves unchanged ones intact so their live BNCT status
-        / photo ref survive.
+        """Reconcile a shipment's containers to the VGM list — the source of truth.
+        Adds new numbers, drops ones no longer present (including all of them, for
+        a cleared VGM), and leaves unchanged ones intact so their live BNCT status
+        / photo ref survive. Returns True if it changed anything.
 
-        No-op on an empty list: a failed or not-yet-filled VGM read must never wipe
-        real containers. Returns True if it changed anything.
+        Reconciles to an empty list too, so the caller MUST only pass numbers from
+        a *successful* VGM read (ShipmentFields.vgm_containers_read) — never a
+        failed or absent read, which would wipe real containers.
         """
         wanted, seen = [], set()
         for number in container_numbers:
@@ -74,8 +74,6 @@ class Containers:
             if number and number not in seen:
                 seen.add(number)
                 wanted.append(number)
-        if not wanted:
-            return False
         existing = {row.container_no.upper(): row
                     for row in self.for_shipment(shipment_id)}
         to_add = [n for n in wanted if n not in existing]

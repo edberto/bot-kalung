@@ -160,10 +160,11 @@ def _detect_vessel_voyage_changes(shipments: Shipments, vessels: MonitoredVessel
             continue
 
         # Reconcile containers to the VGM on every scan — it is the source of
-        # truth, so a typo fix, a partial fill being completed, or numbers entered
-        # after import all propagate. sync() no-ops on an empty read (never wipes),
-        # keeps unchanged numbers (their BNCT status survives), drops removed ones.
-        if fields.containers and containers.sync(
+        # truth, so a typo fix, a partial fill completing, numbers entered after
+        # import, or a cleared VGM (e.g. a shipment copied from another) all
+        # propagate. Gated on vgm_containers_read: a failed/absent read never
+        # wipes, but a genuinely empty container table reconciles the DB to 0.
+        if fields.vgm_containers_read and containers.sync(
                 row["id"], fields.containers, size=fields.container_size_short):
             if fields.container_quantity:
                 shipments.set_party(row["id"], fields.container_quantity,

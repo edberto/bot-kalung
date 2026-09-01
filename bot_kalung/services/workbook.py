@@ -215,6 +215,7 @@ def _read_vgm(grid, fields: ShipmentFields) -> None:
     except ExcelError:
         fields.warnings.append("Tabel kontainer VGM tidak ditemukan.")
         return
+    fields.vgm_containers_read = True     # table found — an empty read is a real "0"
     numbers = []
     for row in rows:
         value = _cell(grid, row, 4)      # column D — container number

@@ -236,6 +236,10 @@ class ShipmentFields:
     container_quantity: int | None = None
     container_size_short: str | None = None
     containers: list[str] = field(default_factory=list)  # container numbers
+    # True once the VGM container table was located and read — even if it held no
+    # numbers. Lets the scan tell "genuinely empty" from "could not read", so it
+    # reconciles a cleared VGM to empty without wiping on a transient read failure.
+    vgm_containers_read: bool = False
     workbook: str | None = None
     warnings: list[str] = field(default_factory=list)
 
@@ -370,6 +374,7 @@ def _read_vgm(sheet, fields: ShipmentFields) -> None:
     except ExcelError:
         fields.warnings.append("Tabel kontainer VGM tidak ditemukan.")
         return
+    fields.vgm_containers_read = True            # table found — an empty read is a real "0"
     numbers = []
     for row in rows:
         value = sheet.range((row, 4)).value      # column D — container number
