@@ -25,6 +25,8 @@ EXPORTER_COLORS = {
     "TTJ": "#7c3aed",        # purple
     "NIT": "#16a34a",        # green
     "THREESTAR": "#dc2626",  # red
+    "AMI": "#0d9488",        # teal
+    "PMA": "#db2777",        # pink
 }
 
 # Drive folder per exporter — only AMJ matches its own code. Overridable in

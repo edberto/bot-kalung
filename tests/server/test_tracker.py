@@ -236,6 +236,54 @@ with tempfile.TemporaryDirectory() as tmp:
     check("a modified workbook is re-read again", len(reads) == 1)
 
 
+# ---- dedupe: a folder re-coded to a new (code, seq) drops the stale twin -----
+# The NIT20 -> INDO1 class: a folder is renamed/re-coded to a new number and
+# re-imported, but the old shipment still sits on the same folder_path. Once the
+# folder's live identity is known, the stale twin must go — the real one stays.
+with tempfile.TemporaryDirectory() as tmp:
+    from bot_kalung.core.db import new_id as _new_id
+
+    root = Path(tmp) / "Drive"
+    folder = make_shipment(root / "NMEHMOOD & CV.Hassan" / "2026", "2.k", "NIT02")
+    db = Database(db_path_for(root))
+    db.initialize()
+
+    tracker.run_scan(db, root, year=2026, read_fields=fake_fields)   # imports NIT2
+    nit2 = db.query_one("SELECT * FROM shipments WHERE exporter_code='NIT' "
+                        "AND sequence_number=2")
+
+    # The folder's earlier life as NIT20: a stale active shipment never cleaned
+    # up when the folder was re-coded, still pinned to the SAME folder_path.
+    stale_id = _new_id()
+    db.execute(
+        "INSERT INTO shipments (id, exporter_code, sequence_number, status, "
+        "folder_path, created_at) VALUES (?,?,?, 'active', ?, '2026-01-01')",
+        (stale_id, "NIT", 20, nit2["folder_path"]))
+
+    result = tracker.run_scan(db, root, year=2026, read_fields=fake_fields)
+    check("the stale twin on the re-coded folder is removed",
+          db.query_one("SELECT * FROM shipments WHERE id=?", (stale_id,)) is None)
+    check("the shipment matching the folder's live identity is kept",
+          db.query_one("SELECT * FROM shipments WHERE id=?", (nit2["id"],)) is not None)
+    check("the dedupe is noted in the scan report",
+          any("NIT20" in r and "duplikat" in r for r in result.report))
+
+    # Safety: two twins on a folder NOT discovered this scan are BOTH left alone
+    # — a transient discovery miss must never guess which to delete.
+    ghost = root / "ghost-folder"
+    ghost.mkdir()
+    a, b = _new_id(), _new_id()
+    for sid, seq in ((a, 1), (b, 2)):
+        db.execute(
+            "INSERT INTO shipments (id, exporter_code, sequence_number, status, "
+            "folder_path, created_at) VALUES (?,?,?, 'active', ?, '2026-01-01')",
+            (sid, "ZZ", seq, str(ghost)))
+    tracker.run_scan(db, root, year=2026, read_fields=fake_fields)
+    check("twins on an undiscovered folder are both left in place",
+          db.query_one("SELECT * FROM shipments WHERE id=?", (a,)) is not None
+          and db.query_one("SELECT * FROM shipments WHERE id=?", (b,)) is not None)
+
+
 print()
 if failures:
     print(f"{len(failures)} FAILED: {failures}")

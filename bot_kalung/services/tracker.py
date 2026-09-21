@@ -190,6 +190,40 @@ def _detect_vessel_voyage_changes(shipments: Shipments, vessels: MonitoredVessel
         result.vessel_changes.append(f"{label}: {was} → {new_vessel} {new_voyage}")
 
 
+def _dedupe_shared_folders(shipments: Shipments, by_key: dict,
+                           result: ScanApplyResult) -> None:
+    """Enforce one folder -> one shipment. If a folder is re-coded to a brand-new
+    (code, seq) — imported as a new shipment while the old one lingers on the same
+    folder (e.g. a folder renamed from NIT20 to INDO1) — two active shipments end
+    up sharing a folder_path. Keep the one whose (code, seq) matches the folder's
+    CURRENT identity and remove the stale duplicate. Acts only when the folder is
+    discovered this scan and exactly matches one of them, so a transient discovery
+    miss never deletes anything.
+    """
+    ident_by_ref = {_folder_ref(cand.folder): key for key, cand in by_key.items()}
+    by_folder: dict[str, list] = {}
+    for row in shipments.active():
+        if row["folder_path"]:
+            by_folder.setdefault(row["folder_path"], []).append(row)
+    for folder_ref, rows in by_folder.items():
+        if len(rows) < 2:
+            continue
+        current = ident_by_ref.get(folder_ref)
+        if current is None:
+            continue                       # folder not discovered now — don't guess
+        keep = next((r for r in rows
+                     if (r["exporter_code"], r["sequence_number"]) == current), None)
+        if keep is None:
+            continue                       # none matches the live identity — ambiguous
+        for row in rows:
+            if row["id"] == keep["id"]:
+                continue
+            shipments.delete(row["id"])
+            result.report.append(
+                f"{row['exporter_code']}{row['sequence_number']}: duplikat folder "
+                f"dihapus (folder kini {keep['exporter_code']}{keep['sequence_number']})")
+
+
 def run_scan(db: Database, drive_root, *, year: int | None = None, settings=None,
              read_fields=workbook.read_shipment_fields,
              reread_fields=workbook.read_shipment_fields,
@@ -272,4 +306,8 @@ def run_scan(db: Database, drive_root, *, year: int | None = None, settings=None
     _detect_vessel_voyage_changes(shipments, vessels, containers, reread_fields,
                                   imported_ids, result, plan.by_key, mtime_cache,
                                   folder_resolver)
+    # A folder re-coded to a new (code, seq) leaves the old shipment stranded on
+    # the same folder — drop the stale duplicate once the folder's live identity
+    # is known. Runs after re-pointing so folder_path reflects the current scan.
+    _dedupe_shared_folders(shipments, plan.by_key, result)
     return result
