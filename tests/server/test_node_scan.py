@@ -79,6 +79,42 @@ check("scanner imports the contiguous not-done run over nodes",
 check("the done shipment is recognised over nodes",
       any(c.label == "NIT1" for c in plan.done))
 
+# ---- grouping wrapper: one shared folder holding several exporter folders ---
+# "AMI & PMA" is itself no series, but its children are. Google Drive can hide a
+# nested share (a folder shared while already inside another shared folder does
+# not resurface as its own "Shared with me" root), so the scanner looks one level
+# inside such a wrapper — while still never scanning an excluded folder.
+ami = FakeNode("AMI usman Teman Tasha",
+               children=[shipment(1, "AMI"), shipment(2, "AMI")])
+pma = FakeNode("PMA", children=[
+    shipment(1, "PMA"),
+    FakeNode("Surat", children=[FakeNode("NIB.pdf", is_file=True)]),  # not a series
+])
+grouped_root = FakeNode("", children=[
+    FakeNode("AMI & PMA", children=[ami, pma]),
+    FakeNode("zzz JANGAN DISENTUH", children=[shipment(1, "ZZZ")]),  # excluded wrapper
+])
+gseries = {s.label for s in drive.discover_series(grouped_root, 2026)}
+check("a grouping wrapper's exporter children are each discovered",
+      gseries == {"AMI & PMA / AMI usman Teman Tasha", "AMI & PMA / PMA"})
+check("an excluded folder is never scanned, even as a wrapper",
+      all("JANGAN" not in label and "ZZZ" not in label for label in gseries))
+
+gplan = scanner.scan(grouped_root, 2026, set(), None)
+check("the grouped exporters import their shipments",
+      sorted(c.label for c in gplan.to_import) == ["AMI1", "AMI2", "PMA1"])
+
+# A normal exporter root (a series of its own) is NOT scanned via its stray
+# subfolders — only a wrapper that yields no series is looked into.
+hopson = FakeNode("HOPSON", children=[
+    FakeNode("2026", children=[shipment(1, "HOP")]),          # the real series
+    FakeNode("Seminar DG", children=[shipment(9, "JUNK")]),   # stray, must be ignored
+])
+hop_series = {s.label for s in drive.discover_series(
+    FakeNode("", children=[hopson]), 2026)}
+check("a stray subfolder of a normal exporter root is ignored",
+      hop_series == {"HOPSON / 2026"})
+
 # ---- folder references: local path vs Drive id ----------------------------
 from bot_kalung.services import drive_api
 from bot_kalung.services.tracker import _folder_ref

@@ -247,11 +247,46 @@ def _excluded_scan_names(settings=None) -> set[str]:
     return {n.strip().upper() for n in names}
 
 
+def _series_under(top, token: str) -> list[SeriesDir]:
+    """Shipment-series directories discoverable directly under one folder: a flat
+    exporter folder, or a current-year directory one or two levels down. Factored
+    out of discover_series so a grouping wrapper can reuse the same three layouts.
+    """
+    # Flat layout: numbered folders sit directly in the exporter folder.
+    if _has_numbered_children(top):
+        return [SeriesDir(top, top.name)]
+    # Otherwise look for current-year series one or two levels down.
+    found: list[SeriesDir] = []
+    for sub in _safe_iterdir(top):
+        if not sub.is_dir():
+            continue
+        if token in sub.name and _has_numbered_children(sub):
+            found.append(SeriesDir(sub, f"{top.name} / {sub.name}"))
+            continue
+        for subsub in _safe_iterdir(sub):
+            if (subsub.is_dir() and token in subsub.name
+                    and _has_numbered_children(subsub)):
+                found.append(SeriesDir(
+                    subsub, f"{top.name} / {sub.name} / {subsub.name}"))
+    return found
+
+
 def discover_series(drive_root, year: int, settings=None) -> list[SeriesDir]:
     """Every current-year shipment-series directory under the Drive root.
 
     Only current-year series are returned (a directory whose name contains the
     year, or a flat exporter root), so prior-year archives are ignored.
+
+    A shared folder that is itself no series, but whose immediate subfolders are
+    exporter series, is treated as a *grouping wrapper*: its children are scanned
+    one level down (e.g. "AMI & PMA" holding "AMI usman Teman Tasha" and "PMA").
+    This lets several exporters be shared to the scanner under one parent —
+    which Google Drive otherwise hides, since a folder shared while already
+    nested inside another shared folder does not resurface as its own
+    "Shared with me" root. Excluded names are still skipped, and a wrapper only
+    applies when the parent yields no series of its own, so a normal exporter
+    (a flat or year-layout root) is never re-scanned through its stray
+    subfolders.
     """
     root = _as_node(drive_root)
     if not root.is_dir():
@@ -259,26 +294,31 @@ def discover_series(drive_root, year: int, settings=None) -> list[SeriesDir]:
     excluded = _excluded_scan_names(settings)
     token = str(year)
     series: list[SeriesDir] = []
+    seen: set = set()
+
+    def add(item: SeriesDir) -> None:
+        # Dedupe by folder identity so an exporter shared both directly and via a
+        # wrapper is discovered once (Drive id, or the path when scanned locally).
+        key = getattr(item.path, "id", None) or str(item.path)
+        if key not in seen:
+            seen.add(key)
+            series.append(item)
 
     for top in _safe_iterdir(root):
         if not top.is_dir() or top.name.strip().upper() in excluded:
             continue
-        # Flat layout: numbered folders sit directly in the exporter folder.
-        if _has_numbered_children(top):
-            series.append(SeriesDir(top, top.name))
+        found = _series_under(top, token)
+        if found:
+            for item in found:
+                add(item)
             continue
-        # Otherwise look for current-year series one or two levels down.
+        # Grouping wrapper: no series of its own — scan its immediate subfolders
+        # as exporter series (one level only; excluded names still skipped).
         for sub in _safe_iterdir(top):
-            if not sub.is_dir():
+            if not sub.is_dir() or sub.name.strip().upper() in excluded:
                 continue
-            if token in sub.name and _has_numbered_children(sub):
-                series.append(SeriesDir(sub, f"{top.name} / {sub.name}"))
-                continue
-            for subsub in _safe_iterdir(sub):
-                if (subsub.is_dir() and token in subsub.name
-                        and _has_numbered_children(subsub)):
-                    series.append(SeriesDir(
-                        subsub, f"{top.name} / {sub.name} / {subsub.name}"))
+            for item in _series_under(sub, token):
+                add(SeriesDir(item.path, f"{top.name} / {item.label}"))
     return series
 
 
