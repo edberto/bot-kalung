@@ -156,6 +156,23 @@
   .vnum { font-size:12px; font-weight:700; color:var(--muted); min-width:30px; text-align:right; }
   .vstack { font-size:12px; font-weight:700; color:var(--muted); white-space:nowrap; }
   .vstack.on { color:var(--ok); }
+  /* -- active kanban: one lane per shipper, board scrolls sideways, lanes scroll down -- */
+  main#views.wide { max-width:none; }
+  .kanban { display:flex; gap:10px; overflow-x:auto; align-items:flex-start;
+    scroll-snap-type:x proximity; padding-bottom:6px; }
+  .lane { flex:0 0 min(280px, 84vw); scroll-snap-align:start; background:var(--hover);
+    border:1px solid var(--border); border-radius:12px; padding:8px; }
+  .lanehdr { font-size:12px; font-weight:800; letter-spacing:1px; margin:2px 4px 8px; }
+  .lanebody { overflow-y:auto; max-height:calc(100dvh - 52px - var(--barh) - 90px); }
+  .kcard { background:var(--surface); border:1px solid var(--border); border-top:5px solid;
+    border-radius:10px; box-shadow:var(--shadow); padding:10px; margin-bottom:8px; }
+  .vvlabel { margin-left:auto; font-size:11px; font-weight:700; background:var(--hover);
+    border-radius:6px; padding:2px 6px; max-width:60%; overflow:hidden;
+    text-overflow:ellipsis; white-space:nowrap; }
+  .kline { display:flex; justify-content:space-between; gap:8px; font-size:13px; margin-top:3px; }
+  .kline span { color:var(--muted); } .kline b { text-align:right; overflow-wrap:anywhere; }
+  .kstats { display:flex; gap:12px; margin-top:8px; font-size:12px; font-weight:700; color:var(--muted); }
+  .kstats .on { color:var(--ok); }
 
   /* calendar */
   .calhead { display:flex; align-items:center; gap:8px; margin-bottom:10px; }
@@ -446,7 +463,9 @@ function onRemoteChange(){
   clearTimeout(rtDebounce);
   rtDebounce=setTimeout(()=>{
     state.active=state.all=state.due=null;
-    if(RT_LIST_VIEWS.has(state.view)) nav(state.view);   // detail/note/search left alone (may be mid-edit)
+    // quiet: re-render in place — no spinner, scroll kept — so a background poll
+    // doesn't look like a page refresh. detail/note/search left alone (may be mid-edit)
+    if(RT_LIST_VIEWS.has(state.view)) nav(state.view, undefined, false, true);
     refreshBadge(); refreshForumBadge();
   }, 700);
 }
@@ -469,13 +488,19 @@ const SUBVIEWS = new Set(["detail","history","search","audit","settings","forum"
 // the token refreshes or the skew window passes, so we refresh + retry once.
 function isClockSkewError(e){ return /issued at future|before issued|clock|jw[st].*(future|valid)/i.test((e&&(e.message||e.error_description||e))+""); }
 
-async function nav(view, param, _retried){
+// Scroll offsets of the window + every [data-sk] scroller, keyed so a quiet
+// re-render can put the board/lanes back where the user left them.
+function scrollSnap(){ const m={_win:window.scrollY}; document.querySelectorAll("[data-sk]").forEach(e=>m[e.dataset.sk]=[e.scrollLeft,e.scrollTop]); return m; }
+function scrollRestore(m){ document.querySelectorAll("[data-sk]").forEach(e=>{ const v=m[e.dataset.sk]; if(v){ e.scrollLeft=v[0]; e.scrollTop=v[1]; } }); window.scrollTo(0,m._win); }
+
+async function nav(view, param, _retried, quiet){
   state.view = view;
   $("title").textContent = TITLES[view] || "Bot Kalung";
   $("backBtn").classList.toggle("hidden", !SUBVIEWS.has(view));
   document.querySelectorAll("#tabbar button").forEach(b=>b.classList.toggle("on", b.dataset.tab===view));
-  $("views").innerHTML = `<div class="spin">Memuat…</div>`;
-  window.scrollTo(0,0);
+  $("views").classList.toggle("wide", view==="list");
+  const snap = quiet ? scrollSnap() : null;
+  if(!quiet){ $("views").innerHTML = `<div class="spin">Memuat…</div>`; window.scrollTo(0,0); }
   try {
     if(view==="list") await renderList();
     else if(view==="detail") await renderDetail(param);
@@ -491,12 +516,14 @@ async function nav(view, param, _retried){
     else if(view==="note") await renderNoteThread(param);
     else if(view==="vessels") await renderManageVessels();
     else if(view==="scan") await renderScan();
+    if(snap) scrollRestore(snap);
   } catch(e){
     if(!_retried && isClockSkewError(e)){
       try { await sb.auth.refreshSession(); } catch(_){}
       await new Promise(r=>setTimeout(r, 1500));
-      return nav(view, param, true);
+      return nav(view, param, true, quiet);
     }
+    if(quiet) return;   // a failed background refresh keeps the current view
     $("views").innerHTML = `<div class="empty">Gagal memuat: ${esc(e.message||e)}</div>`;
   }
 }
@@ -504,30 +531,50 @@ function openDetail(id){ state.detailFrom = SUBVIEWS.has(state.view)?state.detai
 
 // -- ACTIVE LIST ----------------------------------------------------------
 function progressOf(s){ const it=s.action_items||[]; return [it.filter(i=>i.status==="final").length, it.length]; }
+// Most-progressed voyage first: departed → departing → berthed → scheduled → not found → no vessel.
+const PHASE_RANK = { departed:0, departing:1, berthed:2, scheduled:3, notfound:4, novessel:5 };
+function phaseMeta(k){ return PHASE_ORDER.find(p=>p[0]===k) || PHASE_ORDER.find(p=>p[0]==="notfound"); }
 async function renderList(){
-  const rows = [...await getActive()];
+  const [{data:vessels, error}, rows] = await Promise.all([
+    sb.from("monitored_vessels").select("vessel_name,voyage,state,last_phase,last_found,last_departing,last_reading"),
+    getActive() ]);
+  if(error) throw error;
   if(!rows.length){ $("views").innerHTML=`<div class="empty">Belum ada pengiriman aktif.</div>`; return; }
-  const groups={}; rows.forEach(r=>(groups[r.exporter_code]=groups[r.exporter_code]||[]).push(r));
-  const etdKey=(s)=>[s.etd_belawan?0:1, s.etd_belawan||""];
-  const cmp=(a,b)=>{ const ka=etdKey(a),kb=etdKey(b); return ka[0]-kb[0]||ka[1].localeCompare(kb[1]); };
-  Object.values(groups).forEach(g=>g.sort(cmp));
-  const order=Object.keys(groups).sort((a,b)=>{
-    const ka=[...groups[a]].sort(cmp)[0], kb=[...groups[b]].sort(cmp)[0];
-    return cmp(ka,kb)||a.localeCompare(b); });
-  const frag=document.createDocumentFragment();
-  for(const code of order){
-    frag.appendChild(el(`<div class="grouphdr" style="color:${badgeColor(code)}">${esc(code)} · ${groups[code].length}</div>`));
-    for(const r of groups[code]) frag.appendChild(shipCard(r));
+  const mvs=(vessels||[]).filter(v=>v.vessel_name&&v.voyage);
+  // same fuzzy vessel/voyage match + phase as the Monitor tab, so colors agree
+  const phaseFor=(s)=> (!s.vessel_name||!s.voyage) ? "novessel"
+    : phaseOf(mvs.find(m=>vesselMatches(s.vessel_name,s.voyage,m.vessel_name,m.voyage))||null);
+  const lanes={};
+  for(const s of rows){ s._phase=phaseFor(s); (lanes[s.exporter_code]=lanes[s.exporter_code]||[]).push(s); }
+  const cmp=(a,b)=>PHASE_RANK[a._phase]-PHASE_RANK[b._phase]
+    || (a.etd_belawan||"9999").localeCompare(b.etd_belawan||"9999")
+    || (a.sequence_number||0)-(b.sequence_number||0);
+  const board=el(`<div class="kanban" data-sk="board"></div>`);
+  for(const code of Object.keys(lanes).sort()){
+    const list=lanes[code].sort(cmp);
+    const lane=el(`<div class="lane"><div class="lanehdr" style="color:${badgeColor(code)}">${esc(code)} · ${list.length}</div>
+      <div class="lanebody" data-sk="lane:${esc(code)}"></div></div>`);
+    const body=lane.querySelector(".lanebody");
+    list.forEach(s=>body.appendChild(kanbanCard(s)));
+    board.appendChild(lane);
   }
-  $("views").innerHTML=""; $("views").appendChild(frag);
+  $("views").innerHTML=""; $("views").appendChild(board);
 }
-function shipCard(r){
-  const [done,total]=progressOf(r); const d=daysUntil(r.etd_belawan); const soon=d!==null&&d<=3;
-  const a=el(`<div class="card tap">
-    <div class="rowtop">${badge(r.exporter_code,r.sequence_number)}<span class="etd ${soon?"soon":""}">ETD ${fmtDate(r.etd_belawan)}</span></div>
-    <div class="vessel">${esc([r.vessel_name,r.voyage].filter(Boolean).join(" ")||"(tanpa kapal)")}</div>
-    <div class="metaline">${esc(r.destination_port||"—")} · ${r.container_quantity||"?"} × ${esc(r.container_size_short||"?")} · ${done}/${total} final</div></div>`);
-  a.onclick=()=>openDetail(r.id); return a;
+function kanbanCard(s){
+  const [done,total]=progressOf(s);
+  const conts=s.containers||[]; const gated=conts.filter(c=>isDoneCode(c.last_status_code)).length;
+  const [,phaseLabel,phaseColor]=phaseMeta(s._phase);
+  const dest=[s.destination_port,s.destination_country].filter(Boolean).join(", ");
+  const c=el(`<div class="kcard tap" style="border-top-color:${phaseColor}" title="${esc(phaseLabel)}">
+    <div class="rowtop">${badge(s.exporter_code,s.sequence_number)}<span class="vvlabel">${esc([s.vessel_name,s.voyage].filter(Boolean).join(" ")||"(tanpa kapal)")}</span></div>
+    <div class="kline"><span>Booking/DO</span><b>${esc(s.booking_number||"—")}</b></div>
+    <div class="kline"><span>Party</span><b>${s.container_quantity||"?"} × ${esc(s.container_size_short||"?")}</b></div>
+    <div class="kline"><span>Tujuan</span><b>${esc(dest||"—")}</b></div>
+    <div class="kstats">
+      <span class="${total&&done===total?"on":""}">✅ ${done}/${total} item</span>
+      <span class="${conts.length&&gated===conts.length?"on":""}">📦 ${conts.length?`${gated}/${conts.length}`:"—"} gate-in</span>
+    </div></div>`);
+  c.onclick=()=>openDetail(s.id); return c;
 }
 
 // -- SHIPMENT DETAIL ------------------------------------------------------
@@ -969,21 +1016,28 @@ async function renderHistory(){
 async function renderSearch(){
   const active = await getActive();
   const w=document.createElement("div");
-  w.appendChild(el(`<div class="filterbar"><input class="grow" id="sq" placeholder='Nomor kontainer atau party (mis. "CMAU", "10", "40")'></div>`));
-  w.appendChild(el(`<div class="metaline" style="margin:-4px 2px 10px">Cari pengiriman aktif berdasarkan nomor kontainer atau party size.</div>`));
+  // One field per search type, so a "40" typed as a container fragment doesn't
+  // also pull in every 40' party.
+  const TYPES = {
+    container:{ ph:'Nomor kontainer (mis. "CMAU", "8513405")',
+      hit:(s,q)=>{ const n=(s.containers||[]).map(c=>c.container_no).find(n=>norm(n).includes(q)); return n&&`Kontainer ${n}`; } },
+    booking:{ ph:'Nomor booking / DO (mis. "2318229000")',
+      hit:(s,q)=>norm(s.booking_number).includes(q) && `Booking ${s.booking_number}` },
+    party:{ ph:'Party (mis. "10", "40", "10x40")',
+      hit:(s,q,raw)=>(String(s.container_quantity)===raw.trim() || norm(`${s.container_quantity}X${s.container_size_short||""}`).includes(q))
+        && `Party ${s.container_quantity} × ${s.container_size_short||"?"}` },
+  };
+  w.appendChild(el(`<div class="filterbar"><select id="st">
+      <option value="container">Kontainer</option><option value="booking">Booking / DO</option><option value="party">Party</option>
+    </select><input class="grow" id="sq"></div>`));
   const res=el(`<div id="sres"></div>`); w.appendChild(res);
   $("views").innerHTML=""; $("views").appendChild(w);
   const draw=()=>{
-    const raw=$("sq").value.trim(); if(!raw){ res.innerHTML=`<div class="empty">Ketik untuk mencari.</div>`; return; }
-    const q=raw.toUpperCase(); const rows=[];
-    for(const s of active){
-      const conts=(s.containers||[]).map(c=>c.container_no);
-      const hitC=conts.find(n=>(n||"").toUpperCase().includes(q));
-      const party=`${s.container_quantity} X ${(s.container_size_short||"").toUpperCase()}`;
-      const hitP=String(s.container_quantity)===raw || party.includes(q);
-      if(hitC) rows.push([s,`Kontainer ${hitC}`]);
-      else if(hitP) rows.push([s,`Party ${s.container_quantity} × ${s.container_size_short||"?"}`]);
-    }
+    const t=TYPES[$("st").value]; $("sq").placeholder=t.ph;
+    const raw=$("sq").value; const q=norm(raw);
+    if(!q){ res.innerHTML=`<div class="empty">Ketik untuk mencari.</div>`; return; }
+    const rows=[];
+    for(const s of active){ const why=t.hit(s,q,raw); if(why) rows.push([s,why]); }
     res.innerHTML = rows.length?"":`<div class="empty">Tidak ada pengiriman ditemukan.</div>`;
     for(const [s,why] of rows){
       const c=el(`<div class="card tap"><div class="rowtop">${badge(s.exporter_code,s.sequence_number)}<span class="metaline" style="margin-left:auto">${esc(why)}</span></div>
@@ -991,7 +1045,7 @@ async function renderSearch(){
       c.onclick=()=>openDetail(s.id); res.appendChild(c);
     }
   };
-  $("sq").oninput=draw; draw();
+  $("sq").oninput=draw; $("st").onchange=()=>{ draw(); $("sq").focus(); }; draw();
 }
 
 // -- AUDIT ----------------------------------------------------------------

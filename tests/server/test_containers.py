@@ -115,6 +115,13 @@ with tempfile.TemporaryDirectory() as tmp:
     check("the latest reading is stored",
           reread.at_stack_receiving and reread.last_site == "TPKB")
 
+    prev = containers.update_status(
+        target.id, site="TPKB", status_code="51", status_text="STACK RECEIVING",
+        type="HQ", checked_at="2026-08-14T10:10:00")
+    same = next(r for r in containers.for_shipment(sid) if r.id == target.id)
+    check("an unchanged reading is not rewritten (no realtime churn)",
+          prev == "51" and same.last_checked_at == "2026-08-14T10:05:00")
+
     # ---- correcting a mis-read number ------------------------------------
     stored = containers.set_number(reread.id, "caau0000000")  # lower on purpose
     check("set_number returns the stored (upper-cased) value",

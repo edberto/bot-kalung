@@ -208,6 +208,13 @@ class BnctMonitor:
             return
         iso = bnct.etd_to_iso(merged_record(reading, prev)["etd"])
         if iso:
+            row = self.db.query_one(
+                "SELECT etd_belawan, etd_source FROM shipments WHERE id=?",
+                (shipment_id,))
+            # Already converged: skip the write (it would fire a realtime event).
+            if row and str(row["etd_belawan"] or "")[:10] == iso \
+                    and row["etd_source"] == "bnct":
+                return
             self.db.execute(
                 "UPDATE shipments SET etd_belawan=?, etd_source='bnct' WHERE id=?",
                 (iso, shipment_id))

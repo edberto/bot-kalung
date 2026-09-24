@@ -150,8 +150,15 @@ class Containers:
         can spot a transition into 51-STACK RECEIVING.
         """
         row = self.db.query_one(
-            "SELECT last_status_code FROM containers WHERE id=?", (container_id,))
+            "SELECT last_site, last_status_code, last_status_text, type "
+            "FROM containers WHERE id=?", (container_id,))
         previous = row["last_status_code"] if row else None
+        # Unchanged reading: skip the write. Every write fires a realtime event
+        # that re-renders every open PWA, so a no-op poll must stay silent.
+        if row and (row["last_site"], row["last_status_code"],
+                    row["last_status_text"]) == (site, status_code, status_text) \
+                and (type is None or row["type"] == type):
+            return previous
         self.db.execute(
             "UPDATE containers SET last_site=?, last_status_code=?, "
             "last_status_text=?, type=COALESCE(?, type), last_checked_at=? "
