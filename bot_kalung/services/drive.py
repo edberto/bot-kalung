@@ -44,6 +44,14 @@ _PL_RE = re.compile(r"P\.?\s*LIST|PL", re.IGNORECASE)   # PL, P.List, P List…
 _COPY_RE = re.compile(r"\(\s*\d+\s*\)")                 # a " (1)" duplicate copy
 # The exporter code + sequence prefix, when the name has one (AMJ23, GGN-00004).
 _CODE_SEQ_RE = re.compile(r"^(?P<code>[A-Za-z]+)-?(?P<seq>\d+)")
+# A container number (ISO 6346: 4 letters + 7 digits) is sometimes typed in front
+# of the workbook name — "KKFU7997309-HCIT05-Katt-VGM,SI,INV,PL.xlsx" — and must
+# not be read as exporter "KKFU". Leading ones are skipped before matching.
+_CONTAINER_PREFIX_RE = re.compile(r"^(?:[A-Za-z]{4}\d{7}[\s_-]*)+")
+
+
+def _code_seq_match(name: str):
+    return _CODE_SEQ_RE.match(_CONTAINER_PREFIX_RE.sub("", name))
 
 
 def is_main_workbook(name: str) -> bool:
@@ -62,7 +70,7 @@ def is_main_workbook(name: str) -> bool:
 def main_workbook_sequence(name: str) -> int | None:
     """The sequence from a `{code}{seq}` prefix, or None when the name has none
     (then the caller falls back to the folder's numeric prefix)."""
-    match = _CODE_SEQ_RE.match(name)
+    match = _code_seq_match(name)
     return int(match.group("seq")) if match else None
 
 
@@ -76,7 +84,7 @@ def main_workbook_code_seq(name: str) -> tuple[str, int] | None:
     tracker, where the exporter code is the shipment's identity rather than a
     fixed per-folder mapping.
     """
-    match = _CODE_SEQ_RE.match(name)
+    match = _code_seq_match(name)
     if not match:
         return None
     return match.group("code").upper(), int(match.group("seq"))
@@ -407,7 +415,7 @@ def derive_main_workbook_name(source_folder, new_sequence: int,
     for entry in sorted(Path(source_folder).iterdir()):
         if not entry.is_file() or not is_main_workbook(entry.name):
             continue
-        prefix = _CODE_SEQ_RE.match(entry.name)
+        prefix = _code_seq_match(entry.name)
         code = prefix.group("code") if prefix else ""
         seq = (_renumber(prefix.group("seq"), new_sequence)
                if prefix else str(new_sequence))

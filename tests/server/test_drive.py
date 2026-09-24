@@ -172,6 +172,13 @@ with tempfile.TemporaryDirectory() as tmp:
         check(f"detects {name}", drive.is_main_workbook(name)
               and drive.main_workbook_sequence(name) == seq)
 
+    # A container number typed in front of the name is not the exporter code.
+    check("a leading container number is skipped (KKFU… -> HCIT5)",
+          drive.main_workbook_code_seq("KKFU7997309-HCIT05-Katt-VGM,SI,INV,PL.xlsx")
+          == ("HCIT", 5))
+    check("a normal name still reads its own code",
+          drive.main_workbook_code_seq("HCIT04-Katt-VGM,SI,INV,PL.xlsx") == ("HCIT", 4))
+
     # A bare workbook is still the workbook (kept + renamed); its sequence just
     # falls back to the folder prefix.
     check("a bare workbook is detected", drive.is_main_workbook("VGM,SI,Inv,PL.xlsx"))
