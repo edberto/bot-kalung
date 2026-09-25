@@ -83,8 +83,11 @@ with tempfile.TemporaryDirectory() as tmp:
     second = items.list(nit)[1]
     items.set_status(second.id, "waiting_hardcopy")
     done, _ = items.progress(nit)
-    check("waiting for hardcopy counts as done (after Final)",
-          done == 2 and {i.id: i for i in items.list(nit)}[second.id].is_done)
+    check("waiting for hardcopy is NOT done (hardcopy still outstanding)",
+          done == 1 and not {i.id: i for i in items.list(nit)}[second.id].is_done)
+    items.set_status(second.id, "hardcopy_received")
+    done, _ = items.progress(nit)
+    check("hardcopy received counts as done", done == 2)
 
     try:
         items.set_status(first.id, "bogus")

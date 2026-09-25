@@ -284,9 +284,9 @@ const sb = createClient(SUPABASE_URL, SUPABASE_KEY, {
 const STATUS = [
   ["pending","Pending","#6b7280"],["in_progress","Dikerjakan","#2563eb"],
   ["draft_received","Draft diterima","#7c3aed"],["draft_revision","Revisi draft","#d97706"],
-  ["draft_ok","Draft OK","#0891b2"],["final","Final","#16a34a"],["waiting_hardcopy","Menunggu Hardcopy","#c026d3"],
+  ["draft_ok","Draft OK","#0891b2"],["final","Final","#16a34a"],["waiting_hardcopy","Menunggu Hardcopy","#c026d3"],["hardcopy_received","Hardcopy Diterima","#15803d"],
 ];
-const DONE_STATUSES = new Set(["final","waiting_hardcopy"]);   // hardcopy-pending counts as done
+const DONE_STATUSES = new Set(["final","hardcopy_received"]);   // waiting_hardcopy is still outstanding
 const STATUS_COLOR = Object.fromEntries(STATUS.map(([v,,c])=>[v,c]));
 const EXPORTER_COLORS = { AMJ:"#2563eb", TTJ:"#7c3aed", NIT:"#16a34a", THREESTAR:"#dc2626", AMI:"#0d9488", PMA:"#db2777" };
 const NOTIF_COLORS = { schedule:"#2563eb", alongside:"#16a34a", departing:"#dc2626", container:"#d97706" };
