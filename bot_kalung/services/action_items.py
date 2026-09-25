@@ -13,7 +13,7 @@ from datetime import date, datetime
 
 from ..core.constants import (
     ACTION_ITEM_SEEDS,
-    ACTION_STATUS_DONE,
+    ACTION_STATUSES_DONE,
     ACTION_STATUSES,
     DG_MARKING_CODES,
     FUMI_COUNTRIES,
@@ -60,7 +60,7 @@ class ActionItem:
 
     @property
     def is_done(self) -> bool:
-        return self.status == ACTION_STATUS_DONE
+        return self.status in ACTION_STATUSES_DONE
 
 
 class ActionItems:
@@ -82,7 +82,7 @@ class ActionItems:
         """(done, total) where done counts items at the final status."""
         rows = self.db.query(
             "SELECT status FROM action_items WHERE shipment_id=?", (shipment_id,))
-        done = sum(1 for r in rows if r["status"] == ACTION_STATUS_DONE)
+        done = sum(1 for r in rows if r["status"] in ACTION_STATUSES_DONE)
         return done, len(rows)
 
     def progress_map(self, shipment_ids) -> dict[str, tuple[int, int]]:
@@ -103,7 +103,7 @@ class ActionItems:
         for r in rows:
             entry = tally[r["shipment_id"]]
             entry[1] += 1
-            if r["status"] == ACTION_STATUS_DONE:
+            if r["status"] in ACTION_STATUSES_DONE:
                 entry[0] += 1
         return {sid: (done, total) for sid, (done, total) in tally.items()}
 
@@ -115,7 +115,7 @@ class ActionItems:
         rows = self.db.query(
             "SELECT a.id FROM action_items a JOIN shipments s ON s.id=a.shipment_id "
             "WHERE s.status='active' AND a.due_date IS NOT NULL "
-            "AND a.due_date < ? AND a.status != ?", (today, ACTION_STATUS_DONE))
+            "AND a.due_date < ? AND a.status NOT IN (?, ?)", (today, *ACTION_STATUSES_DONE))
         return len(rows)
 
     # -- seeding on import ----------------------------------------------

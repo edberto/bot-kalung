@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any
 
-from ..core.constants import ACTION_STATUS_DONE, WORKFLOW_STEPS
+from ..core.constants import ACTION_STATUSES_DONE, WORKFLOW_STEPS
 from ..core.db import Database, new_id
 from .audit import COMPLETED, CREATED, DELETED, AuditLog
 
@@ -409,7 +409,7 @@ class Shipments:
                 label=f"{row['exporter_code']}{row['sequence_number']}",
                 step_code=row["id"], title=row["title"] or "(tanpa judul)",
                 date=row["due_date"][:10],
-                is_complete=row["status"] == ACTION_STATUS_DONE))
+                is_complete=row["status"] in ACTION_STATUSES_DONE))
 
         etds = self.db.query(
             "SELECT id, exporter_code, sequence_number, etd_belawan, etd_source, "

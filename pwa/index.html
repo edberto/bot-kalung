@@ -284,8 +284,9 @@ const sb = createClient(SUPABASE_URL, SUPABASE_KEY, {
 const STATUS = [
   ["pending","Pending","#6b7280"],["in_progress","Dikerjakan","#2563eb"],
   ["draft_received","Draft diterima","#7c3aed"],["draft_revision","Revisi draft","#d97706"],
-  ["draft_ok","Draft OK","#0891b2"],["final","Final","#16a34a"],
+  ["draft_ok","Draft OK","#0891b2"],["final","Final","#16a34a"],["waiting_hardcopy","Menunggu Hardcopy","#c026d3"],
 ];
+const DONE_STATUSES = new Set(["final","waiting_hardcopy"]);   // hardcopy-pending counts as done
 const STATUS_COLOR = Object.fromEntries(STATUS.map(([v,,c])=>[v,c]));
 const EXPORTER_COLORS = { AMJ:"#2563eb", TTJ:"#7c3aed", NIT:"#16a34a", THREESTAR:"#dc2626", AMI:"#0d9488", PMA:"#db2777" };
 const NOTIF_COLORS = { schedule:"#2563eb", alongside:"#16a34a", departing:"#dc2626", container:"#d97706" };
@@ -530,7 +531,7 @@ async function nav(view, param, _retried, quiet){
 function openDetail(id){ state.detailFrom = SUBVIEWS.has(state.view)?state.detailFrom:state.view; nav("detail", id); }
 
 // -- ACTIVE LIST ----------------------------------------------------------
-function progressOf(s){ const it=s.action_items||[]; return [it.filter(i=>i.status==="final").length, it.length]; }
+function progressOf(s){ const it=s.action_items||[]; return [it.filter(i=>DONE_STATUSES.has(i.status)).length, it.length]; }
 // Most-progressed voyage first: departed → departing → berthed → scheduled → not found → no vessel.
 const PHASE_RANK = { departed:0, departing:1, berthed:2, scheduled:3, notfound:4, novessel:5 };
 function phaseMeta(k){ return PHASE_ORDER.find(p=>p[0]===k) || PHASE_ORDER.find(p=>p[0]==="notfound"); }
@@ -586,7 +587,7 @@ async function renderDetail(id){
   if(error) throw error;
   const items=(s.action_items||[]).sort((a,b)=>(a.position||0)-(b.position||0)||(a.created_at||"").localeCompare(b.created_at||""));
   const conts=(s.containers||[]).sort((a,b)=>(a.container_no||"").localeCompare(b.container_no||""));
-  const done=items.filter(i=>i.status==="final").length, total=items.length;
+  const done=items.filter(i=>DONE_STATUSES.has(i.status)).length, total=items.length;
   const chkRow = (chk.data&&chk.data[0])||null;
   const bnct = describeRecord(chkRow);
   const checkedAt = chk.data&&chk.data[0]?chk.data[0].checked_at:null;
@@ -806,8 +807,8 @@ function calEntries(all, due, y, m){
   const push=(day,e)=>{ (out[day]=out[day]||[]).push(e); };
   const today=localYMD();
   for(const it of due){ if(!inMonth(it.due_date)) continue; const day=+it.due_date.slice(8,10);
-    const s=it.shipments||{}; const overdue=it.status!=="final"&&it.due_date.slice(0,10)<today;
-    push(day,{kind:"step",sid:it.shipment_id,color:it.status==="final"?"#16a34a":overdue?"#dc2626":"#2563eb",
+    const s=it.shipments||{}; const overdue=!DONE_STATUSES.has(it.status)&&it.due_date.slice(0,10)<today;
+    push(day,{kind:"step",sid:it.shipment_id,color:DONE_STATUSES.has(it.status)?"#16a34a":overdue?"#dc2626":"#2563eb",
       code:s.exporter_code||"", seq:s.sequence_number??"", text:it.title||"(tanpa judul)"}); }
   for(const s of all){ if(!inMonth(s.etd_belawan)) continue; const day=+s.etd_belawan.slice(8,10);
     const blue=s.etd_source==="bnct"||s.etd_source==="manual";

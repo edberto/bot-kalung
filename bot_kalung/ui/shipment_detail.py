@@ -23,7 +23,7 @@ from PyQt6.QtWidgets import (
     QScrollArea, QVBoxLayout, QWidget,
 )
 
-from ..core.constants import ACTION_STATUS_DONE, EXPORTER_COLORS
+from ..core.constants import ACTION_STATUSES_DONE, EXPORTER_COLORS
 from ..services import fileops
 from ..services.action_items import ActionItems
 from ..services.bnct import LOGIN_URL
@@ -495,7 +495,7 @@ class ShipmentDetailView(QWidget):
         rows = self.items_view.rows
         total = len(rows)
         done = sum(1 for row in rows.values()
-                   if row.current_status() == ACTION_STATUS_DONE)
+                   if row.current_status() in ACTION_STATUSES_DONE)
         self.progress_label.setText(f"{done} dari {total} item final")
         self.progress_bar.setRange(0, max(total, 1))
         self.progress_bar.setValue(done)

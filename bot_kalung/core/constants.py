@@ -106,16 +106,19 @@ DEFAULT_QUARANTINE_COUNTRIES = ["PAKISTAN"]
 # instead of a done/pending checkbox. Statuses are listed in workflow order; the
 # ID labels are what the UI shows.
 ACTION_STATUSES = ["pending", "in_progress", "draft_received", "draft_revision",
-                   "draft_ok", "final"]
+                   "draft_ok", "final", "waiting_hardcopy"]
 ACTION_STATUS_LABELS = {
     "pending": "Pending",
     "in_progress": "Dikerjakan",
     "draft_received": "Draft diterima",
     "draft_revision": "Revisi draft",
     "draft_ok": "Draft OK",
+    "waiting_hardcopy": "Menunggu Hardcopy",
     "final": "Final",
 }
-ACTION_STATUS_DONE = "final"        # the status that counts an item complete
+# Statuses that count an item complete. "waiting_hardcopy" comes after Final:
+# the document is final, only the physical copy is still on its way.
+ACTION_STATUSES_DONE = ("final", "waiting_hardcopy")
 
 # The action items seeded on import, in order: (code, title). Which ones apply to
 # a given shipment is decided from its destination country and exporter code —

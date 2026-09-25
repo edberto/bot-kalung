@@ -23,6 +23,7 @@ _STATUS_COLOR = {
     "draft_received": "#7c3aed",
     "draft_revision": "#d97706",
     "draft_ok": "#0891b2",
+    "waiting_hardcopy": "#c026d3",
     "final": "#16a34a",
 }
 
