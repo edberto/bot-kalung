@@ -6,7 +6,8 @@
 #     pip install -r requirements-server.txt
 openpyxl>=3.1                       # .xlsx workbook reader
 xlrd>=2.0                           # .xls workbook reader
-requests>=2.31                      # BNCT portal HTTP
+requests>=2.31                      # BNCT portal HTTP + carrier schedule PDF
+pdfplumber>=0.11                    # carrier sailing-schedule PDF tables
 google-api-python-client>=2.190     # Drive API scan
 google-auth>=2.50                   # service-account auth
 psycopg[binary]>=3.1                # Postgres (Supabase) backend

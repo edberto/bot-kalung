@@ -193,6 +193,18 @@ CREATE TABLE IF NOT EXISTS containers (
     photo_folder_ref  TEXT,
     UNIQUE (shipment_id, container_no)
 );
+
+-- Carrier sailing schedule (reference dates only, from the Tresnamuda PDF). Kept
+-- apart from monitored_vessels on purpose: it never moves a voyage's BNCT phase.
+CREATE TABLE IF NOT EXISTS vessel_schedules (
+    vessel_name  TEXT NOT NULL,
+    voyage       TEXT NOT NULL,
+    closing_at   TEXT,
+    eta_belawan  TEXT,
+    etd_belawan  TEXT,
+    updated_at   TEXT,
+    PRIMARY KEY (vessel_name, voyage)
+);
 """
 
 # Indexes are created AFTER _add_missing_columns, because one references a

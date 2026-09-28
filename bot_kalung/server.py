@@ -27,7 +27,7 @@ from pathlib import Path
 
 from .core.pg import PostgresDatabase
 from .core.settings import Settings
-from .services import bnct, drive_api, ntfy, tracker
+from .services import bnct, drive_api, ntfy, sailing_schedule, tracker
 from .services.bnct_monitor import BnctMonitor, build_reading
 from .services.containers import Containers
 from .services.notifications import NotificationStore
@@ -97,6 +97,10 @@ def _scan_once(db, drive_client) -> None:
         _resolve_photo_folders(db, drive_client)
     except Exception:      # noqa: BLE001 - photo linking must never fail a scan
         log.exception("photo resolution failed")
+    try:
+        log.info("schedule: %d voyages stored", sailing_schedule.refresh(db))
+    except Exception:      # noqa: BLE001 - the carrier site must never fail a scan
+        log.exception("sailing schedule refresh failed")
 
 
 def _store_scan_report(db, result) -> None:

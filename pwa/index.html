@@ -584,6 +584,7 @@ async function renderDetail(id){
     sb.from("shipments").select("*,action_items(*),containers(*)").eq("id",id).single(),
     sb.from("bnct_checks").select("*").eq("shipment_id",id).order("checked_at",{ascending:false}).limit(1),
   ]);
+  const sched=schedFor(await getSchedules(), s&&s.vessel_name, s&&s.voyage);
   if(error) throw error;
   const items=(s.action_items||[]).sort((a,b)=>(a.position||0)-(b.position||0)||(a.created_at||"").localeCompare(b.created_at||""));
   const conts=(s.containers||[]).sort((a,b)=>(a.container_no||"").localeCompare(b.container_no||""));
@@ -602,6 +603,7 @@ async function renderDetail(id){
     <div class="kv" style="margin-top:8px"><b>Tujuan</b><span>${esc(s.destination_port||"—")}${s.destination_country?", "+esc(s.destination_country):""}</span></div>
     <div class="kv"><b>Party</b><span>${s.container_quantity||"?"} × ${esc(s.container_size_short||"?")}</span></div>
     <div class="kv"><b>Booking</b><span>${esc(s.booking_number||"—")}</span></div>
+    ${sched?`<div class="kv"><b>Jadwal</b><span>${esc(schedText(sched))}</span></div>`:""}
     ${s.shipping_company?`<div class="kv"><b>Pelayaran</b><span>${esc(s.shipping_company)}</span></div>`:""}
   </div>`));
 
@@ -718,6 +720,10 @@ const PHASE_ORDER = [
   ["scheduled","Terjadwal","#2563eb"], ["notfound","Belum Terjadwal","#6b7280"],
   ["novessel","Belum ada kapal","#94a3b8"], ["departed","Sudah Berangkat","#334155"],
 ];
+// Carrier sailing schedule (Tresnamuda PDF) — reference dates only; never changes a phase.
+async function getSchedules(){ const {data,error}=await sb.from("vessel_schedules").select("vessel_name,voyage,closing_at,eta_belawan,etd_belawan"); return error?[]:(data||[]); }
+function schedFor(list,vessel,voyage){ return vessel&&voyage ? list.find(x=>vesselMatches(vessel,voyage,x.vessel_name,x.voyage))||null : null; }
+function schedText(x){ const c=x.closing_at||""; return `Closing ${fmtDate(c.slice(0,10))}${c.length>10?" "+c.slice(11,16):""} · ETA ${fmtDate(x.eta_belawan)} · ETD ${fmtDate(x.etd_belawan)}`; }
 function readingOf(mv){ if(!mv||!mv.last_reading) return null; try { return JSON.parse(mv.last_reading); } catch { return null; } }
 function phaseOf(mv){
   const r=readingOf(mv);
@@ -741,6 +747,7 @@ async function renderMonitor(){
     sb.from("monitored_vessels").select("vessel_name,voyage,state,last_phase,last_found,last_departing,last_reading,last_checked_at"),
     getActive() ]);
   if(error) throw error;
+  const scheds=await getSchedules();
   const monitored=(vessels||[]).filter(v=>v.vessel_name&&v.voyage);
   const voyages={}; const novessel=[];
   for(const s of active){
@@ -787,6 +794,7 @@ async function renderMonitor(){
           <b style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(v.vessel)} · ${esc(v.voyage)}</b>
           <span class="etd ${d!=null&&d<=3?"soon":""}">${fmtDate(v.etd)}${d!=null&&d>=0?` · ${d}h`:""}</span>
         </div>
+        ${(sch=>sch?`<div class="metaline">🗓️ ${esc(schedText(sch))}</div>`:"")(schedFor(scheds,v.vessel,v.voyage))}
         <div class="bnctslot"></div>
         <div class="holder" style="margin-top:8px"></div></div>`);
       const tbl=bnctTable(r); if(tbl) card.querySelector(".bnctslot").appendChild(tbl);
