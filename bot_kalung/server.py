@@ -224,6 +224,7 @@ def _poll_containers(bnct_client, containers, notifications, vessels) -> None:
     except Exception:      # noqa: BLE001 - container polling is best-effort
         return
     stamp = datetime.now().isoformat(timespec="seconds")
+    received = []      # (label, container_no, shipment_id) newly received this poll
     for row in rows:
         card = bnct.match_container(
             cards.get(row["container_no"], []),
@@ -233,15 +234,29 @@ def _poll_containers(bnct_client, containers, notifications, vessels) -> None:
         previous = containers.update_status(
             row["id"], site=card.site, status_code=card.status_code,
             status_text=card.status_text, type=card.type, checked_at=stamp)
-        # Fire once, on the transition INTO the received/done range (status >= 50).
+        # Transition INTO the received/done range (status >= 50) — once per container.
         if not bnct.is_container_done(previous) and card.at_stack_receiving:
-            label = f"{row['exporter_code']}{row['sequence_number']}"
-            notifications.add(
-                "container", row["shipment_id"],
-                f"{label}: {row['container_no']} {card.status_text or 'diterima'}",
-                f"Kontainer {row['container_no']} sudah diterima di BNCT "
-                f"({card.status} · {card.site}). Kapal {row['vessel_name']} "
-                f"{row['voyage'] or ''}".rstrip() + ".", created_at=stamp)
+            received.append((f"{row['exporter_code']}{row['sequence_number']}",
+                             row["container_no"], row["shipment_id"]))
+    digest = container_digest(received)
+    if digest:
+        notifications.add("container", *digest, created_at=stamp)
+
+
+def container_digest(received):
+    """One notification per poll for every container received in it (was one per
+    container — too noisy). Returns (shipment_id, title, body) or None; the body
+    lists "AMJ30 - GAOU7230290" one per line. shipment_id is set only when they
+    all belong to one shipment, so tapping it opens that shipment."""
+    if not received:
+        return None
+    received = sorted(received)
+    shipments = {sid for _, _, sid in received}
+    labels = sorted({label for label, _, _ in received})
+    title = (f"{len(received)} kontainer diterima di BNCT"
+             f" ({', '.join(labels)})")
+    body = "\n".join(f"{label} - {no}" for label, no, _ in received)
+    return (next(iter(shipments)) if len(shipments) == 1 else None), title, body
 
 
 def _safe(fn, label: str) -> None:

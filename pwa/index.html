@@ -906,7 +906,7 @@ async function renderNotif(){
     const c=el(`<div class="card tap ${unread?"unread":""}">
       <div style="display:flex;gap:9px"><span class="dot" style="background:${color};margin-top:5px"></span>
       <div style="flex:1;min-width:0"><b>${esc(n.title)}</b>${unread?' <span class="muted" style="font-size:11px">• baru</span>':""}
-      ${n.body?`<div class="metaline" style="color:var(--text-2);margin-top:2px">${esc(n.body)}</div>`:""}
+      ${n.body?`<div class="metaline" style="color:var(--text-2);margin-top:2px;white-space:pre-line">${esc(n.body)}</div>`:""}
       <div class="metaline" style="margin-top:4px">${fmtDT(n.created_at)}</div></div></div></div>`);
     c.onclick=async ()=>{ if(unread){ await sb.from("notifications").update({read:1}).eq("id",n.id); refreshBadge(); } if(n.shipment_id) openDetail(n.shipment_id); else nav("monitor"); };
     w.appendChild(c);
