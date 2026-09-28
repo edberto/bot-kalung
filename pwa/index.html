@@ -338,7 +338,7 @@ function fmtv(v){ return (v===null||v===undefined||v==="")?"-":String(v); }
 function pct(a,p){ if(p===null||p===undefined||p===0||a===null||a===undefined) return ""; return `  (${Math.round(Math.max(0,Math.min(a,p))/p*100)}% selesai)`; }
 function schedLines(r){ return [["ETD",r.etd],["Clossing",r.clossing],["Clossing Reefer",r.clossing_reefer],["Open Billing",r.open_billing],["Open Stack",r.open_stacking]].filter(([,v])=>v).map(([l,v])=>`${l}: ${v}`); }
 function describeRecord(r){
-  if(!r || !r.found) return { color:"#6b7280", status:"Kapal belum terjadwal di BNCT.", detail:[] };
+  if(!r || !r.found) return { color:"#d97706", status:"Kapal belum terjadwal di BNCT.", detail:[] };
   if(r.phase==="schedule") return { color:"#2563eb", status:"Terjadwal di BNCT", detail:schedLines(r) };
   const ops = [
     `Loading: sisa ${fmtv(r.loading_remain)} dari ${fmtv(r.loading_plan)}${pct(r.loading_actual,r.loading_plan)}`,
@@ -601,7 +601,7 @@ async function renderDetail(id){
   const bnctSeen=!!lastFound || s.etd_source==="bnct";
   const sched=bnctSeen ? null : schedFor(await getSchedules(), s&&s.vessel_name, s&&s.voyage);
   const bnct = leftPortal
-    ? { color:"#334155", status:"Sudah berangkat — tidak lagi di portal BNCT", detail:[] }
+    ? { color:"#7c3aed", status:"Sudah berangkat — tidak lagi di portal BNCT", detail:[] }
     : describeRecord(chkRow);
   const checkedAt = chkRow?chkRow.checked_at:null;
   $("title").textContent = `${s.exporter_code}${s.sequence_number}`;
@@ -730,8 +730,8 @@ async function deleteShipment(s){
 // -- MONITOR (active voyages grouped by BNCT phase, with shipment readiness) --
 const PHASE_ORDER = [
   ["departing","Akan Berangkat","#b91c1c"], ["berthed","Sudah Sandar","#059669"],
-  ["scheduled","Terjadwal","#2563eb"], ["notfound","Belum Terjadwal","#6b7280"],
-  ["novessel","Belum ada kapal","#94a3b8"], ["departed","Sudah Berangkat","#334155"],
+  ["scheduled","Terjadwal","#2563eb"], ["notfound","Belum Terjadwal","#d97706"],
+  ["novessel","Belum ada kapal","#94a3b8"], ["departed","Sudah Berangkat","#7c3aed"],
 ];
 // Carrier sailing schedule (Tresnamuda PDF) — reference dates only; never changes a phase.
 async function getSchedules(){ const {data,error}=await sb.from("vessel_schedules").select("vessel_name,voyage,closing_at,eta_belawan,etd_belawan"); return error?[]:(data||[]); }
@@ -1238,8 +1238,8 @@ async function renderNoteThread(id){
 }
 
 // -- KELOLA KAPAL (manage monitored vessels) ------------------------------
-const MV_STATE = { notfound:["Belum Terjadwal","#6b7280"], scheduled:["Terjadwal","#2563eb"],
-  berthed:["Sudah Sandar","#059669"], departed:["Sudah Berangkat","#b91c1c"] };
+const MV_STATE = { notfound:["Belum Terjadwal","#d97706"], scheduled:["Terjadwal","#2563eb"],
+  berthed:["Sudah Sandar","#059669"], departed:["Sudah Berangkat","#7c3aed"] };
 async function renderManageVessels(){
   const { data:vessels, error } = await sb.from("monitored_vessels")
     .select("id,vessel_name,voyage,state,last_phase,last_found,last_departing,auto_window").order("vessel_name");
