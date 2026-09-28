@@ -589,8 +589,10 @@ async function renderDetail(id){
   const conts=(s.containers||[]).sort((a,b)=>(a.container_no||"").localeCompare(b.container_no||""));
   const done=items.filter(i=>DONE_STATUSES.has(i.status)).length, total=items.length;
   const chkRow = (chk.data&&chk.data[0])||null;
-  // carrier pre-schedule only until BNCT lists the voyage — then BNCT's dates win
-  const sched=(chkRow&&chkRow.found) ? null : schedFor(await getSchedules(), s&&s.vessel_name, s&&s.voyage);
+  // carrier pre-schedule only until BNCT has ever listed the voyage — then BNCT's
+  // dates win, even after departure when BNCT drops it (etd_source stays 'bnct')
+  const bnctSeen=(chkRow&&chkRow.found) || s.etd_source==="bnct";
+  const sched=bnctSeen ? null : schedFor(await getSchedules(), s&&s.vessel_name, s&&s.voyage);
   const bnct = describeRecord(chkRow);
   const checkedAt = chk.data&&chk.data[0]?chk.data[0].checked_at:null;
   $("title").textContent = `${s.exporter_code}${s.sequence_number}`;
