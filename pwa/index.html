@@ -580,21 +580,30 @@ function kanbanCard(s){
 
 // -- SHIPMENT DETAIL ------------------------------------------------------
 async function renderDetail(id){
-  const [{data:s, error}, chk] = await Promise.all([
+  const [{data:s, error}, chk, chkFound] = await Promise.all([
     sb.from("shipments").select("*,action_items(*),containers(*)").eq("id",id).single(),
     sb.from("bnct_checks").select("*").eq("shipment_id",id).order("checked_at",{ascending:false}).limit(1),
+    // the last check where BNCT still listed the ship — kept after it departs
+    sb.from("bnct_checks").select("*").eq("shipment_id",id).eq("found",1).order("checked_at",{ascending:false}).limit(1),
   ]);
   if(error) throw error;
   const items=(s.action_items||[]).sort((a,b)=>(a.position||0)-(b.position||0)||(a.created_at||"").localeCompare(b.created_at||""));
   const conts=(s.containers||[]).sort((a,b)=>(a.container_no||"").localeCompare(b.container_no||""));
   const done=items.filter(i=>DONE_STATUSES.has(i.status)).length, total=items.length;
   const chkRow = (chk.data&&chk.data[0])||null;
+  const lastFound = (chkFound.data&&chkFound.data[0])||null;
+  // Listed earlier but gone now = the ship left the portal (departed): keep
+  // showing the last BNCT data it had instead of "belum terjadwal".
+  const leftPortal = !(chkRow&&chkRow.found) && !!lastFound;
+  const shownRow = leftPortal ? lastFound : chkRow;
   // carrier pre-schedule only until BNCT has ever listed the voyage — then BNCT's
-  // dates win, even after departure when BNCT drops it (etd_source stays 'bnct')
-  const bnctSeen=(chkRow&&chkRow.found) || s.etd_source==="bnct";
+  // dates win, even after departure when BNCT drops it
+  const bnctSeen=!!lastFound || s.etd_source==="bnct";
   const sched=bnctSeen ? null : schedFor(await getSchedules(), s&&s.vessel_name, s&&s.voyage);
-  const bnct = describeRecord(chkRow);
-  const checkedAt = chk.data&&chk.data[0]?chk.data[0].checked_at:null;
+  const bnct = leftPortal
+    ? { color:"#334155", status:"Sudah berangkat — tidak lagi di portal BNCT", detail:[] }
+    : describeRecord(chkRow);
+  const checkedAt = chkRow?chkRow.checked_at:null;
   $("title").textContent = `${s.exporter_code}${s.sequence_number}`;
   const w=document.createElement("div");
 
@@ -631,8 +640,9 @@ async function renderDetail(id){
   w.appendChild(el(`<div class="sectlabel">Status Kapal (BNCT)</div>`));
   const bc=el(`<div class="card"></div>`);
   bc.appendChild(el(`<div style="display:flex;align-items:center;gap:8px"><span class="dot" style="background:${bnct.color}"></span><b style="color:${bnct.color}">${esc(bnct.status)}</b></div>`));
-  const bnctTbl=bnctTable(chkRow); if(bnctTbl) bc.appendChild(bnctTbl);
-  if(checkedAt) bc.appendChild(el(`<div class="metaline" style="margin-top:8px">Diperiksa: ${fmtDT(checkedAt)}</div>`));
+  const bnctTbl=bnctTable(shownRow); if(bnctTbl) bc.appendChild(bnctTbl);
+  if(leftPortal) bc.appendChild(el(`<div class="metaline" style="margin-top:8px">Data terakhir dari BNCT: ${fmtDT(lastFound.checked_at)}</div>`));
+  if(checkedAt) bc.appendChild(el(`<div class="metaline"${leftPortal?"":` style="margin-top:8px"`}>Diperiksa: ${fmtDT(checkedAt)}</div>`));
   w.appendChild(bc);
 
   // action items
