@@ -736,7 +736,7 @@ const PHASE_ORDER = [
 // Carrier sailing schedule (Tresnamuda PDF) — reference dates only; never changes a phase.
 async function getSchedules(){ const {data,error}=await sb.from("vessel_schedules").select("vessel_name,voyage,closing_at,eta_belawan,etd_belawan"); return error?[]:(data||[]); }
 function schedFor(list,vessel,voyage){ return vessel&&voyage ? list.find(x=>vesselMatches(vessel,voyage,x.vessel_name,x.voyage))||null : null; }
-function schedText(x){ const c=x.closing_at||""; return `Closing ${fmtDate(c.slice(0,10))}${c.length>10?" "+c.slice(11,16):""} · ETA ${fmtDate(x.eta_belawan)} · ETD ${fmtDate(x.etd_belawan)}`; }
+function schedText(x){ return `ETA ${fmtDate(x.eta_belawan)} · ETD ${fmtDate(x.etd_belawan)}`; }
 // Carrier schedule pages for voyages BNCT hasn't listed yet. Links only — OOCL
 // blocks scripted downloads, so the phone's browser opens them instead.
 const CARRIER_LINKS = [
