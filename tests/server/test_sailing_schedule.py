@@ -52,6 +52,39 @@ with tempfile.TemporaryDirectory() as tmp:
     check("the schedule never creates a monitored voyage (status untouched)",
           db.query("SELECT * FROM monitored_vessels") == [])
 
+shifted = sailing_schedule.parse_rows([   # route-27 PDF: extra empty first column
+    ['', 'ROUTE : BELAWAN - SINGAPORE', None, None, None, None, '24-Sep-26', None],
+    ['', 'MAO GANG GUANG ZHOU', '023N', '2-Sep-2026', '10:00 Hrs', '2-Sep-2026', '4-Sep-2026', '7-Sep-2026'],
+    [None, 'MAO GANG GUANG ZHOU', '024N', '9-Sep-2026', '10:00 Hrs', '9-Sep-2026', '11-Sep-2026', '14-Sep-2026'],
+])
+check("a PDF with an empty leading column still parses",
+      len(shifted) == 2 and shifted[0]["vessel_name"] == "MAO GANG GUANG ZHOU"
+      and shifted[0]["closing_at"] == "2026-09-02T10:00"
+      and shifted[1]["etd_belawan"] == "2026-09-11")
+
+# ---- Evergreen ShipmentLink HTML (MM/DD, no year; colspan header) ----------
+from datetime import date
+
+EVERGREEN = """<table><tr><td align='center'><table width='100%'>
+<tr><td class='f09tilb1' colspan='2'> &nbsp; </td><td class='f09tilb1'>BELAWAN</td>
+<td class='f09tilb1'>PORT KLANG WEST PORT</td><td class='f09tilb1'>LAEM CHABANG</td></tr>
+<tr><td nowrap>GREEN CELESTE 0808-132N</td><td nowrap>ARR<BR>DEP</td>
+<td nowrap>10/02<BR>10/03</td><td nowrap>10/03<BR>10/04</td><td nowrap>10/08<BR>10/09</td></tr>
+<tr><td nowrap>GREEN CELESTE 0823-139N</td><td nowrap>ARR<BR>DEP</td>
+<td nowrap>01/05<BR>01/06</td><td nowrap>01/07<BR>01/08</td><td nowrap>---<BR>---</td></tr>
+</table></td></tr></table>"""
+
+ev = sailing_schedule.parse_evergreen_html(EVERGREEN, date(2026, 9, 28))
+check("Evergreen rows parsed (outer wrapper table ignored)", len(ev) == 2)
+check("the BELAWAN column is found despite the colspan header",
+      ev[0]["eta_belawan"] == "2026-10-02" and ev[0]["etd_belawan"] == "2026-10-03")
+check("vessel and full Evergreen voyage split correctly",
+      ev[0]["vessel_name"] == "GREEN CELESTE" and ev[0]["voyage"] == "0808-132N")
+check("a month/day before today rolls into next year",
+      ev[1]["eta_belawan"] == "2027-01-05")
+check("Evergreen lists no closing time", ev[0]["closing_at"] is None)
+check("'---' is no date", sailing_schedule._mmdd("---", date(2026, 9, 28)) is None)
+
 print()
 if failures:
     print(f"{len(failures)} FAILED: {failures}")

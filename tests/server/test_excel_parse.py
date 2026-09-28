@@ -53,6 +53,12 @@ check("space vessel/voyage splits",
       == ("MAO GANG GUANG ZHOU", "021N"))
 check("a trailing pure number is part of the name, not a voyage",
       _split_vessel_voyage("WAN HAI 101") == ("WAN HAI 101", None))
+check("Evergreen voyage keeps its voyage number (0808-132N)",
+      _split_vessel_voyage("GREEN CELESTE 0808-132N") == ("GREEN CELESTE", "0808-132N"))
+check("EVER CONCERT splits the same way",
+      _split_vessel_voyage("EVER CONCERT 0809-092N") == ("EVER CONCERT", "0809-092N"))
+check("Wan Hai's hyphenated voyage is unaffected",
+      _split_vessel_voyage("WAN HAI 101-N375") == ("WAN HAI 101", "N375"))
 
 # ---- _split_destination + _clean_booking ----------------------------------
 check("destination splits port and country",

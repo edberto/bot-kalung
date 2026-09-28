@@ -312,11 +312,16 @@ def _split_vessel_voyage(value) -> tuple[str | None, str | None]:
     it carries both a letter and a digit — that tells a real voyage ("162E",
     "021N", "N375") apart from a number that is part of the vessel's own name
     ("WAN HAI 101"). Formats seen live: "INTEGRA-162E", "WAN HAI 101-N375",
-    "MAO GANG GUANG ZHOU 021N".
+    "MAO GANG GUANG ZHOU 021N", "GREEN CELESTE 0808-132N" (Evergreen).
     """
     if not isinstance(value, str) or not value.strip():
         return None, None
     text = value.strip()
+    # Evergreen writes "GREEN CELESTE 0808-132N": the whole "0808-132N" is the
+    # voyage (their voyage no. + the service voyage), not "0808" glued to the name.
+    evergreen = re.match(r"^(?P<vessel>.*\S)\s+(?P<voyage>\d{3,4}-\d{2,4}[A-Za-z])$", text)
+    if evergreen:
+        return evergreen.group("vessel").strip(), evergreen.group("voyage").upper()
     match = re.match(r"^(?P<vessel>.*\S)[\s\-]+(?P<voyage>\S+)$", text)
     if match:
         voyage = match.group("voyage")

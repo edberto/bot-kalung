@@ -584,12 +584,13 @@ async function renderDetail(id){
     sb.from("shipments").select("*,action_items(*),containers(*)").eq("id",id).single(),
     sb.from("bnct_checks").select("*").eq("shipment_id",id).order("checked_at",{ascending:false}).limit(1),
   ]);
-  const sched=schedFor(await getSchedules(), s&&s.vessel_name, s&&s.voyage);
   if(error) throw error;
   const items=(s.action_items||[]).sort((a,b)=>(a.position||0)-(b.position||0)||(a.created_at||"").localeCompare(b.created_at||""));
   const conts=(s.containers||[]).sort((a,b)=>(a.container_no||"").localeCompare(b.container_no||""));
   const done=items.filter(i=>DONE_STATUSES.has(i.status)).length, total=items.length;
   const chkRow = (chk.data&&chk.data[0])||null;
+  // carrier pre-schedule only until BNCT lists the voyage — then BNCT's dates win
+  const sched=(chkRow&&chkRow.found) ? null : schedFor(await getSchedules(), s&&s.vessel_name, s&&s.voyage);
   const bnct = describeRecord(chkRow);
   const checkedAt = chk.data&&chk.data[0]?chk.data[0].checked_at:null;
   $("title").textContent = `${s.exporter_code}${s.sequence_number}`;
@@ -603,7 +604,7 @@ async function renderDetail(id){
     <div class="kv" style="margin-top:8px"><b>Tujuan</b><span>${esc(s.destination_port||"—")}${s.destination_country?", "+esc(s.destination_country):""}</span></div>
     <div class="kv"><b>Party</b><span>${s.container_quantity||"?"} × ${esc(s.container_size_short||"?")}</span></div>
     <div class="kv"><b>Booking</b><span>${esc(s.booking_number||"—")}</span></div>
-    ${sched?`<div class="kv"><b>Jadwal</b><span>${esc(schedText(sched))}</span></div>`:""}
+    ${sched?`<div class="kv"><b>Perkiraan pelayaran</b><span>${esc(schedText(sched))}</span></div>`:""}
     ${s.shipping_company?`<div class="kv"><b>Pelayaran</b><span>${esc(s.shipping_company)}</span></div>`:""}
   </div>`));
 
@@ -724,6 +725,19 @@ const PHASE_ORDER = [
 async function getSchedules(){ const {data,error}=await sb.from("vessel_schedules").select("vessel_name,voyage,closing_at,eta_belawan,etd_belawan"); return error?[]:(data||[]); }
 function schedFor(list,vessel,voyage){ return vessel&&voyage ? list.find(x=>vesselMatches(vessel,voyage,x.vessel_name,x.voyage))||null : null; }
 function schedText(x){ const c=x.closing_at||""; return `Closing ${fmtDate(c.slice(0,10))}${c.length>10?" "+c.slice(11,16):""} · ETA ${fmtDate(x.eta_belawan)} · ETD ${fmtDate(x.etd_belawan)}`; }
+// Carrier schedule pages for voyages BNCT hasn't listed yet. Links only — OOCL
+// blocks scripted downloads, so the phone's browser opens them instead.
+const CARRIER_LINKS = [
+  { match:n=>norm(n).includes("INTEGRA"), label:"Jadwal OOCL (INTEGRA)",
+    url:"https://www.oocl.com/SiteCollectionDocuments/OOCL/eServices/Sailing%20Schedule%20by%20Service/BSS%20_LT.pdf" },
+  { match:n=>norm(n).startsWith("WANHAI"), label:"Jadwal Wan Hai",
+    url:"https://www.wanhai.com/views/skd/SkdByVsl.xhtml?file_num=64794&top_file_num=64735&parent_id=64834" },
+];
+function carrierLink(v, scheds){
+  if(v.phase!=="notfound" || schedFor(scheds,v.vessel,v.voyage)) return "";   // only while unscheduled
+  const c=CARRIER_LINKS.find(c=>c.match(v.vessel)); if(!c) return "";
+  return `<a class="iconbtn" style="display:inline-block;margin-top:8px;text-decoration:none" href="${esc(c.url)}" target="_blank" rel="noopener">🗓️ ${esc(c.label)}</a>`;
+}
 function readingOf(mv){ if(!mv||!mv.last_reading) return null; try { return JSON.parse(mv.last_reading); } catch { return null; } }
 function phaseOf(mv){
   const r=readingOf(mv);
@@ -794,7 +808,8 @@ async function renderMonitor(){
           <b style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(v.vessel)} · ${esc(v.voyage)}</b>
           <span class="etd ${d!=null&&d<=3?"soon":""}">${fmtDate(v.etd)}${d!=null&&d>=0?` · ${d}h`:""}</span>
         </div>
-        ${(sch=>sch?`<div class="metaline">🗓️ ${esc(schedText(sch))}</div>`:"")(schedFor(scheds,v.vessel,v.voyage))}
+        ${(sch=>sch&&v.phase==="notfound"?`<div class="metaline">🗓️ Perkiraan pelayaran: ${esc(schedText(sch))}</div>`:"")(schedFor(scheds,v.vessel,v.voyage))}
+        ${carrierLink(v,scheds)}
         <div class="bnctslot"></div>
         <div class="holder" style="margin-top:8px"></div></div>`);
       const tbl=bnctTable(r); if(tbl) card.querySelector(".bnctslot").appendChild(tbl);
