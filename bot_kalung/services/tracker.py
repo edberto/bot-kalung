@@ -104,7 +104,7 @@ def _detect_vessel_voyage_changes(shipments: Shipments, vessels: MonitoredVessel
                                   skip_ids: set[str], result: ScanApplyResult,
                                   by_key: dict | None = None,
                                   mtime_cache: dict | None = None,
-                                  folder_resolver=None) -> None:
+                                  folder_resolver=None, quarantine=None) -> None:
     """Re-read active shipments' workbooks to (a) re-point any whose Drive folder
     was renumbered after import — `{code}{seq}` follows the folder that now carries
     that number, not the frozen import-time one — (b) update a vessel/voyage that
@@ -173,6 +173,8 @@ def _detect_vessel_voyage_changes(shipments: Shipments, vessels: MonitoredVessel
                 f"{row['exporter_code']}{row['sequence_number']}: "
                 f"kontainer disinkronkan dari VGM ({len(fields.containers)})")
 
+        _refresh_workbook_fields(shipments, row, fields, quarantine, result)
+
         new_vessel, new_voyage = fields.vessel_name, fields.voyage
         if not new_vessel or not new_voyage:
             continue           # unreadable / incomplete — don't overwrite
@@ -188,6 +190,39 @@ def _detect_vessel_voyage_changes(shipments: Shipments, vessels: MonitoredVessel
         label = f"{row['exporter_code']}{row['sequence_number']}"
         was = f"{row['vessel_name'] or '?'} {row['voyage'] or '?'}".strip()
         result.vessel_changes.append(f"{label}: {was} → {new_vessel} {new_voyage}")
+
+
+def _refresh_workbook_fields(shipments: Shipments, row, fields, quarantine,
+                             result: ScanApplyResult) -> None:
+    """Keep destination, booking and party in step with the workbook, like
+    containers — they were read only at import, so a shipment re-pointed to a
+    different folder (NIT20 first imported from the folder that became INDO1)
+    or a corrected SI kept stale values. A blank read never overwrites, and ETD
+    is left alone: BNCT / manual edits own it after import."""
+    changes = {}
+    new_dest = (fields.destination_port, fields.destination_country)
+    if fields.destination_port and new_dest != (row["destination_port"],
+                                                row["destination_country"]):
+        changes.update(
+            destination_port=fields.destination_port,
+            destination_country=fields.destination_country,
+            quarantine_required=1 if naming.is_quarantine_required(
+                fields.destination_country,
+                quarantine or DEFAULT_QUARANTINE_COUNTRIES) else 0)
+    if fields.booking_number and fields.booking_number != row["booking_number"]:
+        changes["booking_number"] = fields.booking_number
+    new_party = (fields.container_quantity, fields.container_size_short)
+    if fields.container_quantity and new_party != (row["container_quantity"],
+                                                   row["container_size_short"]):
+        changes.update(container_quantity=fields.container_quantity,
+                       container_size_short=fields.container_size_short)
+    if changes:
+        shipments.set_workbook_fields(row["id"], changes)
+        names = {"destination_port": "tujuan", "booking_number": "booking",
+                 "container_quantity": "party"}
+        result.report.append(
+            f"{row['exporter_code']}{row['sequence_number']}: diperbarui dari "
+            f"workbook ({', '.join(v for k, v in names.items() if k in changes)})")
 
 
 def _dedupe_shared_folders(shipments: Shipments, by_key: dict,
@@ -305,7 +340,7 @@ def run_scan(db: Database, drive_root, *, year: int | None = None, settings=None
     # moved after import (the folder scan otherwise never revisits them).
     _detect_vessel_voyage_changes(shipments, vessels, containers, reread_fields,
                                   imported_ids, result, plan.by_key, mtime_cache,
-                                  folder_resolver)
+                                  folder_resolver, quarantine)
     # A folder re-coded to a new (code, seq) leaves the old shipment stranded on
     # the same folder — drop the stale duplicate once the folder's live identity
     # is known. Runs after re-pointing so folder_path reflects the current scan.

@@ -198,6 +198,34 @@ with tempfile.TemporaryDirectory() as tmp:
     nit1_blank = db.query_one("SELECT * FROM shipments WHERE id=?", (nit1["id"],))
     check("an unreadable workbook never blanks the stored vessel/voyage",
           nit1_blank["vessel_name"] == "INTEGRA" and nit1_blank["voyage"] == "163E")
+    check("an unreadable workbook never blanks destination/booking/party",
+          nit1_blank["destination_port"] == "Karachi"
+          and nit1_blank["booking_number"] == "2318229000"
+          and nit1_blank["container_quantity"] == 5)
+
+    # ---- header fields follow the workbook (NIT20: imported from the wrong
+    # folder, later re-pointed — destination/booking must not stay stale) ----
+    def corrected_fields(folder):
+        f = moved_fields(folder)
+        f.destination_port, f.destination_country = "Kattupalli", "India"
+        f.booking_number = "MESG09660500"
+        f.container_quantity, f.container_size_short = 4, "40'HC"
+        return f
+
+    fixed = tracker.run_scan(db, root, year=2026, read_fields=fake_fields,
+                             reread_fields=corrected_fields)
+    nit1_fixed = db.query_one("SELECT * FROM shipments WHERE id=?", (nit1["id"],))
+    check("a changed destination is refreshed from the workbook",
+          (nit1_fixed["destination_port"], nit1_fixed["destination_country"])
+          == ("Kattupalli", "India"))
+    check("quarantine is recomputed for the new country",
+          nit1_fixed["quarantine_required"] == 0)
+    check("a changed booking number is refreshed",
+          nit1_fixed["booking_number"] == "MESG09660500")
+    check("a changed party is refreshed",
+          nit1_fixed["container_quantity"] == 4)
+    check("the refresh is noted in the scan report",
+          any("NIT1" in r and "tujuan" in r and "booking" in r for r in fixed.report))
 
 
 # ---- mtime gating: the re-read skips unchanged workbooks -------------------

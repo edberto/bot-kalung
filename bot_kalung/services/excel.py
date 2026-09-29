@@ -263,9 +263,13 @@ def find_main_workbook(folder):
 
 
 def _split_destination(value) -> tuple[str | None, str | None]:
-    """"KARACHI, PAKISTAN" -> ("Karachi", "Pakistan")."""
+    """"KARACHI, PAKISTAN" -> ("Karachi", "Pakistan").
+
+    A note typed after the country is dropped: "MERSIN, TURKIYE >> DI BL"
+    -> ("Mersin", "Turkiye")."""
     if not isinstance(value, str) or not value.strip():
         return None, None
+    value = value.split(">", 1)[0]
     parts = [p.strip() for p in value.split(",", 1)]
     port = parts[0].title() or None
     country = parts[1].title() if len(parts) == 2 and parts[1] else None

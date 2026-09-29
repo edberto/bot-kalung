@@ -455,6 +455,20 @@ class Shipments:
             "UPDATE shipments SET container_quantity=?, container_size_short=? "
             "WHERE id=?", (quantity, size or None, shipment_id))
 
+    # Header fields a re-scan may refresh from the workbook (its source of truth).
+    _WORKBOOK_FIELDS = ("destination_port", "destination_country",
+                        "quarantine_required", "booking_number",
+                        "container_quantity", "container_size_short")
+
+    def set_workbook_fields(self, shipment_id: str, values: dict) -> None:
+        """Update workbook-derived header fields (whitelisted columns only)."""
+        cols = [c for c in self._WORKBOOK_FIELDS if c in values]
+        if not cols:
+            return
+        self.db.execute(
+            f"UPDATE shipments SET {', '.join(f'{c}=?' for c in cols)} WHERE id=?",
+            (*(values[c] for c in cols), shipment_id))
+
     def set_folder_path(self, shipment_id: str, folder_path: str | None) -> None:
         """Re-point a shipment at its Drive folder. Used when a folder was
         renumbered after import, so `{code}{seq}` follows the folder that now

@@ -45,6 +45,9 @@ check("party splits count and size", _parse_party("5 X 40'HC") == (5, "40'HC"))
 check("party is case-insensitive on X", _parse_party("2 x 20'") == (2, "20'"))
 check("bad party yields nothing", _parse_party("no party here") == (None, None))
 
+check("a note after the destination country is dropped",
+      _split_destination("MERSIN, TURKIYE >> DI BL") == ("Mersin", "Turkiye"))
+
 # ---- _split_vessel_voyage -------------------------------------------------
 check("hyphen vessel/voyage splits",
       _split_vessel_voyage("INTEGRA-162E") == ("INTEGRA", "162E"))
