@@ -173,6 +173,13 @@
   .kline span { color:var(--muted); } .kline b { text-align:right; overflow-wrap:anywhere; }
   .kstats { display:flex; gap:12px; margin-top:8px; font-size:12px; font-weight:700; color:var(--muted); }
   .kstats .on { color:var(--ok); }
+  .knote { margin-top:8px; padding:6px 8px; font-size:12px; color:var(--text-2);
+    background:var(--hover); border-left:3px solid var(--border); border-radius:6px;
+    white-space:pre-line; overflow-wrap:anywhere;
+    display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
+  .knote.open { display:block; -webkit-line-clamp:unset; overflow:visible; }
+  .kmore { border:none; background:transparent; color:var(--accent); font-size:12px;
+    font-weight:700; padding:4px 2px 0; }
 
   /* calendar */
   .calhead { display:flex; align-items:center; gap:8px; margin-bottom:10px; }
@@ -560,7 +567,11 @@ async function renderList(){
     board.appendChild(lane);
   }
   $("views").innerHTML=""; $("views").appendChild(board);
+  // "Selengkapnya" only where the 3-line clamp actually cuts the note (or it's open)
+  board.querySelectorAll(".knote").forEach(n=>{
+    if(n.classList.contains("open") || n.scrollHeight>n.clientHeight+1) n.nextElementSibling.classList.remove("hidden"); });
 }
+const openNotes=new Set();   // shipment ids whose note is expanded — survives live refreshes
 function kanbanCard(s){
   const [done,total]=progressOf(s);
   const conts=s.containers||[]; const gated=conts.filter(c=>isDoneCode(c.last_status_code)).length;
@@ -574,7 +585,12 @@ function kanbanCard(s){
     <div class="kstats">
       <span class="${total&&done===total?"on":""}">✅ ${done}/${total} item</span>
       <span class="${conts.length&&gated===conts.length?"on":""}">📦 ${conts.length?`${gated}/${conts.length}`:"—"} gate-in</span>
-    </div></div>`);
+    </div>
+    ${(s.notes||"").trim()?`<div class="knote${openNotes.has(s.id)?" open":""}">📝 ${esc(s.notes.trim())}</div><button class="kmore hidden">${openNotes.has(s.id)?"Tutup":"Selengkapnya"}</button>`:""}</div>`);
+  const more=c.querySelector(".kmore");
+  if(more) more.onclick=(e)=>{ e.stopPropagation();          // don't open the shipment
+    const open=c.querySelector(".knote").classList.toggle("open");
+    open?openNotes.add(s.id):openNotes.delete(s.id); more.textContent=open?"Tutup":"Selengkapnya"; };
   c.onclick=()=>openDetail(s.id); return c;
 }
 
