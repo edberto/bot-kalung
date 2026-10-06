@@ -115,6 +115,22 @@ hop_series = {s.label for s in drive.discover_series(
 check("a stray subfolder of a normal exporter root is ignored",
       hop_series == {"HOPSON / 2026"})
 
+# A cancelled ("Batal") copy sharing a number must not shadow the real shipment.
+batal_root = FakeNode("", children=[FakeNode("GALLANA", children=[FakeNode("2026", children=[
+    FakeNode("1.Batal-GGN015-1x40-Afghanistan", children=[
+        FakeNode("GGN015-VGM,SI,Inv,PL.xls", is_file=True)]),
+    FakeNode("1.GGN-1x40-Taji via karachi", children=[
+        FakeNode("GGN01-Tajikistan-VGM,SI,INV,PL.xlsx", is_file=True)]),
+    shipment(2, "GGN"),
+])])])
+bplan = scanner.scan(batal_root, 2026, set(), None)
+check("a 'Batal' folder is skipped; the real folder takes its number",
+      bplan.by_key[("GGN", 1)].folder.name == "1.GGN-1x40-Taji via karachi"
+      and sorted(c.label for c in bplan.to_import) == ["GGN1", "GGN2"])
+check("'batal' must be a whole word (not inside another name)",
+      drive._CANCELLED_RE.search("1.Batalyon-x") is None
+      and drive._CANCELLED_RE.search("3.BATAL-ABC") is not None)
+
 # ---- folder references: local path vs Drive id ----------------------------
 from bot_kalung.services import drive_api
 from bot_kalung.services.tracker import _folder_ref

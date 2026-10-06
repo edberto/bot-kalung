@@ -241,10 +241,17 @@ def _has_numbered_children(path: Path) -> bool:
                for e in _safe_iterdir(path))
 
 
+# "Batal" (cancelled) in a folder name marks a dead shipment, e.g. a 2025 folder
+# copied into 2026 as "1.Batal-GGN015-..." beside the real "1.GGN-...".
+_CANCELLED_RE = re.compile(r"(?i)(?<![a-z])batal(?![a-z])")
+
+
 def numbered_folders(directory) -> list[Path]:
-    """The `\\d+.`-prefixed shipment folders directly inside a series directory."""
+    """The `\\d+.`-prefixed shipment folders directly inside a series directory,
+    skipping cancelled ("Batal") ones so they never take a live sequence."""
     return [e for e in _safe_iterdir(directory)
-            if e.is_dir() and SEQ_PREFIX_RE.match(e.name)]
+            if e.is_dir() and SEQ_PREFIX_RE.match(e.name)
+            and not _CANCELLED_RE.search(e.name)]
 
 
 def _excluded_scan_names(settings=None) -> set[str]:

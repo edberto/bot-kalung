@@ -415,7 +415,7 @@ $("loginForm").addEventListener("submit", async (e)=>{
   if(error){ $("loginErr").textContent = error.message || "Gagal masuk."; return; }
   state.email = data.user?.email || null; showApp();
 });
-$("refreshBtn").addEventListener("click", ()=>{ state.active=state.all=state.due=null; nav(state.view); refreshBadge(); });
+$("refreshBtn").addEventListener("click", ()=>{ state.active=state.all=state.due=null; nav(state.view, state.param); refreshBadge(); });   // keep the open shipment/note
 $("backBtn").addEventListener("click", ()=>nav(state.detailFrom));
 document.querySelectorAll("#tabbar button").forEach(b=>b.addEventListener("click", ()=>nav(b.dataset.tab)));
 
@@ -502,7 +502,7 @@ function scrollSnap(){ const m={_win:window.scrollY}; document.querySelectorAll(
 function scrollRestore(m){ document.querySelectorAll("[data-sk]").forEach(e=>{ const v=m[e.dataset.sk]; if(v){ e.scrollLeft=v[0]; e.scrollTop=v[1]; } }); window.scrollTo(0,m._win); }
 
 async function nav(view, param, _retried, quiet){
-  state.view = view;
+  state.view = view; state.param = param;   // the open shipment/note id, for ↻
   $("title").textContent = TITLES[view] || "Bot Kalung";
   $("backBtn").classList.toggle("hidden", !SUBVIEWS.has(view));
   document.querySelectorAll("#tabbar button").forEach(b=>b.classList.toggle("on", b.dataset.tab===view));

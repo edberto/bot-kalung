@@ -70,6 +70,35 @@ with tempfile.TemporaryDirectory() as tmp:
           f.containers == ["CMAU8513405", "TRHU5986693"])
     check("a good workbook reads without warnings", f.warnings == [])
 
+    # HAI's template labels the port "P.O.D", and has an unrelated
+    # "... add at destination ..." remark row that must not be taken.
+    hai = Path(tmp) / "33.HAI"
+    hai.mkdir()
+    wb = openpyxl.Workbook()
+    si = wb.active
+    si.title = "SI "
+    si.cell(row=29, column=5, value="P.O.D ")
+    si.cell(row=29, column=6, value="NHAVA SHEVA, INDIA")
+    si.cell(row=33, column=3, value="Showing agent / add at destination / PIC")
+    wb.save(hai / "HAI33-1 iso-Nhava-VGM,SI,Inv,P.List.xlsx")
+    f3 = read_shipment_fields(hai)
+    check("a 'P.O.D' label is read as the destination (HAI template)",
+          f3.destination_port == "Nhava Sheva" and f3.destination_country == "India")
+
+    hai34 = Path(tmp) / "34.HAI"
+    hai34.mkdir()
+    wb = openpyxl.Workbook()
+    si = wb.active
+    si.title = "SI"
+    si.cell(row=27, column=2, value="SPODUMENE CONCENTRATE")  # contains "POD" — not a label
+    si.cell(row=27, column=3, value="WRONG, PLACE")
+    si.cell(row=28, column=6, value="POD")
+    si.cell(row=28, column=7, value="MAFANG, CHINA")
+    wb.save(hai34 / "Hai34-VGM,SI,Inv,P.List.xlsx")
+    f4 = read_shipment_fields(hai34)
+    check("a bare 'POD' label is read, matched as the whole cell only",
+          f4.destination_port == "Mafang" and f4.destination_country == "China")
+
     empty = Path(tmp) / "empty"
     empty.mkdir()
     f2 = read_shipment_fields(empty)

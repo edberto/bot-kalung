@@ -345,8 +345,11 @@ def _clean_booking(value) -> str | None:
 
 def _read_si(sheet, fields: ShipmentFields) -> None:
     # Most exporters label it "Port of Discharge"; AMJ uses "Destination".
-    for label in ("PORT OF DISCHARGE", "DESTINATION"):
-        pod = find_label(sheet, label)
+    # (label, exact): HAI labels it "P.O.D" or "POD"; a bare "POD" must match the
+    # whole cell, or it would hit any word containing those letters.
+    for label, exact in (("PORT OF DISCHARGE", False), ("DESTINATION", False),
+                         ("P.O.D", False), ("POD", True)):
+        pod = find_label(sheet, label, exact=exact)
         if not pod:
             continue
         raw = sheet.range((pod[0], value_column_after(sheet, *pod))).value

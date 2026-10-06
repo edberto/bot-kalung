@@ -181,8 +181,11 @@ def _container_rows(grid) -> tuple[int, list[int]]:
 # -- field reads (same logic as excel._read_si / _read_vgm) ------------------
 
 def _read_si(grid, fields: ShipmentFields) -> None:
-    for label in ("PORT OF DISCHARGE", "DESTINATION"):
-        pod = _find_label(grid, label)
+    # (label, exact): HAI labels it "P.O.D" or "POD"; a bare "POD" must match the
+    # whole cell, or it would hit any word containing those letters.
+    for label, exact in (("PORT OF DISCHARGE", False), ("DESTINATION", False),
+                         ("P.O.D", False), ("POD", True)):
+        pod = _find_label(grid, label, exact=exact)
         if not pod:
             continue
         port, country = _split_destination(_value_right(grid, *pod))
