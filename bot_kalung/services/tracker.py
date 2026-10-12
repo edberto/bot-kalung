@@ -172,6 +172,9 @@ def _detect_vessel_voyage_changes(shipments: Shipments, vessels: MonitoredVessel
             result.report.append(
                 f"{row['exporter_code']}{row['sequence_number']}: "
                 f"kontainer disinkronkan dari VGM ({len(fields.containers)})")
+        # The SI "Ket"/"tarik" columns per container follow the sheet.
+        if fields.container_si:
+            containers.set_si_columns(row["id"], fields.container_si)
 
         _refresh_workbook_fields(shipments, row, fields, quarantine, result)
 
@@ -325,6 +328,8 @@ def run_scan(db: Database, drive_root, *, year: int | None = None, settings=None
         action_items.seed(shipment_id, candidate.code, fields.destination_country)
         containers.populate(shipment_id, fields.containers,
                             size=fields.container_size_short)
+        if fields.container_si:
+            containers.set_si_columns(shipment_id, fields.container_si)
         _ensure_vessel_monitored(vessels, fields.vessel_name, fields.voyage)
         registry.record(candidate.code, candidate.sequence, _folder_ref(candidate.folder),
                         done=False, shipment_id=shipment_id)

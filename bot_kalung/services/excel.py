@@ -240,6 +240,10 @@ class ShipmentFields:
     # numbers. Lets the scan tell "genuinely empty" from "could not read", so it
     # reconciles a cleared VGM to empty without wiping on a transient read failure.
     vgm_containers_read: bool = False
+    # SI container table's far-right per-container columns, when the template has
+    # them: "Ket" (where/when loaded) -> "note", "tarik" (pickup date) -> "tarik".
+    # {container_no: {"note": ..., "tarik": ...}}; None = no such columns.
+    container_si: dict | None = None
     workbook: str | None = None
     warnings: list[str] = field(default_factory=list)
 

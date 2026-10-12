@@ -170,6 +170,19 @@ with tempfile.TemporaryDirectory() as tmp:
           kept.at_stack_receiving and kept.last_site == "TPKB")
     check("sync is a no-op when already in sync (dupes/blanks/case ignored)",
           containers.sync(sid2, ["CCCU3333333", "", "aaau1111111"]) is False)
+    # ---- SI "Ket" notes per container --------------------------------------
+    get = lambda: db.query_one("SELECT note, tarik FROM containers WHERE shipment_id=? "
+                               "AND container_no='AAAU1111111'", (sid2,))
+    check("Ket note and tarik are stored for matching containers",
+          containers.set_si_columns(sid2, {"AAAU1111111": {"note": "Kanopan 9/10", "tarik": "8/10"}})
+          is True and (get()["note"], get()["tarik"]) == ("Kanopan 9/10", "8/10"))
+    check("unchanged values are not rewritten",
+          containers.set_si_columns(sid2, {"AAAU1111111": {"note": "Kanopan 9/10", "tarik": "8/10"}})
+          is False)
+    check("a cleared cell clears just that value",
+          containers.set_si_columns(sid2, {"AAAU1111111": {"note": "", "tarik": "8/10"}}) is True
+          and (get()["note"], get()["tarik"]) == (None, "8/10"))
+
     check("sync reconciles to empty (a cleared VGM drops stale containers)",
           containers.sync(sid2, []) is True
           and len(containers.for_shipment(sid2)) == 0)

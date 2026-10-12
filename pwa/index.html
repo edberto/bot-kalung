@@ -691,7 +691,8 @@ async function renderDetail(id){
     const st=(c.last_status_code||c.last_status_text)?`${c.last_status_code||""}-${c.last_status_text||""}`.replace(/^-|-$/g,""):"Belum ada data";
     const row=el(`<div class="item cont il" style="border-left-color:${recv?"#16a34a":"transparent"}">
       <div class="t"><div class="no">${esc(c.container_no)}</div>
-      <div class="st" style="color:${recv?"var(--ok)":"var(--muted)"}">${esc(st)}${c.last_site?" · "+esc(c.last_site):""}</div></div></div>`);
+      <div class="st" style="color:${recv?"var(--ok)":"var(--muted)"}">${esc(st)}${c.last_site?" · "+esc(c.last_site):""}</div>
+      ${(c.tarik||c.note)?`<div class="st" style="color:var(--text-2)">${[c.tarik?`🚚 Tarik ${esc(c.tarik)}`:"", c.note?`📍 ${esc(c.note)}`:""].filter(Boolean).join(" · ")}</div>`:""}</div></div>`);
     const copy=el(`<button class="linkbtn">Salin</button>`);
     copy.onclick=()=>{ navigator.clipboard.writeText(c.container_no).then(()=>toast("Nomor disalin")); };
     const bnctBtn=el(`<button class="linkbtn">BNCT</button>`);

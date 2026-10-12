@@ -82,7 +82,7 @@ class PostgresDatabase:
         source of truth): strip `--` comments (some contain ';'), split into
         statements, and apply each to Postgres. CREATE ... IF NOT EXISTS makes it
         a no-op on an already-provisioned database."""
-        from .db import INDEXES, SCHEMA
+        from .db import INDEXES, SCHEMA, _expected_columns
 
         def statements(text: str) -> list[str]:
             src = "\n".join(line for line in text.splitlines()
@@ -90,7 +90,21 @@ class PostgresDatabase:
             return [s.strip() for s in src.split(";") if "CREATE" in s.upper()]
 
         with self.connect() as conn:
-            for statement in statements(SCHEMA) + statements(INDEXES):
+            for statement in statements(SCHEMA):
+                conn.execute(statement)
+            # CREATE ... IF NOT EXISTS never adds a column to an existing table, so
+            # mirror SQLite's _add_missing_columns: add any schema column the live
+            # table lacks (additive only, type only — like SQLite). Before the
+            # indexes, which may reference a new column.
+            have = {(r["table_name"], r["column_name"]) for r in conn.execute(
+                "SELECT table_name, column_name FROM information_schema.columns "
+                "WHERE table_schema='public'").fetchall()}
+            for table, columns in _expected_columns().items():
+                for name, declaration in columns.items():
+                    if (table, name) not in have:
+                        conn.execute(f'ALTER TABLE public."{table}" ADD COLUMN '
+                                     f'IF NOT EXISTS {name} {declaration.split()[0]}')
+            for statement in statements(INDEXES):
                 conn.execute(statement)
             # Lock every table with row-level security so the public REST API
             # (anon/publishable key) exposes nothing until explicit policies are

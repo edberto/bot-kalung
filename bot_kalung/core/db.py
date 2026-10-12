@@ -191,6 +191,8 @@ CREATE TABLE IF NOT EXISTS containers (
     last_status_text  TEXT,
     last_checked_at   TEXT,
     photo_folder_ref  TEXT,
+    note              TEXT,
+    tarik             TEXT,
     UNIQUE (shipment_id, container_no)
 );
 

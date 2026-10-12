@@ -90,6 +90,29 @@ class Containers:
                     (new_id(), shipment_id, number, size))
         return True
 
+    _SI_FIELDS = ("note", "tarik")      # whitelisted columns set from the SI
+
+    def set_si_columns(self, shipment_id: str, data: dict) -> bool:
+        """Store each container's SI columns ({container_no: {"note": .., "tarik": ..}}).
+        Only values that actually changed are written (each write is a realtime
+        event); containers or columns absent from `data` are left alone; a blank
+        value clears. Returns True if anything changed."""
+        changed = False
+        for row in self.db.query(
+                "SELECT id, container_no, note, tarik FROM containers WHERE shipment_id=?",
+                (shipment_id,)):
+            entry = data.get((row["container_no"] or "").upper())
+            if not entry:
+                continue
+            diff = {k: v for k, v in entry.items()
+                    if k in self._SI_FIELDS and (row[k] or "") != v}
+            if diff:
+                self.db.execute(
+                    f"UPDATE containers SET {', '.join(f'{k}=?' for k in diff)} WHERE id=?",
+                    (*(v or None for v in diff.values()), row["id"]))
+                changed = True
+        return changed
+
     # -- reads ----------------------------------------------------------
 
     def for_shipment(self, shipment_id: str) -> list[ContainerRow]:

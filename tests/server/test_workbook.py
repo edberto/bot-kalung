@@ -99,6 +99,33 @@ with tempfile.TemporaryDirectory() as tmp:
     check("a bare 'POD' label is read, matched as the whole cell only",
           f4.destination_port == "Mafang" and f4.destination_country == "China")
 
+    # The SI container table's far-right "KET" column (AMI/MFK/NIT/PMA template).
+    nit = Path(tmp) / "21.NIT"
+    nit.mkdir()
+    wb = openpyxl.Workbook()
+    si = wb.active
+    si.title = "SI"
+    for col, head in ((3, "Description of Goods"), (7, "CONTAINER NO"), (8, "SEAL NO"),
+                      (11, "tarik"), (12, "KET")):
+        si.cell(row=22, column=col, value=head)
+    si.cell(row=23, column=7, value="ONEU0968307")
+    si.cell(row=23, column=11, value="7/10")
+    si.cell(row=23, column=12, value="Tandem 8/10")
+    si.cell(row=24, column=7, value=" ffau6222271 ")       # sloppy case/spaces
+    si.cell(row=24, column=11, value=date(2026, 10, 8))     # typed as a real date
+    si.cell(row=24, column=12, value="Kanopan 8/10 ")
+    si.cell(row=25, column=7, value="TLLU5676397")          # no note yet
+    si.cell(row=27, column=3, value="TOTAL")
+    wb.save(nit / "NIT21-KATT-VGM,SI,INV,PL.xlsx")
+    f5 = read_shipment_fields(nit)
+    check("the SI 'KET' and 'tarik' columns are read per container",
+          f5.container_si == {
+              "ONEU0968307": {"note": "Tandem 8/10", "tarik": "7/10"},
+              "FFAU6222271": {"note": "Kanopan 8/10", "tarik": "8/10"},  # real date -> d/m
+              "TLLU5676397": {"note": "", "tarik": ""}})
+    check("a template with no Ket/tarik column leaves them unset",
+          f3.container_si is None)
+
     empty = Path(tmp) / "empty"
     empty.mkdir()
     f2 = read_shipment_fields(empty)

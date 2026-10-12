@@ -17,6 +17,7 @@ exact same pure logic, reused from `excel`.
 from __future__ import annotations
 
 import io
+import re
 from pathlib import Path
 
 from .excel import (
@@ -201,6 +202,52 @@ def _read_si(grid, fields: ShipmentFields) -> None:
     if party:
         fields.container_quantity, fields.container_size_short = _parse_party(
             _value_right(grid, *party))
+
+    _read_container_si_columns(grid, fields)
+
+
+_CONTAINER_NO_RE = re.compile(r"[A-Z]{4}\d{7}")
+# Per-container SI columns -> stored field: "Keterangan"/"Ket" (where and when
+# loaded, "Kanopan 9/10") and "tarik" (pickup date, "8/10").
+_SI_COLUMNS = (("note", re.compile(r"(?i)^(keterangan|ket\.?)$")),
+               ("tarik", re.compile(r"(?i)^tarik$")))
+
+
+def _si_text(value) -> str:
+    if value is None:
+        return ""
+    if hasattr(value, "day") and hasattr(value, "month"):   # a real Excel date
+        return f"{value.day}/{value.month}"
+    return str(value).strip()
+
+
+def _read_container_si_columns(grid, fields: ShipmentFields) -> None:
+    """The SI container table's far-right "Ket" and "tarik" columns. Only some
+    templates (AMI, MFK, NIT, PMA) have them; others leave `container_si` None.
+    A row counts when its "Container No" cell holds a container number; a blank
+    cell is kept as "" so clearing it clears the stored value."""
+    header = _find_label(grid, "CONTAINER NO")
+    if header is None:
+        return
+    header_row, no_col = header
+    columns = {}
+    for (row, col), value in grid.ordered_cells():
+        if row == header_row and isinstance(value, str):
+            for key, pattern in _SI_COLUMNS:
+                if pattern.match(value.strip()):
+                    columns.setdefault(key, col)
+    if not columns:
+        return
+    out = {}
+    # ponytail: fixed 60-row window below the header — container tables are far
+    # shorter; widen if a template ever lists more.
+    for row in range(header_row + 1, header_row + 60):
+        number = grid.cell(row, no_col)
+        match = isinstance(number, str) and _CONTAINER_NO_RE.search(number.upper())
+        if match:
+            out[match.group(0)] = {key: _si_text(grid.cell(row, col))
+                                   for key, col in columns.items()}
+    fields.container_si = out
 
 
 def _read_vgm(grid, fields: ShipmentFields) -> None:
