@@ -539,8 +539,8 @@ function subscribeRealtime(){
 // -- router ---------------------------------------------------------------
 const TITLES = { monitor:"Monitor", list:"Pengiriman Aktif", calendar:"Kalender",
   notif:"Notifikasi", more:"Lainnya", history:"Riwayat", search:"Cari", audit:"Log Aktivitas",
-  settings:"Pengaturan", forum:"Forum", note:"Catatan", vessels:"Kelola Kapal", scan:"Pindai Folder", detail:"Pengiriman" };
-const SUBVIEWS = new Set(["detail","history","search","audit","settings","forum","note","vessels","scan"]);
+  settings:"Pengaturan", forum:"Forum", note:"Catatan", vessels:"Kelola Kapal", scan:"Pindai Folder", inbox:"Kotak Masuk Dokumen", detail:"Pengiriman" };
+const SUBVIEWS = new Set(["detail","history","search","audit","settings","forum","note","vessels","scan","inbox"]);
 
 // A future-dated JWT (device/server clock skew) rejects a request; it clears once
 // the token refreshes or the skew window passes, so we refresh + retry once.
@@ -574,6 +574,7 @@ async function nav(view, param, _retried, quiet){
     else if(view==="note") await renderNoteThread(param);
     else if(view==="vessels") await renderManageVessels();
     else if(view==="scan") await renderScan();
+    else if(view==="inbox") await renderInbox();
     if(snap) scrollRestore(snap);
   } catch(e){
     if(!_retried && isClockSkewError(e)){
@@ -1018,6 +1019,7 @@ function renderMore(){
   const w=el(`<div class="card menu" style="padding:0">
     <div class="row tap" data-go="forum"><span class="ic">💬</span>Forum</div>
     <div class="row tap" data-go="vessels"><span class="ic">🚢</span>Kelola Kapal</div>
+    <div class="row tap" data-go="inbox"><span class="ic">📥</span>Kotak Masuk Dokumen<span id="inboxCount" class="muted" style="margin-left:auto"></span></div>
     <div class="row tap" data-go="scan"><span class="ic">🔄</span>Pindai Folder</div>
     <div class="row tap" data-go="history"><span class="ic">🗂️</span>Riwayat</div>
     <div class="row tap" data-go="search"><span class="ic">🔍</span>Cari</div>
@@ -1026,6 +1028,67 @@ function renderMore(){
   w.querySelectorAll("[data-go]").forEach(r=>r.onclick=()=>nav(r.dataset.go));
   const info=el(`<div class="metaline" style="text-align:center;margin-top:16px">Masuk sebagai ${esc(state.email||"")}</div>`);
   $("views").innerHTML=""; $("views").appendChild(w); $("views").appendChild(info);
+  sb.from("mail_queue").select("id",{count:"exact",head:true}).eq("status","pending")
+    .then(({count})=>{ const c=$("inboxCount"); if(c&&count) c.textContent=`${count} menunggu`; });
+}
+
+// -- KOTAK MASUK: email attachments waiting for approval (mail_inbox) ------
+const MAIL_DOCS = {peb:"PEB",npe:"NPE",coo:"COO",phyto:"Phyto",fumi:"Fumi",bl:"BL",insurance:"Insurance",other:"Dok (lainnya)"};
+const MAIL_DEST = {draft:"Draf",kirim:"Dok kirim",fumi:"Fumi",peb:"PEB & NPE"};
+const MAIL_STATUS = {saved:"✅ tersimpan",skipped:"↷ dilewati",rejected:"✕ ditolak",error:"⚠ gagal",approved:"⏳ disimpan…"};
+const GMAIL_USER = "edbertongko88@gmail.com";
+// Same as mail_inbox.file_name: "{prefix-}{EX}{seq}-{Doc}-{original}"
+function mailName(s,t,st,p,orig){ let l=(MAIL_DOCS[t]||"Dok").replace(" (lainnya)",""); if(t==="bl"&&st==="draft") l="BL draft";
+  return `${p?p+"-":""}${s?`${s.exporter_code}${s.sequence_number}`:"TANPA-PENGIRIMAN"}-${l}-${orig}`; }
+const opts=(map,cur)=>Object.entries(map).map(([v,l])=>`<option value="${v}" ${v===cur?"selected":""}>${esc(l)}</option>`).join("");
+async function renderInbox(){
+  const [{data:rows,error}, active] = await Promise.all([
+    sb.from("mail_queue").select("*").order("sent_at",{ascending:false}).limit(200), getActive()]);
+  if(error) throw error;
+  const ships=[...active].sort(shipSort), byId=Object.fromEntries(ships.map(s=>[s.id,s]));
+  const w=document.createElement("div");
+  const pending=(rows||[]).filter(r=>r.status==="pending"), done=(rows||[]).filter(r=>r.status!=="pending").slice(0,40);
+  w.appendChild(el(`<div class="metaline" style="margin:0 2px 10px">Lampiran email dari luar tim. Periksa usulannya, ubah bila perlu, lalu Simpan — bot menaruh file di folder pengiriman (dilewati bila file yang sama sudah ada).</div>`));
+  if(!pending.length) w.appendChild(el(`<div class="card muted">Tidak ada lampiran yang menunggu.</div>`));
+  for(const r of pending){
+    const c=el(`<div class="card">
+      <div class="rowtop"><b>${esc(r.filename)}</b></div>
+      <div class="metaline">${esc(r.subject||"")} · ${esc(r.sender||"")} · ${fmtDT(r.sent_at)} · <a href="https://mail.google.com/mail/u/?authuser=${GMAIL_USER}#all/${esc(r.thread_id)}" target="_blank" rel="noopener">buka email</a></div>
+      <div style="display:grid;grid-template-columns:auto 1fr;gap:6px 8px;align-items:center;margin-top:8px;font-size:13px">
+        <span>Pengiriman</span><select data-f="shipment_id"><option value="">— pilih —</option>${ships.map(s=>`<option value="${s.id}" ${s.id===r.shipment_id?"selected":""}>${esc(s.exporter_code)}${s.sequence_number}</option>`).join("")}</select>
+        <span>Dokumen</span><select data-f="doc_type">${opts(MAIL_DOCS,r.doc_type)}</select>
+        <span>Tahap</span><select data-f="stage">${opts({draft:"Draft",final:"Final"},r.stage)}</select>
+        <span>Awalan</span><select data-f="prefix">${opts({"":"—","REV":"REV","NOTUL":"NOTUL"},r.prefix||"")}</select>
+        <span>Folder</span><select data-f="dest">${opts(MAIL_DEST,r.dest)}</select>
+      </div>
+      <div class="metaline" style="margin-top:6px">Nama: <b class="nm"></b></div>
+      <div class="savebar" style="justify-content:flex-end;gap:8px;margin-top:8px"><button class="iconbtn rej" style="color:var(--danger)">✕ Tolak</button><button class="primary ok">✓ Simpan</button></div></div>`);
+    const val=f=>c.querySelector(`[data-f="${f}"]`).value;
+    const draw=()=>{ c.querySelector(".nm").textContent=mailName(byId[val("shipment_id")],val("doc_type"),val("stage"),val("prefix"),r.filename); };
+    c.querySelectorAll("select").forEach(s=>s.onchange=()=>{
+      if(s.dataset.f==="stage"||s.dataset.f==="doc_type") c.querySelector('[data-f="dest"]').value = val("stage")==="draft"?"draft":(val("doc_type")==="fumi"?"fumi":"kirim");
+      draw(); });
+    draw();
+    const decide=async (status)=>{
+      if(status==="approved" && !val("shipment_id")){ toast("Pilih pengirimannya dulu"); return; }
+      const patch={status, decided_at:nowIso()};
+      if(status==="approved") Object.assign(patch,{shipment_id:val("shipment_id"),doc_type:val("doc_type"),stage:val("stage"),prefix:val("prefix")||null,dest:val("dest"),proposed_name:c.querySelector(".nm").textContent});
+      const {error}=await sb.from("mail_queue").update(patch).eq("id",r.id);
+      if(error){ toast("Gagal: "+error.message); return; }
+      toast(status==="approved"?"Disetujui — bot menyimpan dalam ~20 detik":"Ditolak"); nav("inbox",undefined,false,true);
+    };
+    c.querySelector(".ok").onclick=()=>decide("approved"); c.querySelector(".rej").onclick=()=>decide("rejected");
+    w.appendChild(c);
+  }
+  if(done.length){
+    w.appendChild(el(`<div class="sectlabel">Terakhir diproses</div>`));
+    const h=el(`<div class="card"></div>`);
+    for(const r of done) h.appendChild(el(`<div class="metaline" style="padding:4px 0;border-bottom:1px solid var(--border)">${MAIL_STATUS[r.status]||esc(r.status)} · ${byId[r.shipment_id]?badge(byId[r.shipment_id].exporter_code,byId[r.shipment_id].sequence_number):""} ${esc(r.proposed_name||r.filename)}${r.note?`<div style="font-size:11px">${esc(r.note)}</div>`:""}</div>`));
+    w.appendChild(h);
+  }
+  $("views").innerHTML=""; $("views").appendChild(w);
+  // an approved entry is saved by the worker within ~20 s: redraw to show the result
+  if((rows||[]).some(r=>r.status==="approved")) setTimeout(()=>{ if(state.view==="inbox") nav("inbox",undefined,false,true); }, 8000);
 }
 
 // -- SETTINGS -------------------------------------------------------------

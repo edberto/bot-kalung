@@ -27,7 +27,7 @@ from pathlib import Path
 
 from .core.pg import PostgresDatabase
 from .core.settings import Settings
-from .services import bnct, drive_api, ntfy, sailing_schedule, tracker
+from .services import bnct, doc_checks, drive_api, mail_inbox, ntfy, sailing_schedule, tracker
 from .services.action_items import ActionItems
 from .services.bnct_monitor import BnctMonitor, build_reading
 from .services.containers import Containers
@@ -108,6 +108,31 @@ def _manual_checks(db, drive_client) -> None:
             for r in rows:
                 db.execute("UPDATE action_items SET check_requested_at=NULL WHERE id=?",
                            (r["id"],))
+
+
+def _mail_poll(db) -> None:
+    """Read new mail into the approval queue (mail_inbox). Needs the Google
+    sign-in (tools/google_signin.py); without it, nothing happens."""
+    gmail, _ = mail_inbox.clients()
+    if gmail is None:
+        return
+    doc_checks.new_scan()
+    for line in mail_inbox.poll(db, gmail):
+        log.info("mail: %s", line)
+
+
+def _mail_save(db, drive_client) -> None:
+    """Save queue entries approved in the PWA into their shipment folders."""
+    if not db.query_one("SELECT 1 FROM mail_queue WHERE status='approved'"):
+        return
+    gmail, drive = mail_inbox.clients()
+    if gmail is None:
+        return
+    resolver = _resolver(drive_client)
+    for line in mail_inbox.save_approved(
+            db, gmail, drive, resolver,
+            check=lambda sid, codes: tracker.check_items(db, sid, codes, resolver)):
+        log.info("mail save: %s", line)
 
 
 def _scan_once(db, drive_client) -> None:
@@ -318,6 +343,7 @@ def main() -> None:
     if "--once" in sys.argv:
         _safe(lambda: _poll_once(db, bnct_client), "poll")
         _safe(lambda: _scan_once(db, drive_client), "scan")
+        _safe(lambda: _mail_poll(db), "mail")
         return
 
     settings = Settings(db)
@@ -344,9 +370,11 @@ def main() -> None:
             if scan_req != last_scan_req:
                 log.info("scan: on-demand request (%s)", scan_req)
             _safe(lambda: _scan_once(db, drive_client), "scan")
+            _safe(lambda: _mail_poll(db), "mail")
             last_scan = time.monotonic()
             last_scan_req = scan_req
         _safe(lambda: _manual_checks(db, drive_client), "check")
+        _safe(lambda: _mail_save(db, drive_client), "mail save")
         time.sleep(20)
 
 

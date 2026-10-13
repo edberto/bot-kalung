@@ -221,6 +221,9 @@ def _store_si_checks(db, shipment_id: str, exporter_code: str | None, fields,
         if ex in OWN_ORDER_EXPORTERS:
             m = _re.match(r"^\s*\d+\.\s*[A-Za-z]+-?(\d+)", folder_name or "")
             seq = int(m.group(1)) if m else main_workbook_sequence(fields.workbook or "")
+            if seq is not None:     # the number their emails use ("AMI035") — mail_inbox
+                db.execute("UPDATE shipments SET doc_seq=? WHERE id=? AND "
+                           "(doc_seq IS NULL OR doc_seq<>?)", (seq, shipment_id, seq))
         checks.append(numbers_check(fields.doc_numbers, {seq} if seq is not None else set()))
     if folder is not None and fields.si_checks is not None:
         import json

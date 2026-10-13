@@ -38,7 +38,8 @@ CREATE TABLE IF NOT EXISTS shipments (
     notes                 TEXT,
     status                TEXT NOT NULL DEFAULT 'active',
     created_at            TEXT NOT NULL,
-    completed_at          TEXT
+    completed_at          TEXT,
+    doc_seq               INTEGER   -- AMI/PMA: the buyer's number on their documents/emails ("AMI035")
 );
 
 CREATE TABLE IF NOT EXISTS workflow_steps (
@@ -223,6 +224,49 @@ CREATE TABLE IF NOT EXISTS ai_reads (
     modified  TEXT,
     data      TEXT,
     read_at   TEXT
+);
+
+-- Email reader (doc automation Phase 2, services/mail_inbox). mail_seen: every
+-- message handled once (from_team: sent by the team, for NOTUL vs REV);
+-- mail_threads: which shipment / document a thread is about; mail_queue: each
+-- attachment from others, waiting for approval in the PWA before it is saved
+-- into the shipment folder (status pending / approved / rejected / saved /
+-- skipped / error).
+CREATE TABLE IF NOT EXISTS mail_seen (
+    message_id  TEXT PRIMARY KEY,
+    thread_id   TEXT,
+    from_team   INTEGER NOT NULL DEFAULT 0,
+    sent_at     TEXT
+);
+
+CREATE TABLE IF NOT EXISTS mail_threads (
+    thread_id   TEXT PRIMARY KEY,
+    shipment_id TEXT REFERENCES shipments(id) ON DELETE SET NULL,
+    kind        TEXT
+);
+
+CREATE TABLE IF NOT EXISTS mail_queue (
+    id            TEXT PRIMARY KEY,
+    created_at    TEXT NOT NULL,
+    message_id    TEXT NOT NULL,
+    thread_id     TEXT,
+    part_id       TEXT,
+    filename      TEXT,
+    mime          TEXT,
+    size          INTEGER,
+    sha256        TEXT,
+    shipment_id   TEXT REFERENCES shipments(id) ON DELETE SET NULL,
+    subject       TEXT,
+    sender        TEXT,
+    sent_at       TEXT,
+    doc_type      TEXT,
+    stage         TEXT,
+    prefix        TEXT,
+    dest          TEXT,
+    proposed_name TEXT,
+    status        TEXT NOT NULL DEFAULT 'pending',
+    note          TEXT,
+    decided_at    TEXT
 );
 
 CREATE TABLE IF NOT EXISTS vessel_schedules (

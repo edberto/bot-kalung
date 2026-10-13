@@ -76,12 +76,13 @@ def table_names(path):
 
 # ---- schema parsing --------------------------------------------------------
 expected = _expected_columns()
-check("all fourteen tables parsed from SCHEMA",
+check("all seventeen tables parsed from SCHEMA",
       set(expected) == {"shipments", "workflow_steps", "settings",
                         "message_templates", "bnct_checks", "notifications",
                         "audit_log", "monitored_vessels", "scanned_shipments",
-                        "action_items", "containers", "vessel_schedules", "doc_reads", "ai_reads"})
-check("shipments columns parsed", len(expected["shipments"]) == 21)
+                        "action_items", "containers", "vessel_schedules", "doc_reads", "ai_reads",
+                        "mail_seen", "mail_threads", "mail_queue"})
+check("shipments columns parsed", len(expected["shipments"]) == 22)
 check("shipping_company is expected", "shipping_company" in expected["shipments"])
 check("table constraints are not read as columns",
       "UNIQUE" not in expected["workflow_steps"]
