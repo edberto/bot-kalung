@@ -136,6 +136,75 @@ with tempfile.TemporaryDirectory() as tmp:
           "digit (misread) is not", r["notes"] == ["folder foto MISU5170585 tidak ada di VGM",
                                                   "ONEU5311830: tare foto 3800 ≠ VGM 3700"])
 
+# ---- document contents ------------------------------------------------------------
+check("bag count is asked except for HAI/JMI; COO ignores dates; BL wants the party first",
+      "- bags:" in doc_checks._content_prompt("peb_npe", "AMJ", "x")
+      and "- bags:" not in doc_checks._content_prompt("peb_npe", "HAI", "x")
+      and "Ignore every date" in doc_checks._content_prompt("coo", "AMJ", "x")
+      and "party size" in doc_checks._content_prompt("bl", "AMJ", "x"))
+with tempfile.TemporaryDirectory() as tmp:
+    db = Database(db_path_for(Path(tmp)))
+    db.initialize()
+    cf = ShipmentFields(reference_text="=== sheet: SI\n5 | 2:PT. NMEHMOOD")
+    asked = []
+    issue = {"is_expected_document": True, "issues": [
+        {"field": "consignee", "document": "NEW BHARAT ROPE", "workbook": "NEW BHARAT ROPE STORE"}]}
+    ask = lambda pdf, prompt: asked.append(prompt) or issue          # noqa: E731
+    doc_checks.new_scan()
+    f = F("draft", "draft BL.pdf")
+    r = doc_checks.content_check("bl", f, cf, "NIT", db, lambda ref: b"%PDF", ask=ask)
+    check("content issues become notes, with the file checked",
+          r["notes"] == ["Consignee/buyer: dokumen NEW BHARAT ROPE ≠ Excel NEW BHARAT ROPE STORE"]
+          and r["file"]["name"] == "draft BL.pdf" and not r["done"])
+    doc_checks.content_check("bl", f, cf, "NIT", db, lambda ref: b"%PDF", ask=ask)
+    check("same file + same workbook -> no second read", len(asked) == 1)
+    cf.reference_text += "\n6 | 2:corrected"
+    doc_checks.content_check("bl", f, cf, "NIT", db, lambda ref: b"%PDF", ask=ask)
+    check("a changed workbook re-checks the document", len(asked) == 2)
+    check("a non-PDF or no file is not checked",
+          doc_checks.content_check("bl", F("kirim", "bl.jpg"), cf, "NIT", db, None, ask=ask) is None
+          and doc_checks.content_check("bl", None, cf, "NIT", db, None, ask=ask) is None)
+
+# content checks only while the draft is at Draft diterima; 6-hour revision alert
+import json
+from bot_kalung.core.db import new_id
+from bot_kalung.services.action_items import ActionItems
+from bot_kalung.services.notifications import NotificationStore
+
+with tempfile.TemporaryDirectory() as tmp:
+    root = Path(tmp)
+    (root / "Draf").mkdir()
+    (root / "Draf" / "PEB draft.pdf").write_bytes(b"%PDF")
+    db = Database(db_path_for(root / "db"))
+    db.initialize()
+    sid = new_id()
+    db.execute("INSERT INTO shipments (id, exporter_code, sequence_number, status, created_at) "
+               "VALUES (?, 'AMJ', 30, 'active', '2026-10-01')", (sid,))
+    ActionItems(db).seed(sid, "AMJ", "Pakistan")
+    cf = ShipmentFields(reference_text="SI text")
+    bad = lambda pdf, prompt: {"is_expected_document": True, "issues": [           # noqa: E731
+        {"field": "pod", "document": "KARACHI", "workbook": "PORT QASIM"}]}
+    peb = lambda: json.loads(db.query_one(                                          # noqa: E731
+        "SELECT checks FROM action_items WHERE shipment_id=? AND code='peb_npe'", (sid,))["checks"] or "[]")
+    doc_checks.new_scan()
+    doc_checks.content_checks(db, str(root), cf, "AMJ", {"id": sid, "sequence_number": 30}, bad)
+    check("a new PEB draft (status about to become Draft diterima) is checked",
+          peb() and peb()[0]["notes"] == ["Port tujuan: dokumen KARACHI ≠ Excel PORT QASIM"])
+    db.execute("UPDATE action_items SET status='draft_revision', updated_at='2026-10-01T00:00:00' "
+               "WHERE shipment_id=? AND code='peb_npe'", (sid,))
+    doc_checks.content_checks(db, str(root), cf, "AMJ", {"id": sid, "sequence_number": 30}, bad)
+    check("once the revision is asked for, the highlight clears", peb() == [])
+
+    store = NotificationStore(db)
+    items = ActionItems(db)
+    check("a revision older than 6 hours notifies once",
+          items.alert_overdue_revisions(store) == 1 and items.alert_overdue_revisions(store) == 0
+          and "AMJ30: revisi PEB & NPE > 6 jam" in [n.title for n in store.recent()])
+    # a later revision round: the status changed again after that alert
+    db.execute("UPDATE action_items SET alerted_at='2026-10-01T12:00:00', "
+               "updated_at='2026-10-02T00:00:00' WHERE shipment_id=? AND code='peb_npe'", (sid,))
+    check("a new revision round notifies again", items.alert_overdue_revisions(store) == 1)
+
 # the cache: one ask per file version, and the per-scan budget
 with tempfile.TemporaryDirectory() as tmp:
     db = Database(db_path_for(Path(tmp)))

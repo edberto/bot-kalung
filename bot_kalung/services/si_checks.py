@@ -177,6 +177,25 @@ def read_vgm_rows(grids: dict) -> dict:
                 "tare": show(vgm.cell(r, tare_col)) if tare_col else ""} for r, n in rows}
 
 
+def reference_text(grids: dict, max_rows: int = 80) -> str:
+    """The SI and INV sheets as plain text ("row | col:value | ..."), for Claude
+    to compare a document against — templates differ per exporter, and the SI
+    carries the team's own notes ("ini jangan cantumkan di COO & Fumi")."""
+    out = []
+    for name, g in grids.items():
+        if _kind(name) not in ("si", "inv"):
+            continue
+        rows: dict = {}
+        for (r, c), v in g.ordered_cells():
+            if v is not None and str(v).strip():
+                if isinstance(v, float):
+                    v = round(v, 3)
+                rows.setdefault(r, []).append(f"{c}:{str(v).strip()}")
+        out.append(f"=== sheet: {name.strip()}")
+        out += [f"{r} | " + " | ".join(rows[r]) for r in sorted(rows)[:max_rows]]
+    return "\n".join(out)
+
+
 _ETD_LABEL = re.compile(r"(?i)^\s*[ae]td(\s*/\s*[ae]td)?\s*:?\s*$")
 
 

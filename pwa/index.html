@@ -173,6 +173,7 @@
   .kline span { color:var(--muted); } .kline b { text-align:right; overflow-wrap:anywhere; }
   .kstats { display:flex; gap:12px; margin-top:8px; font-size:12px; font-weight:700; color:var(--muted); }
   .kstats .on { color:var(--ok); }
+  .kalert { margin-top:6px; padding:4px 8px; font-size:12px; font-weight:600; color:var(--danger); background:color-mix(in srgb, var(--danger) 10%, transparent); border-radius:6px; }
   .knote { margin-top:8px; padding:6px 8px; font-size:12px; color:var(--text-2);
     background:var(--hover); border-left:3px solid var(--border); border-radius:6px;
     white-space:pre-line; overflow-wrap:anywhere;
@@ -296,7 +297,7 @@ const STATUS = [
 const DONE_STATUSES = new Set(["final","hardcopy_received"]);   // waiting_hardcopy is still outstanding
 const STATUS_COLOR = Object.fromEntries(STATUS.map(([v,,c])=>[v,c]));
 const EXPORTER_COLORS = { AMJ:"#2563eb", TTJ:"#7c3aed", NIT:"#16a34a", THREESTAR:"#dc2626", AMI:"#0d9488", PMA:"#db2777" };
-const NOTIF_COLORS = { schedule:"#2563eb", alongside:"#16a34a", departing:"#dc2626", container:"#d97706" };
+const NOTIF_COLORS = { schedule:"#2563eb", alongside:"#16a34a", departing:"#dc2626", container:"#d97706", revision:"#9333ea" };
 const AUDIT = {
   shipment_created:  { label:"Pengiriman dibuat", color:"#2563eb" },
   shipment_completed:{ label:"Pengiriman ditandai selesai", color:"#059669" },
@@ -339,6 +340,7 @@ function isDoneCode(code){ const n=parseInt(code,10); return !isNaN(n) && n>=50;
 function parseBnctDate(s){ const m=/(\d{1,2})\/(\d{1,2})\/(\d{4})/.exec(s||""); return m?`${m[3]}-${m[2].padStart(2,"0")}-${m[1].padStart(2,"0")}`:null; }
 // Sub-checks the bot works out from the workbook (SI/VGM: containers, dates);
 // each problem it found is listed under its check.
+const CHECKABLE = new Set(["si_vgm","peb_npe","fumi","phyto","coo","bl"]);   // items the 🔍 button re-checks
 function checklist(it){
   let checks=[]; try { checks=JSON.parse(it.checks||"[]"); } catch { return ""; }
   if(!checks.length) return "";
@@ -453,7 +455,7 @@ function showApp(){ $("splash").classList.add("hidden"); $("login").classList.ad
 async function getActive(){
   if(state.active) return state.active;
   const { data, error } = await sb.from("shipments")
-    .select("id,exporter_code,sequence_number,vessel_name,voyage,etd_belawan,etd_source,destination_port,destination_country,container_quantity,container_size_short,booking_number,quarantine_required,notes,folder_path,action_items(status),containers(container_no,last_status_code)")
+    .select("id,exporter_code,sequence_number,vessel_name,voyage,etd_belawan,etd_source,destination_port,destination_country,container_quantity,container_size_short,booking_number,quarantine_required,notes,folder_path,action_items(status,title,updated_at,checks),containers(container_no,last_status_code)")
     .eq("status","active");
   if(error) throw error;
   state.active = data||[]; return state.active;
@@ -559,6 +561,17 @@ async function nav(view, param, _retried, quiet){
 function openDetail(id){ state.detailFrom = SUBVIEWS.has(state.view)?state.detailFrom:state.view; nav("detail", id); }
 
 // -- ACTIVE LIST ----------------------------------------------------------
+// Documents that need attention: a draft whose contents don't match the SI/INV
+// ("perlu revisi"), and a revision going on for more than 6 hours.
+const REVISION_HOURS = 6;
+function revisionLate(it){ return it.status==="draft_revision" && it.updated_at && (Date.now()-new Date(asUTC(it.updated_at)))>REVISION_HOURS*36e5; }
+function needsRevision(it){ if(it.status!=="draft_received") return false; try { return JSON.parse(it.checks||"[]").some(c=>c.key==="content"&&!c.done); } catch { return false; } }
+function docAlerts(s){
+  const it=s.action_items||[];
+  const need=it.filter(needsRevision).map(i=>i.title), late=it.filter(revisionLate).map(i=>i.title);
+  return [need.length?`<div class="kalert">🔴 Perlu revisi: ${esc(need.join(", "))}</div>`:"",
+          late.length?`<div class="kalert">⏰ Revisi &gt; ${REVISION_HOURS} jam: ${esc(late.join(", "))}</div>`:""].join("");
+}
 function progressOf(s){ const it=s.action_items||[]; return [it.filter(i=>DONE_STATUSES.has(i.status)).length, it.length]; }
 // Most-progressed voyage first: departed → departing → berthed → scheduled → not found → no vessel.
 const PHASE_RANK = { departed:0, departing:1, berthed:2, scheduled:3, notfound:4, novessel:5 };
@@ -606,7 +619,7 @@ function kanbanCard(s){
     <div class="kstats">
       <span class="${total&&done===total?"on":""}">✅ ${done}/${total} item</span>
       <span class="${conts.length&&gated===conts.length?"on":""}">📦 ${conts.length?`${gated}/${conts.length}`:"—"} gate-in</span>
-    </div>
+    </div>${docAlerts(s)}
     ${(s.notes||"").trim()?`<div class="knote${openNotes.has(s.id)?" open":""}">📝 ${esc(s.notes.trim())}</div><button class="kmore hidden">${openNotes.has(s.id)?"Tutup":"Selengkapnya"}</button>`:""}</div>`);
   const more=c.querySelector(".kmore");
   if(more) more.onclick=(e)=>{ e.stopPropagation();          // don't open the shipment
@@ -687,12 +700,18 @@ async function renderDetail(id){
   const ic=el(`<div class="card"></div>`);
   if(!items.length) ic.appendChild(el(`<div class="muted">Tidak ada item.</div>`));
   for(const it of items){
-    const row=el(`<div class="item il" style="border-left-color:${STATUS_COLOR[it.status]||"#6b7280"}"><div class="t">${esc(it.title)}${it.is_custom?' <span class="muted">(tambahan)</span>':""}${autoEvidence(it)}${checklist(it)}</div></div>`);
+    const row=el(`<div class="item il" style="border-left-color:${STATUS_COLOR[it.status]||"#6b7280"}"><div class="t">${esc(it.title)}${it.is_custom?' <span class="muted">(tambahan)</span>':""}<div class="metaline" style="font-size:11px">Status sejak ${fmtDT(it.updated_at||it.created_at)}${revisionLate(it)?` · <b style="color:var(--danger)">⏰ revisi &gt; ${REVISION_HOURS} jam</b>`:""}</div>${autoEvidence(it)}${checklist(it)}</div></div>`);
     const sel=el(`<select class="status">${STATUS.map(([v,l])=>`<option value="${v}" ${it.status===v?"selected":""}>${l}</option>`).join("")}</select>`);
     sel.onchange=async ()=>{ const {error}=await sb.from("action_items").update({status:sel.value,updated_at:nowIso()}).eq("id",it.id); toast(error?"Gagal: "+error.message:"Status disimpan"); if(!error){ it.status=sel.value; row.style.borderLeftColor=STATUS_COLOR[sel.value]; } };
     const del=el(`<button class="linkbtn" style="color:var(--danger)">✕</button>`);
     del.onclick=async ()=>{ if(!confirm(`Hapus item "${it.title}"?`)) return; const {error}=await sb.from("action_items").delete().eq("id",it.id); if(error){toast("Gagal: "+error.message);return;} toast("Item dihapus"); row.remove(); };
-    row.appendChild(sel); row.appendChild(del); ic.appendChild(row);
+    row.appendChild(sel);
+    if(CHECKABLE.has(it.code)){   // ad-hoc check now, instead of waiting for the next scan
+      const chk=el(`<button class="linkbtn" title="Cek dokumen sekarang">${it.check_requested_at?"⏳":"🔍"}</button>`);
+      chk.onclick=async ()=>{ const {error}=await sb.from("action_items").update({check_requested_at:nowIso()}).eq("id",it.id); toast(error?"Gagal: "+error.message:"Pengecekan diminta — hasil muncul dalam ~1 menit"); if(!error) chk.textContent="⏳"; };
+      row.appendChild(chk);
+    }
+    row.appendChild(del); ic.appendChild(row);
   }
   const add=el(`<div class="savebar" style="justify-content:flex-start;margin-top:12px"><button class="iconbtn" style="color:var(--accent)">+ Tambah Item</button></div>`);
   add.querySelector("button").onclick=async ()=>{
@@ -803,7 +822,9 @@ function shipMiniRow(s){
   const row=el(`<div class="vrow tap">${badge(s.exporter_code,s.sequence_number)}
     <div class="vbar"><span style="width:${pctv}%;background:${full?"var(--ok)":"var(--accent)"}"></span></div>
     <span class="vnum">${done}/${total}</span>
-    <span class="vstack ${atStack?"on":""}">📦 ${conts.length?`${atStack}/${conts.length}`:"—"}</span></div>`);
+    <span class="vstack ${atStack?"on":""}">📦 ${conts.length?`${atStack}/${conts.length}`:"—"}</span>${
+    (s.action_items||[]).some(needsRevision)?'<span title="Ada dokumen perlu revisi">🔴</span>':""}${
+    (s.action_items||[]).some(revisionLate)?`<span title="Revisi > ${REVISION_HOURS} jam">⏰</span>`:""}</div>`);
   row.onclick=()=>openDetail(s.id); return row;
 }
 async function renderMonitor(){

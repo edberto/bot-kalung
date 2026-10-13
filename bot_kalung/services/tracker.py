@@ -231,8 +231,28 @@ def _store_si_checks(db, shipment_id: str, exporter_code: str | None, fields,
         except ValueError:
             previous = {}
         checks += doc_checks.compute(db, folder, fields, previous, ex)
+        doc_checks.content_checks(db, folder, fields, ex,
+                                  {"id": shipment_id, "sequence_number": folder_seq})
     if checks:
         ActionItems(db).set_checks(shipment_id, "si_vgm", checks)
+
+
+def check_shipment(db, shipment_id: str, folder_resolver=None,
+                   read_fields=workbook.read_shipment_fields) -> bool:
+    """The PWA's 🔍 button: re-read one shipment's workbook and folder now and
+    redo its checks and document statuses, outside the scan. Files that haven't
+    changed come from the AI cache, so a check costs nothing unless something
+    changed. False if the shipment or its folder can't be found."""
+    row = db.query_one("SELECT * FROM shipments WHERE id=?", (shipment_id,))
+    if row is None or not row["folder_path"]:
+        return False
+    folder = folder_resolver(row["folder_path"]) if folder_resolver else row["folder_path"]
+    doc_checks.new_scan()
+    fields = read_fields(folder)
+    _store_si_checks(db, row["id"], row["exporter_code"], fields, row["sequence_number"],
+                     getattr(folder, "name", None) or os.path.basename(str(folder)), folder)
+    doc_status.sync_shipment(ActionItems(db), row, folder)
+    return True
 
 
 def _refresh_workbook_fields(shipments: Shipments, row, fields, quarantine,

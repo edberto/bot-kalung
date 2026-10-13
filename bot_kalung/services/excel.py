@@ -254,6 +254,9 @@ class ShipmentFields:
     etd_cells: list | None = None
     # {container: {"seal", "tare"}} from the VGM (si_checks.read_vgm_rows).
     vgm_rows: dict | None = None
+    # SI + INV sheets as text (si_checks.reference_text) — what documents are
+    # checked against (doc_checks.content_check).
+    reference_text: str | None = None
     workbook: str | None = None
     warnings: list[str] = field(default_factory=list)
 

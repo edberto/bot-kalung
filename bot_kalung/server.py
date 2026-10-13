@@ -28,6 +28,7 @@ from pathlib import Path
 from .core.pg import PostgresDatabase
 from .core.settings import Settings
 from .services import bnct, drive_api, ntfy, sailing_schedule, tracker
+from .services.action_items import ActionItems
 from .services.bnct_monitor import BnctMonitor, build_reading
 from .services.containers import Containers
 from .services.notifications import NotificationStore
@@ -81,12 +82,32 @@ def _config() -> dict:
     }
 
 
-def _scan_once(db, drive_client) -> None:
+def _resolver(drive_client):
     def resolver(ref):
         return (drive_api.node_from_ref(ref, drive_client)
                 if drive_api.is_drive_ref(ref) else ref)
+    return resolver
 
-    result = tracker.run_scan(db, drive_client.root(), folder_resolver=resolver)
+
+def _manual_checks(db, drive_client) -> None:
+    """Shipments whose 🔍 button was pressed in the PWA: check them now. The
+    request is cleared even if the check fails, so a broken folder isn't retried
+    every 20 s."""
+    for row in db.query("SELECT DISTINCT shipment_id FROM action_items "
+                        "WHERE check_requested_at IS NOT NULL"):
+        sid = row["shipment_id"]
+        try:
+            log.info("check: on-demand for %s", sid)
+            tracker.check_shipment(db, sid, _resolver(drive_client))
+        except Exception:      # noqa: BLE001
+            log.exception("check failed for %s", sid)
+        finally:
+            db.execute("UPDATE action_items SET check_requested_at=NULL WHERE shipment_id=?",
+                       (sid,))
+
+
+def _scan_once(db, drive_client) -> None:
+    result = tracker.run_scan(db, drive_client.root(), folder_resolver=_resolver(drive_client))
     log.info("scan: %d imported, %d vessel changes, %d done",
              len(result.imported), len(result.vessel_changes),
              len(result.completed))
@@ -180,6 +201,7 @@ def _poll_once(db, bnct_client) -> None:
             vessels, row["vessel_name"] or "", row["voyage"] or "")
         board.process(row["id"], reading)
     _poll_containers(bnct_client, containers, notifications, vessels)
+    ActionItems(db).alert_overdue_revisions(notifications)
     _push_new_notifications(db, seen)
     log.info("poll: %d vessels on portal, %d shipment monitors, %d board voyages",
              len(vessels), len(monitor.monitored()), len(board.monitored()))
@@ -320,6 +342,7 @@ def main() -> None:
             _safe(lambda: _scan_once(db, drive_client), "scan")
             last_scan = time.monotonic()
             last_scan_req = scan_req
+        _safe(lambda: _manual_checks(db, drive_client), "check")
         time.sleep(20)
 
 

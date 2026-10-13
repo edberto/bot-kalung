@@ -435,6 +435,171 @@ def photo_check(folder, fields, db, fetch, ask=_ask_photos) -> dict | None:
     return {**head, "done": not notes, "notes": notes}
 
 
+# -- document contents ------------------------------------------------------------
+# Each document's newest file (the one its status comes from) against the SI /
+# INV sheets. Claude compares, since the templates differ per exporter and the
+# SI carries the team's notes about what goes on which document.
+CONTENT_DOCS = {
+    "peb_npe": "a PEB (Pemberitahuan Ekspor Barang, the Indonesian export declaration) or NPE",
+    "fumi": "a fumigation certificate",
+    "phyto": "a phytosanitary certificate",
+    "coo": "a certificate of origin",
+    "bl": "a bill of lading or sea waybill (draft or final)",
+}
+_BAG_SKIP = {"HAI", "JMI"}
+_FIELD_LABEL = {
+    "shipper": "Shipper", "consignee": "Consignee/buyer", "notify": "Notify party",
+    "goods": "Deskripsi barang", "weight": "Berat (NW/GW)", "bags": "Jumlah bag",
+    "fob": "Nilai FOB", "vessel": "Kapal/voyage", "invoice": "No./tgl invoice",
+    "pod": "Port tujuan",
+}
+
+_CONTENT_PROMPT = """You check an Indonesian exporter's shipping document against the
+exporter's workbook (the Shipping Instruction "SI" and invoice "Inv" sheets, given
+as text: "row | column:value | ...").
+
+The document should be {doc}. Compare, where the document shows them:
+- shipper: name and details (address, contacts)
+- consignee: consignee / buyer name and details
+- notify: notify party name and details
+- goods: description of goods{bl_goods}
+- weight: net and gross weight
+{bags}- fob: FOB value (only if the workbook gives an FOB value or FOB terms)
+- vessel: vessel name and voyage
+- invoice: invoice number and date
+- pod: destination port
+{extra}
+Rules:
+- Report only substantive differences: a wrong or missing name, address part,
+  number, weight, port or vessel. Ignore case, punctuation, line breaks, spacing,
+  abbreviations (PT / PT., KAB. / KABUPATEN, LTD / LIMITED), number formatting
+  and rounding to 2 decimals.
+- Notes in the workbook (Indonesian) are instructions: "ini jangan cantumkan di
+  COO & Fumi" means that information must NOT appear on the COO and Fumi. A
+  document correctly leaving it out is fine; one including it is an issue.
+- Fields the document doesn't carry at all are not issues.
+- If the file is not {doc} at all, set is_expected_document to false.
+Write each issue's values short (the differing part, not the whole address).
+
+Workbook:
+{reference}"""
+
+_CONTENT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "is_expected_document": {"type": "boolean"},
+        "issues": {"type": "array", "items": {
+            "type": "object",
+            "properties": {
+                "field": {"type": "string", "enum": list(_FIELD_LABEL)},
+                "document": {"type": "string"},
+                "workbook": {"type": "string"},
+            },
+            "required": ["field", "document", "workbook"],
+            "additionalProperties": False,
+        }},
+    },
+    "required": ["is_expected_document", "issues"],
+    "additionalProperties": False,
+}
+
+
+def _content_prompt(code: str, exporter: str, reference: str) -> str:
+    extra = {
+        "coo": "- Ignore every date on the COO (the departure date is often corrected by hand).",
+        "fumi": "- Ignore dates.",
+    }.get(code, "")
+    return _CONTENT_PROMPT.format(
+        doc=CONTENT_DOCS[code], reference=reference, extra=extra,
+        bl_goods=(" — on a BL it must start with the party size (e.g. \"10 X 40'HC\"), "
+                  "then the goods description") if code == "bl" else "",
+        bags="" if exporter.upper() in _BAG_SKIP else "- bags: number of bags\n")
+
+
+def _ask_content(pdf: bytes, prompt: str) -> dict:
+    import anthropic
+
+    resp = anthropic.Anthropic().beta.messages.create(
+        model=MODEL,
+        max_tokens=8000,
+        betas=["server-side-fallback-2026-06-01"],
+        fallbacks=[{"model": "claude-opus-4-8"}],
+        output_config={"effort": "medium",
+                       "format": {"type": "json_schema", "schema": _CONTENT_SCHEMA}},
+        messages=[{"role": "user", "content": [
+            {"type": "document", "source": {
+                "type": "base64", "media_type": "application/pdf",
+                "data": base64.standard_b64encode(pdf).decode()}},
+            {"type": "text", "text": prompt}]}],
+    )
+    if resp.stop_reason != "end_turn":
+        raise RuntimeError(f"AI read stopped: {resp.stop_reason}")
+    return json.loads(next(b.text for b in resp.content if b.type == "text"))
+
+
+def content_check(code, f, fields, exporter, db, fetch, ask=_ask_content) -> dict | None:
+    """One document's newest file `f` vs the workbook. Cached per file version
+    AND workbook text, so a corrected SI re-checks the document."""
+    import hashlib
+
+    if f is None or not f.ref or not f.name.lower().endswith(".pdf") or not fields.reference_text:
+        return None
+    prompt = _content_prompt(code, exporter, fields.reference_text)
+    stamp = f"{f.modified}|{hashlib.sha1(prompt.encode()).hexdigest()[:16]}"
+    d = _cached(db, f"content:{code}:{f.ref}", stamp,
+                lambda: _small_enough(fetch(f.ref), lambda pdf: ask(pdf, prompt)),
+                ask is _ask_content)
+    if d is None:
+        return None
+    head = {"key": "content", "label": "Isi dokumen vs SI/INV", "file": _file(f)}
+    if not d.get("is_expected_document", True):
+        return {**head, "done": False, "notes": ["file ini sepertinya bukan dokumennya"]}
+    notes = [f"{_FIELD_LABEL.get(i['field'], i['field'])}: dokumen {i['document']} ≠ "
+             f"Excel {i['workbook']}" for i in d.get("issues") or []]
+    return {**head, "done": not notes, "notes": notes}
+
+
+def _small_enough(pdf: bytes, then):
+    return then(pdf) if len(pdf) <= _MAX_PDF_BYTES else None
+
+
+def content_checks(db, folder, fields, exporter: str, shipment: dict,
+                   ask=_ask_content) -> None:
+    """The content check onto each document item (PEB, Fumi, Phyto, COO, BL),
+    only while it is at Draft diterima: the highlights are for annotating the
+    draft and asking for a revision. Once the item moves on (revision asked,
+    OK, final) the check is cleared. Undecidable -> left as is."""
+    from .action_items import ActionItems
+
+    files = doc_status.list_files(folder)
+    if not files:
+        return
+    fetch = doc_status._fetcher(folder)
+    items = ActionItems(db)
+    seqs = doc_status.own_sequences(shipment, files)
+    reader = doc_status.DraftReader(db, fetch)
+    status = {r["code"]: (r["status"], r["checks"]) for r in db.query(
+        "SELECT code, status, checks FROM action_items WHERE shipment_id=?", (shipment["id"],))}
+    for code in CONTENT_DOCS:
+        if code not in status:
+            continue
+        current, old = status[code]
+        inferred = doc_status.infer(code, files, exporter, seqs, reader)
+        # The draft must be the newest evidence too: a status still at Draft
+        # diterima by hand while a final has arrived isn't a draft to annotate.
+        # A status below Draft diterima is about to move up to it (the status
+        # sync runs after this in the same scan), so check it already.
+        at_draft = current == "draft_received" or (
+            doc_status.RANK.get(current, 0) < doc_status.RANK["draft_received"])
+        if not at_draft or not inferred or inferred.status != "draft_received":
+            if old and old != "[]":
+                items.set_checks(shipment["id"], code, [])
+            continue
+        check = content_check(code, inferred.file, fields, exporter, db, fetch, ask)
+        if check is not None:
+            items.set_checks(shipment["id"], code, [check])
+
+
 def compute(db, folder, fields, previous: dict, exporter: str = "") -> list[dict]:
     """[do, atd] (not AMI/PMA/CKJ) and [photos] (not HAI/JMI) for a shipment
     folder; an undecidable check keeps `previous[key]`."""

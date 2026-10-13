@@ -201,6 +201,29 @@ class ActionItems:
                 "auto_evidence_ref=?, auto_detail=? WHERE id=?",
                 (auto_status, evidence, evidence_ref, detail, item_id))
 
+    def alert_overdue_revisions(self, notifications, hours: int = 6) -> int:
+        """One notification per document whose revision (Draf direvisi) has been
+        going on for more than `hours` — once per revision round: a new status
+        change starts a new round (alerted_at < updated_at). Returns the count."""
+        from datetime import timedelta
+
+        cutoff = (datetime.now(timezone.utc).replace(tzinfo=None)
+                  - timedelta(hours=hours)).isoformat(timespec="seconds")
+        rows = self.db.query(
+            "SELECT a.id, a.title, a.shipment_id, a.updated_at, s.exporter_code, "
+            "s.sequence_number FROM action_items a JOIN shipments s ON s.id = a.shipment_id "
+            "WHERE s.status='active' AND a.status='draft_revision' AND a.updated_at <= ? "
+            "AND (a.alerted_at IS NULL OR a.alerted_at < a.updated_at)", (cutoff,))
+        now = _now()
+        for r in rows:
+            notifications.add(
+                "revision", r["shipment_id"],
+                f"{r['exporter_code']}{r['sequence_number']}: revisi {r['title']} > {hours} jam",
+                f"Direvisi sejak {r['updated_at'].replace('T', ' ')} UTC — belum ada draft baru.",
+                created_at=now)
+            self.db.execute("UPDATE action_items SET alerted_at=? WHERE id=?", (now, r["id"]))
+        return len(rows)
+
     def set_checks(self, shipment_id: str, code: str, checks: list) -> bool:
         """Store an item's checklist (JSON). Written only when it changed — each
         write is a realtime event in every open PWA. True if it changed."""
