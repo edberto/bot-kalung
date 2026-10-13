@@ -342,7 +342,8 @@ function parseBnctDate(s){ const m=/(\d{1,2})\/(\d{1,2})\/(\d{4})/.exec(s||""); 
 function checklist(it){
   let checks=[]; try { checks=JSON.parse(it.checks||"[]"); } catch { return ""; }
   if(!checks.length) return "";
-  return `<div style="margin-top:4px">${checks.map(c=>`<div style="font-size:12px">${c.done?"✅":"⬜"} ${esc(c.label)}</div>${
+  const src=f=>!f?"":` — ${f.ref&&f.ref.startsWith("drive:")?`<a href="https://drive.google.com/file/d/${esc(f.ref.slice(6))}/view" target="_blank" rel="noopener">${esc(f.name)}</a>`:esc(f.name)}`;
+  return `<div style="margin-top:4px">${checks.map(c=>`<div style="font-size:12px">${c.done?"✅":"⬜"} ${esc(c.label)}${src(c.file)}</div>${
     (c.notes||[]).map(n=>`<div style="font-size:11px;color:var(--warn,#d97706);margin-left:20px">• ${esc(n)}</div>`).join("")}`).join("")}</div>`;
 }
 // Which file the bot read to set an action item's status — so a wrong pick is easy to spot.

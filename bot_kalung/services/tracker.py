@@ -16,7 +16,7 @@ from datetime import date, datetime
 
 from ..core.constants import DEFAULT_QUARANTINE_COUNTRIES
 from ..core.db import Database, new_id
-from . import doc_status, excel, naming, scanner, workbook
+from . import doc_checks, doc_status, excel, naming, scanner, workbook
 from .action_items import ActionItems
 from .containers import Containers
 from .shipments import Shipments
@@ -179,7 +179,8 @@ def _detect_vessel_voyage_changes(shipments: Shipments, vessels: MonitoredVessel
         _refresh_workbook_fields(shipments, row, fields, quarantine, result)
         _store_si_checks(shipments.db, row["id"], row["exporter_code"], fields,
                          row["sequence_number"],
-                         getattr(folder, "name", None) or os.path.basename(str(folder)))
+                         getattr(folder, "name", None) or os.path.basename(str(folder)),
+                         folder)
 
         new_vessel, new_voyage = fields.vessel_name, fields.voyage
         if not new_vessel or not new_voyage:
@@ -199,13 +200,15 @@ def _detect_vessel_voyage_changes(shipments: Shipments, vessels: MonitoredVessel
 
 
 def _store_si_checks(db, shipment_id: str, exporter_code: str | None, fields,
-                     folder_seq: int | None, folder_name: str | None = None) -> None:
+                     folder_seq: int | None, folder_name: str | None = None,
+                     folder=None) -> None:
     """The SI/VGM checklist (si_checks) onto the shipment's "SI / VGM / INV / PL"
     item, only from a successful workbook read. Containers + dates are not for
     AMI/PMA/CKJ; the document-number check is for everyone, against the
     shipment's sequence: the folder number, except AMI/PMA (buyer's ordering),
     whose sequence is the code number in the folder name ("1.PMA02-..." -> 2;
-    the workbook's code number if the name isn't known)."""
+    the workbook's code number if the name isn't known). With the `folder`, the
+    AI-read DO and BL checks (doc_checks) follow, also not for AMI/PMA/CKJ."""
     import re as _re
     from .drive import main_workbook_sequence
     from .si_checks import OWN_ORDER_EXPORTERS, SKIP_EXPORTERS, numbers_check
@@ -218,6 +221,15 @@ def _store_si_checks(db, shipment_id: str, exporter_code: str | None, fields,
             m = _re.match(r"^\s*\d+\.\s*[A-Za-z]+-?(\d+)", folder_name or "")
             seq = int(m.group(1)) if m else main_workbook_sequence(fields.workbook or "")
         checks.append(numbers_check(fields.doc_numbers, {seq} if seq is not None else set()))
+    if folder is not None and ex not in SKIP_EXPORTERS and fields.si_checks is not None:
+        import json
+        row = db.query_one("SELECT checks FROM action_items WHERE shipment_id=? "
+                           "AND code='si_vgm'", (shipment_id,))
+        try:
+            previous = {c["key"]: c for c in json.loads((row and row["checks"]) or "[]")}
+        except ValueError:
+            previous = {}
+        checks += doc_checks.compute(db, folder, fields, previous)
     if checks:
         ActionItems(db).set_checks(shipment_id, "si_vgm", checks)
 
@@ -337,6 +349,7 @@ def run_scan(db: Database, drive_root, *, year: int | None = None, settings=None
     `warnings` and the scan continues.
     """
     year = year or date.today().year
+    doc_checks.new_scan()
     registry = ScannedRegistry(db)
     shipments = Shipments(db)
     action_items = ActionItems(db)
@@ -392,7 +405,7 @@ def run_scan(db: Database, drive_root, *, year: int | None = None, settings=None
         if fields.container_si:
             containers.set_si_columns(shipment_id, fields.container_si)
         _store_si_checks(db, shipment_id, candidate.code, fields, candidate.sequence,
-                         candidate.folder.name)
+                         candidate.folder.name, candidate.folder)
         _ensure_vessel_monitored(vessels, fields.vessel_name, fields.voyage)
         registry.record(candidate.code, candidate.sequence, _folder_ref(candidate.folder),
                         done=False, shipment_id=shipment_id)

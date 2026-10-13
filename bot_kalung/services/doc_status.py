@@ -95,6 +95,8 @@ def folder_kind(name: str) -> str:
         return "pdf"
     if s == "fumi":
         return "fumi"
+    if s == "docc":                              # "DO & CC" (HAI, JMI)
+        return "do_cc"
     m = re.fullmatch(r"do[ck]([a-z]+)", s)       # "Dok AMI", "doc ami", "Dok PMA"
     return f"dok_{m.group(1)}" if m else "other"
 

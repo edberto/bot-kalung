@@ -249,6 +249,9 @@ class ShipmentFields:
     # Document numbers per VGM/INV/PL sheet (si_checks.read_numbers) — finished
     # into the number check by the scan, which knows the shipment's own numbers.
     doc_numbers: dict | None = None
+    # [(sheet, value, ISO date)] right of each SI/INV/PL "ETD"/"ATD" label
+    # (si_checks.read_etd_cells) — compared with the BL on-board date.
+    etd_cells: list | None = None
     workbook: str | None = None
     warnings: list[str] = field(default_factory=list)
 

@@ -213,6 +213,15 @@ CREATE TABLE IF NOT EXISTS doc_reads (
     read_at     TEXT
 );
 
+-- Fields Claude read off a DO / BL (doc automation 1C step 2, doc_checks), JSON,
+-- cached per file so it is read again only after it changes.
+CREATE TABLE IF NOT EXISTS ai_reads (
+    file_ref  TEXT PRIMARY KEY,
+    modified  TEXT,
+    data      TEXT,
+    read_at   TEXT
+);
+
 CREATE TABLE IF NOT EXISTS vessel_schedules (
     vessel_name  TEXT NOT NULL,
     voyage       TEXT NOT NULL,

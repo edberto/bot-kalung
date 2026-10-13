@@ -162,6 +162,29 @@ def _parse_number(value: str):
     return ("custom", int(numbers[0]), month, year)
 
 
+_ETD_LABEL = re.compile(r"(?i)^\s*[ae]td(\s*/\s*[ae]td)?\s*:?\s*$")
+
+
+def read_etd_cells(grids: dict) -> list:
+    """[(sheet, shown value, ISO date or None)] — the value right of each SI /
+    INV / PL sheet's "ETD" or "ATD" label, for the BL on-board date check."""
+    from .excel import _parse_long_date
+
+    out = []
+    for name, g in grids.items():
+        if _kind(name) not in ("si", "inv", "pl"):
+            continue
+        for (r, c), v in g.ordered_cells():
+            if isinstance(v, str) and _ETD_LABEL.match(v):
+                val = next((g.cell(r, cc) for cc in range(c + 1, c + 6)
+                            if _filled(g.cell(r, cc))), None)
+                d = _parse_long_date(val)
+                out.append((name.strip(), str(val.date() if isinstance(val, datetime) else val)
+                            if val is not None else None, d.isoformat() if d else None))
+                break
+    return out
+
+
 def read_numbers(grids: dict) -> dict:
     """The raw material for the number check, read with the workbook: each VGM /
     INV / PL sheet's document number (VGM first)."""
