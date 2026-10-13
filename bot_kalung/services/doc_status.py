@@ -65,6 +65,7 @@ class DocFile:
     name: str
     ref: str | None      # 'drive:{id}' or a filesystem path — for the PWA link
     created: str         # ISO timestamp the file was added (orders REV/NOTUL)
+    modified: str = ""   # last change (a new red mark changes it) — the read cache key
 
     @property
     def is_rev(self) -> bool:
@@ -76,6 +77,7 @@ class Inferred:
     status: str
     file: DocFile | None
     is_rev: bool = False
+    detail: str | None = None    # e.g. "OK oleh ongkalung" — shown beside the file
 
 
 def folder_kind(name: str) -> str:
@@ -95,6 +97,10 @@ def folder_kind(name: str) -> str:
         return "fumi"
     m = re.fullmatch(r"do[ck]([a-z]+)", s)       # "Dok AMI", "doc ami", "Dok PMA"
     return f"dok_{m.group(1)}" if m else "other"
+
+
+def _modified(node) -> str:
+    return getattr(node, "modified", None) or _created(node)
 
 
 def _created(node) -> str:
@@ -119,10 +125,11 @@ def list_files(folder) -> list[DocFile]:
     for entry in drive._safe_iterdir(folder):
         if entry.is_dir():
             kind = folder_kind(entry.name)
-            out += [DocFile(kind, f.name, _ref(f), _created(f))
+            out += [DocFile(kind, f.name, _ref(f), _created(f), _modified(f))
                     for f in drive._safe_iterdir(entry) if not f.is_dir()]
         else:
-            out.append(DocFile("root", entry.name, _ref(entry), _created(entry)))
+            out.append(DocFile("root", entry.name, _ref(entry), _created(entry),
+                               _modified(entry)))
     return out
 
 
@@ -135,7 +142,7 @@ def has_bank_folder(files: list[DocFile]) -> bool:
 # document. REV/NOTUL files that match the document but no stage rule fall back
 # to `REV_FALLBACK` (a correction under way).
 
-def _si_vgm(files, exporter):
+def _si_vgm(files, exporter, content=None):
     ex = exporter.upper()
     if ex in ("AMI", "PMA"):
         return [("final", f) for f in files if f.folder == f"dok_{ex.lower()}"]
@@ -152,7 +159,7 @@ def _si_vgm(files, exporter):
     return out
 
 
-def _peb(files, exporter):
+def _peb(files, exporter, content=None):
     out = [("final", f) for f in files if f.folder == "peb" and PEB.search(f.name) and TTD.search(f.name)]
     out += [("draft_received", f) for f in files if f.folder == "draft" and PEB.search(f.name)]
     out += [("draft_received", f) for f in files                       # a NOTUL/REV PEB, unsigned
@@ -160,32 +167,41 @@ def _peb(files, exporter):
     return out
 
 
-def _fumi(files, exporter):
+def _title(content, f) -> str | None:
+    info = content(f) if content else None
+    return info.get("title_kind") if info else None
+
+
+def _fumi(files, exporter, content=None):
     out = [("hardcopy_received", f) for f in files if f.folder == "kirim" and FUMI.search(f.name)]
     out += [("waiting_hardcopy", f) for f in files if f.folder == "fumi"]
-    out += [("draft_received", f) for f in files if f.folder == "draft" and FUMI.search(f.name)]
+    # The fumigation company names drafts by its own ref ("...0742CN.pdf");
+    # the title inside says FUMIGATION / TREATMENT CERTIFICATE.
+    out += [("draft_received", f) for f in files if f.folder == "draft"
+            and (FUMI.search(f.name) or _title(content, f) == "fumi")]
     return out
 
 
-def _phyto(files, exporter):
+def _phyto(files, exporter, content=None):
     out = [("final", f) for f in files if f.folder == "kirim" and PHYTO.search(f.name)]
     out += [("draft_received", f) for f in files if f.folder == "draft" and PHYTO.search(f.name)]
     return out
 
 
-def _coo(files, exporter):
+def _coo(files, exporter, content=None):
     out = [("hardcopy_received", f) for f in files if f.folder == "kirim" and COO.search(f.name)]
     out += [("draft_received", f) for f in files if f.folder == "draft" and COO.search(f.name)]
     return out
 
 
-def _bl(files, exporter):
+def _bl(files, exporter, content=None):
     out = [("final", f) for f in files if f.folder == "kirim" and BL_FINAL.search(f.name)]
-    out += [("draft_received", f) for f in files if f.folder == "draft" and BL_DRAFT.search(f.name)]
+    out += [("draft_received", f) for f in files if f.folder == "draft"
+            and (BL_DRAFT.search(f.name) or _title(content, f) == "bl")]
     return out
 
 
-def _dok_bank(files, exporter):
+def _dok_bank(files, exporter, content=None):
     return [("final", f) for f in files
             if f.folder == "bank" and f.name.lower().endswith(".pdf")]
 
@@ -216,7 +232,7 @@ DEFAULT = {"si_vgm": "in_progress"}
 
 
 def infer(code: str, files: list[DocFile], exporter: str,
-          seqs: set[int] | None = None) -> Inferred | None:
+          seqs: set[int] | None = None, content=None) -> Inferred | None:
     """The status the folder shows for one document, or None (no evidence).
     `seqs` are the shipment's own numbers (folder + workbook); files naming
     another number are ignored."""
@@ -224,19 +240,84 @@ def infer(code: str, files: list[DocFile], exporter: str,
     if rule is None:
         return None
     files = [f for f in files if not _foreign(f, exporter or "", seqs or set())]
-    cands = rule(files, exporter or "")
+    cands = rule(files, exporter or "", content)
+    # Only the newest draft counts, and its red review marks refine the stage:
+    # newest red mark "OK" -> Draft OK, any other -> Draf direvisi (Phase 1B).
+    details = {}
+    drafts = [c for c in cands if c[1].folder == "draft"]
+    if drafts:
+        newest = max(drafts, key=lambda c: c[1].created)[1]
+        from .doc_content import review
+        info = content(newest) if content else None
+        mark = review((info or {}).get("marks") or (), code)
+        stage = ("draft_ok" if mark.kind == "ok" else "draft_revision") if mark else "draft_received"
+        if mark:
+            details[newest] = (f"{'OK' if mark.kind == 'ok' else 'koreksi'} oleh "
+                               f"{mark.author or '?'}")
+        cands = [c for c in cands if c[1].folder != "draft"] + [(stage, newest)]
     normal = [(s, f) for s, f in cands if not f.is_rev]
     revs = [(s, f) for s, f in cands if f.is_rev]
     # Furthest stage the ordinary files reach; ties go to the newest file.
     base = max(normal, key=lambda c: (RANK[c[0]], c[1].created), default=None)
     newest_rev = max(revs, key=lambda c: c[1].created, default=None)
     if newest_rev and (base is None or newest_rev[1].created > base[1].created):
-        return Inferred(newest_rev[0], newest_rev[1], is_rev=True)
+        return Inferred(newest_rev[0], newest_rev[1], is_rev=True,
+                        detail=details.get(newest_rev[1]))
     if base:
-        return Inferred(base[0], base[1])
+        return Inferred(base[0], base[1], detail=details.get(base[1]))
     if code in DEFAULT:
         return Inferred(DEFAULT[code], None)
     return None
+
+
+class DraftReader:
+    """Reads Draf/ PDFs (title + red review marks) through the `doc_reads` cache:
+    a draft is downloaded again only when its modified time changes, so a scan
+    every few minutes doesn't re-download every draft."""
+
+    def __init__(self, db, fetch):
+        self.db, self.fetch, self._memo = db, fetch, {}
+
+    def __call__(self, f: DocFile) -> dict | None:
+        from . import doc_content
+
+        if f.folder != "draft" or not f.ref or not f.name.lower().endswith(".pdf"):
+            return None
+        if f.ref in self._memo:
+            return self._memo[f.ref]
+        row = self.db.query_one("SELECT * FROM doc_reads WHERE file_ref=?", (f.ref,))
+        if row is not None and row["modified"] == f.modified:
+            info = {"title_kind": row["title_kind"],
+                    "marks": doc_content.marks_from_json(row["marks"])}
+        else:
+            try:
+                data = self.fetch(f.ref)
+            except Exception:      # noqa: BLE001 - try again next scan
+                return None
+            content = doc_content.read_pdf(data)
+            info = {"title_kind": content.title_kind if content else None,
+                    "marks": content.marks if content else ()}
+            # Raw marks are cached (not a verdict): the verdict depends on the
+            # document — COO ignores its departure-date update.
+            self.db.execute(
+                "INSERT INTO doc_reads (file_ref, modified, title_kind, marks, read_at) "
+                "VALUES (?,?,?,?,?) ON CONFLICT (file_ref) DO UPDATE "
+                "SET modified=excluded.modified, title_kind=excluded.title_kind, "
+                "marks=excluded.marks, read_at=excluded.read_at",
+                (f.ref, f.modified, info["title_kind"],
+                 doc_content.marks_to_json(info["marks"]),
+                 datetime.now(timezone.utc).replace(tzinfo=None).isoformat(timespec="seconds")))
+        self._memo[f.ref] = info
+        return info
+
+
+def _fetcher(folder):
+    """bytes for a DocFile ref: via the Drive client behind a Drive folder node,
+    or straight from disk for a local scan."""
+    client = getattr(folder, "_client", None)
+    if client is not None:
+        return lambda ref: client.download(ref.split(":", 1)[1])
+    return lambda ref: open(ref, "rb").read()
 
 
 def sync_shipment(items, shipment, folder) -> list[str]:
@@ -253,8 +334,9 @@ def sync_shipment(items, shipment, folder) -> list[str]:
         items.ensure_item(shipment["id"], *DOK_BANK)
     changes = []
     seqs = own_sequences(shipment, files)
+    reader = DraftReader(items.db, _fetcher(folder))
     for it in items.auto_rows(shipment["id"]):
-        inferred = infer(it["code"], files, shipment["exporter_code"] or "", seqs)
+        inferred = infer(it["code"], files, shipment["exporter_code"] or "", seqs, reader)
         if inferred is None:
             continue
         name = inferred.file.name if inferred.file else None
@@ -264,10 +346,11 @@ def sync_shipment(items, shipment, folder) -> list[str]:
             continue                         # nothing new — no write, no realtime event
         new = decide(it["status"], it["auto_status"], it["auto_evidence_ref"], inferred,
                      it["updated_at"] or it["created_at"])
-        items.record_auto(it["id"], new, inferred.status, name, ref)
+        items.record_auto(it["id"], new, inferred.status, name, ref, inferred.detail)
         if new:
             changes.append(f"{label}: {it['title']} -> {ACTION_STATUS_LABELS[new]}"
-                           f" ({name or 'tanpa file'})")
+                           f" ({name or 'tanpa file'}"
+                           f"{', ' + inferred.detail if inferred.detail else ''})")
     return changes
 
 

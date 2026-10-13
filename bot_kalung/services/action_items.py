@@ -186,19 +186,20 @@ class ActionItems:
         return True
 
     def record_auto(self, item_id: str, status: str | None, auto_status: str,
-                    evidence: str | None, evidence_ref: str | None) -> None:
+                    evidence: str | None, evidence_ref: str | None,
+                    detail: str | None = None) -> None:
         """Store the bot's inference (and the file behind it); `status` is the new
         status to apply, or None to leave the current one (e.g. a manual edit)."""
         if status is not None:
             self.db.execute(
                 "UPDATE action_items SET status=?, auto_status=?, auto_evidence=?, "
-                "auto_evidence_ref=?, updated_at=? WHERE id=?",
-                (status, auto_status, evidence, evidence_ref, _now(), item_id))
+                "auto_evidence_ref=?, auto_detail=?, updated_at=? WHERE id=?",
+                (status, auto_status, evidence, evidence_ref, detail, _now(), item_id))
         else:
             self.db.execute(
                 "UPDATE action_items SET auto_status=?, auto_evidence=?, "
-                "auto_evidence_ref=? WHERE id=?",
-                (auto_status, evidence, evidence_ref, item_id))
+                "auto_evidence_ref=?, auto_detail=? WHERE id=?",
+                (auto_status, evidence, evidence_ref, detail, item_id))
 
     def set_due_date(self, item_id: str, iso: str | None) -> None:
         self.db.execute(

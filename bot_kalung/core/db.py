@@ -177,7 +177,8 @@ CREATE TABLE IF NOT EXISTS action_items (
     updated_at   TEXT,
     auto_status        TEXT,
     auto_evidence      TEXT,
-    auto_evidence_ref  TEXT
+    auto_evidence_ref  TEXT,
+    auto_detail        TEXT
 );
 
 -- Containers for a scanned shipment, populated from the VGM read and tracked on
@@ -201,6 +202,16 @@ CREATE TABLE IF NOT EXISTS containers (
 
 -- Carrier sailing schedule (reference dates only, from the Tresnamuda PDF). Kept
 -- apart from monitored_vessels on purpose: it never moves a voyage's BNCT phase.
+-- What the bot read inside a draft (doc automation 1B), cached per file so a
+-- draft is downloaded again only after it changes (modified = Drive modifiedTime).
+CREATE TABLE IF NOT EXISTS doc_reads (
+    file_ref    TEXT PRIMARY KEY,
+    modified    TEXT,
+    title_kind  TEXT,
+    marks       TEXT,
+    read_at     TEXT
+);
+
 CREATE TABLE IF NOT EXISTS vessel_schedules (
     vessel_name  TEXT NOT NULL,
     voyage       TEXT NOT NULL,
