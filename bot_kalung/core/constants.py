@@ -133,6 +133,7 @@ ACTION_ITEM_SEEDS = [
     ("coo", "COO"),
     ("peb_npe", "PEB & NPE"),
     ("bl", "BL"),
+    ("insurance", "Insurance"),
     ("dg", "DG Decla"),
 ]
 # Not seeded at import: the scan adds it once the shipment folder has a bank
@@ -144,6 +145,7 @@ DOK_BANK = ("dok_bank", "Dok Bank")
 #   COO    except destinations Tajikistan / Uzbekistan (matched against the port
 #          too — GALLANA's are "Tajikistan Via Karachi", country Pakistan)
 #   BL     except CKJ
+#   Insurance HOPSON and JMI only (ends with the hardcopy)
 #   DG Decla  HOPSON and JMI only
 NO_FUMI_EXPORTERS = {"HAI", "JMI"}
 NO_PHYTO_EXPORTERS = {"HAI", "JMI"}
@@ -151,6 +153,7 @@ NO_PHYTO_DESTINATIONS = {"CHINA", "INDIA"}
 NO_COO_DESTINATIONS = {"TAJIKISTAN", "UZBEKISTAN"}
 NO_BL_EXPORTERS = {"CKJ"}
 DG_EXPORTERS = {"HAI", "JMI"}
+INSURANCE_EXPORTERS = {"HAI", "JMI"}
 
 # PRD Section 6.3 — full workflow definition. Phase 2 steps are listed so the
 # checklist shows the whole process, but they render disabled.

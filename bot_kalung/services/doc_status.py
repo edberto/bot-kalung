@@ -16,6 +16,8 @@ inferred from what is in the folder. Rules are the user's (2026-10-13):
   COO            COO in Draf -> Draft diterima; in Dok kirim -> Hardcopy diterima.
   BL             a draft BL in Draf -> Draft diterima; BL/OBL/SWB in Dok kirim
                  -> Final.
+  Insurance      (HAI, JMI) INS / insurance / asuransi / polis in Draf -> Draft
+                 diterima; in Dok kirim -> Hardcopy diterima.
   Dok Bank       a Mandiri/BCA/BNI folder -> the item appears; Final once it holds
                  a PDF.
 
@@ -57,6 +59,7 @@ BL_FINAL = re.compile(r"(?i)(?<![a-z])(?:o?bl|swb)(?![a-z])|copy\s?bl|scan\s?bl"
 BL_DRAFT = re.compile(r"(?i)draft?\s?bl|bl\s?draft|_draft|^\d{9,11}-\d{14}")
 NOT_INV = re.compile(r"(?i)dhl|(?<![a-z])aca(?![a-z])")   # courier / insurance invoices
 BANK = _word(r"mandiri|bca|bni")
+INS = _word(r"ins|insurance|asuransi|polis")
 
 
 @dataclass(frozen=True)
@@ -196,6 +199,12 @@ def _coo(files, exporter, content=None):
     return out
 
 
+def _insurance(files, exporter, content=None):
+    out = [("hardcopy_received", f) for f in files if f.folder == "kirim" and INS.search(f.name)]
+    out += [("draft_received", f) for f in files if f.folder == "draft" and INS.search(f.name)]
+    return out
+
+
 def _bl(files, exporter, content=None):
     out = [("final", f) for f in files if f.folder == "kirim" and BL_FINAL.search(f.name)]
     out += [("draft_received", f) for f in files if f.folder == "draft"
@@ -227,7 +236,7 @@ def _foreign(f: DocFile, exporter: str, seqs: set[int]) -> bool:
 
 
 RULES = {"si_vgm": _si_vgm, "peb_npe": _peb, "fumi": _fumi, "phyto": _phyto,
-         "coo": _coo, "bl": _bl, DOK_BANK[0]: _dok_bank}
+         "coo": _coo, "bl": _bl, "insurance": _insurance, DOK_BANK[0]: _dok_bank}
 # With no evidence at all: SI/VGM is being worked on from the moment the
 # shipment exists; everything else says nothing (None).
 DEFAULT = {"si_vgm": "in_progress"}

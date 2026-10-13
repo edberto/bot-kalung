@@ -16,6 +16,7 @@ from ..core.constants import (
     ACTION_STATUSES_DONE,
     ACTION_STATUSES,
     DG_EXPORTERS,
+    INSURANCE_EXPORTERS,
     NO_BL_EXPORTERS,
     NO_COO_DESTINATIONS,
     NO_FUMI_EXPORTERS,
@@ -53,6 +54,8 @@ def should_seed(code: str, country: str | None, exporter_code: str | None,
         return ex not in NO_BL_EXPORTERS
     if code == "dg":
         return ex in DG_EXPORTERS
+    if code == "insurance":
+        return ex in INSURANCE_EXPORTERS
     return True
 
 

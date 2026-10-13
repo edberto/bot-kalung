@@ -340,7 +340,7 @@ function isDoneCode(code){ const n=parseInt(code,10); return !isNaN(n) && n>=50;
 function parseBnctDate(s){ const m=/(\d{1,2})\/(\d{1,2})\/(\d{4})/.exec(s||""); return m?`${m[3]}-${m[2].padStart(2,"0")}-${m[1].padStart(2,"0")}`:null; }
 // Sub-checks the bot works out from the workbook (SI/VGM: containers, dates);
 // each problem it found is listed under its check.
-const CHECKABLE = new Set(["si_vgm","peb_npe","fumi","phyto","coo","bl","dok_bank"]);   // items the 🔍 button re-checks
+const CHECKABLE = new Set(["si_vgm","peb_npe","fumi","phyto","coo","bl","insurance","dok_bank"]);   // items the 🔍 button re-checks
 // After a check request: wait until the worker clears it (~20 s + the check),
 // then redraw the shipment — the detail view isn't redrawn by realtime events.
 function afterCheck(ids, shipmentId){

@@ -37,6 +37,9 @@ check("BL: every exporter except CKJ",
       should_seed("bl", None, "AMJ") and not should_seed("bl", "Philippines", "CKJ"))
 check("DG Decla: HOPSON and JMI only",
       should_seed("dg", "China", "JMI") and not should_seed("dg", "Pakistan", "NIT"))
+check("Insurance: HOPSON and JMI only",
+      should_seed("insurance", "India", "HAI") and should_seed("insurance", "China", "JMI")
+      and not should_seed("insurance", "Pakistan", "AMJ"))
 check("Marking is no longer a seed item", should_seed("marking", "India", "HAI")
       and "marking" not in [c for c, _ in __import__("bot_kalung.core.constants",
                                                       fromlist=["x"]).ACTION_ITEM_SEEDS])

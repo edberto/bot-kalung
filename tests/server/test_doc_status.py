@@ -75,6 +75,11 @@ check("Phyto: Draf -> Draft diterima, Dok kirim -> Final",
 check("COO: Draf -> Draft diterima, Dok kirim -> Hardcopy diterima",
       status("coo", [F("draft", "AMJ COO 27092026.pdf")]) == "draft_received"
       and status("coo", [F("kirim", "AMJ27-COO.pdf")]) == "hardcopy_received")
+check("Insurance: draft in Draf -> Draft diterima; in Dok kirim -> Hardcopy diterima "
+      "(the insurer's invoice doesn't count)",
+      status("insurance", [F("draft", "HAI35-Ins draft.pdf")], "HAI") == "draft_received"
+      and status("insurance", [F("kirim", "HAI35-Ins.pdf")], "HAI") == "hardcopy_received"
+      and status("insurance", [F("kirim", "ACA Inv-HAI35.pdf")], "HAI") is None)
 check("BL: OBL / SWB / Copy BL in Dok kirim -> Final",
       all(status("bl", [F("kirim", n)]) == "final"
           for n in ("AMJ27-OBL.pdf", "SWB 2335150950.pdf", "IMG_20260915_0004-CopyBL.pdf",
