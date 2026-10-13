@@ -315,9 +315,11 @@ def _expected_columns() -> dict[str, dict[str, str]]:
         name, body = match.group(1), match.group(2)
         columns: dict[str, str] = {}
         for line in body.split("\n"):
-            line = line.strip().rstrip(",")
-            if not line or line.upper().startswith(("UNIQUE", "PRIMARY KEY",
-                                                    "FOREIGN KEY", "CHECK")):
+            # comment off first, then the comma: "x TEXT,  -- note" -> "x TEXT"
+            line = line.split("--", 1)[0].strip().rstrip(",").strip()
+            # table constraints ("UNIQUE (…)", "CHECK (…)") — not columns that
+            # merely start with those words ("checks", "check_requested_at")
+            if not line or re.match(r"(?i)(UNIQUE|PRIMARY\s+KEY|FOREIGN\s+KEY|CHECK)\s*\(", line):
                 continue
             parts = line.split(None, 1)
             if len(parts) == 2:

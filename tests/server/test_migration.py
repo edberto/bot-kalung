@@ -83,6 +83,13 @@ check("Postgres gets every CREATE whole: no comment's ';' splits a statement "
       "(the worker crashed at startup on '-- set by …; the worker …')",
       all(s.upper().startswith("CREATE") and s.count("(") == s.count(")") for s in creates)
       and sum(s.upper().startswith("CREATE TABLE") for s in creates) == 17)
+decls = [(t, c, d) for t, cols in _expected_columns().items() for c, d in cols.items()]
+check("column declarations carry no comment or comma (ALTER TABLE ADD COLUMN "
+      "'TEXT,' crashed the worker)",
+      all("--" not in d and "," not in d and not c.startswith("-") for t, c, d in decls)
+      and ("action_items", "alerted_at", "TEXT") in decls)
+check("columns named like a constraint keyword are still columns (checks, check_requested_at)",
+      {"checks", "check_requested_at"} <= set(_expected_columns()["action_items"]))
 check("all seventeen tables parsed from SCHEMA",
       set(expected) == {"shipments", "workflow_steps", "settings",
                         "message_templates", "bnct_checks", "notifications",
