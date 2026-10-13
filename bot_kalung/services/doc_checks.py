@@ -445,6 +445,7 @@ CONTENT_DOCS = {
     "phyto": "a phytosanitary certificate",
     "coo": "a certificate of origin",
     "bl": "a bill of lading or sea waybill (draft or final)",
+    "insurance": "a marine cargo insurance policy or certificate",
 }
 _BAG_SKIP = {"HAI", "JMI"}
 _FIELD_LABEL = {
@@ -508,6 +509,9 @@ def _content_prompt(code: str, exporter: str, reference: str) -> str:
     extra = {
         "coo": "- Ignore every date on the COO (the departure date is often corrected by hand).",
         "fumi": "- Ignore dates.",
+        "insurance": ("- The insured / assured is the shipper side. The sum insured is usually\n"
+                      "  the invoice value plus a margin (often 110%): only flag it when the\n"
+                      "  invoice value it is based on doesn't match the workbook's."),
     }.get(code, "")
     return _CONTENT_PROMPT.format(
         doc=CONTENT_DOCS[code], reference=reference, extra=extra,

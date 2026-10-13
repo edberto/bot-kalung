@@ -484,8 +484,6 @@ def poll(db, gmail, ask=_ask_classify, drive=None) -> list[str]:
 
 
 def process(db, gmail, msg, ask=_ask_classify, in_drive=None, reply_ask=_ask_reply) -> list[str]:
-    from .action_items import ActionItems
-
     h = _headers(msg)
     sender = email.utils.parseaddr(h.get("from", ""))[1].lower()
     team = sender in TEAM
@@ -517,12 +515,16 @@ def process(db, gmail, msg, ask=_ask_classify, in_drive=None, reply_ask=_ask_rep
         has_si = re.search(r"(?i)(?<![a-z])si(?![a-z])", names)
         has_vgm = re.search(r"(?i)vgm", names)
         if shipment and kind and has_si and (has_vgm or kind == "fumi"):
-            items = ActionItems(db)
             for code in KIND_CODES[kind]:
                 row = db.query_one("SELECT id, title, status FROM action_items "
                                    "WHERE shipment_id=? AND code=?", (shipment_id, code))
                 if row and row["status"] == "pending":
-                    items.set_status(row["id"], "in_progress")
+                    # the email is the evidence (✉️ line, status history)
+                    db.execute("UPDATE action_items SET status='in_progress', updated_at=?, "
+                               "mail_status='in_progress', mail_evidence=?, mail_evidence_ref=?, "
+                               "mail_at=? WHERE id=?",
+                               (sent_at, f"{sender.split('@')[0]}: email '{subject}' (SI/VGM)",
+                                thread_id, sent_at, row["id"]))
                     report.append(f"{label}: {row['title']} -> Dikerjakan (email '{subject}')")
         elif shipment and kind:
             report += apply_reply(db, msg, shipment, kind, sender, sent_at, atts, reply_ask)

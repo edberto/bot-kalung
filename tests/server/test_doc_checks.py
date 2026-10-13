@@ -142,6 +142,9 @@ check("bag count is asked except for HAI/JMI; COO ignores dates; BL wants the pa
       and "- bags:" not in doc_checks._content_prompt("peb_npe", "HAI", "x")
       and "Ignore every date" in doc_checks._content_prompt("coo", "AMJ", "x")
       and "party size" in doc_checks._content_prompt("bl", "AMJ", "x"))
+check("Insurance drafts are content-checked too, allowing the usual 110% sum insured",
+      "insurance" in doc_checks.CONTENT_DOCS
+      and "110%" in doc_checks._content_prompt("insurance", "HAI", "x"))
 with tempfile.TemporaryDirectory() as tmp:
     db = Database(db_path_for(Path(tmp)))
     db.initialize()

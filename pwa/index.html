@@ -373,6 +373,19 @@ function afterCheck(ids, shipmentId){
 function acksOf(it){ try { return JSON.parse(it.acks||"[]"); } catch { return []; } }
 function isAcked(acks,c,n){ return acks.some(a=>a.key===c.key&&a.note===n); }
 function checkDone(it,c){ const acks=acksOf(it); return c.done || (c.notes||[]).every(n=>isAcked(acks,c,n)); }
+// Status timeline of one action item (action_item_history, filled by a DB trigger).
+const HIST_SOURCE = {drive:"🤖 Drive", email:"✉️ email", manual:"✋", bot:"🤖", baru:"dibuat"};
+async function toggleHistory(it, box, btn){
+  if(box.innerHTML){ box.innerHTML=""; btn.textContent="riwayat"; return; }
+  btn.textContent="memuat…";
+  const {data,error}=await sb.from("action_item_history").select("*").eq("item_id",it.id).order("at",{ascending:false}).limit(50);
+  btn.textContent="tutup riwayat";
+  if(error){ box.innerHTML=`<div class="metaline">Gagal memuat riwayat: ${esc(error.message)}</div>`; return; }
+  if(!data.length){ box.innerHTML=`<div class="metaline" style="font-size:11px">Belum ada riwayat (dicatat sejak fitur ini aktif).</div>`; return; }
+  box.innerHTML=`<div style="margin:4px 0 2px;padding:6px 8px;background:var(--hover);border-radius:8px">${data.map(h=>`<div style="font-size:11px;padding:2px 0">
+    <b>${fmtDT(h.at)}</b> · ${h.from_status?esc(STATUS_LABEL[h.from_status]||h.from_status)+" → ":""}<b>${esc(STATUS_LABEL[h.to_status]||h.to_status)}</b>
+    · ${esc(HIST_SOURCE[h.source]||h.source)}${h.source==="manual"&&h.who?" "+esc(h.who):""}${h.detail?` · <span class="muted">${esc(h.detail)}</span>`:""}</div>`).join("")}</div>`;
+}
 function checklist(it){
   let checks=[]; try { checks=JSON.parse(it.checks||"[]"); } catch { return ""; }
   if(!checks.length) return "";
@@ -765,7 +778,7 @@ async function renderDetail(id){
     ic.appendChild(all);
   }
   for(const it of items){
-    const row=el(`<div class="item il" style="border-left-color:${STATUS_COLOR[it.status]||"#6b7280"}"><div class="t">${esc(it.title)}${it.is_custom?' <span class="muted">(tambahan)</span>':""}<div class="metaline" style="font-size:11px">Status sejak ${fmtDT(it.updated_at||it.created_at)}${revisionLate(it)?` · <b style="color:var(--danger)">⏰ revisi &gt; ${REVISION_HOURS} jam</b>`:""}</div>${autoEvidence(it)}${mailEvidence(it)}${checklist(it)}</div></div>`);
+    const row=el(`<div class="item il" style="border-left-color:${STATUS_COLOR[it.status]||"#6b7280"}"><div class="t">${esc(it.title)}${it.is_custom?' <span class="muted">(tambahan)</span>':""}<div class="metaline" style="font-size:11px">Status sejak ${fmtDT(it.updated_at||it.created_at)}${revisionLate(it)?` · <b style="color:var(--danger)">⏰ revisi &gt; ${REVISION_HOURS} jam</b>`:""} · <button class="linkbtn histbtn" style="font-size:11px;padding:0">riwayat</button></div><div class="hist"></div>${autoEvidence(it)}${mailEvidence(it)}${checklist(it)}</div></div>`);
     const sel=el(`<select class="status">${STATUS.map(([v,l])=>`<option value="${v}" ${it.status===v?"selected":""}>${l}</option>`).join("")}</select>`);
     sel.onchange=async ()=>{
       const patch={status:sel.value,updated_at:nowIso()};
@@ -781,6 +794,7 @@ async function renderDetail(id){
       row.appendChild(chk);
     }
     row.appendChild(del); ic.appendChild(row);
+    row.addEventListener("click", async e=>{ const h=e.target.closest(".histbtn"); if(h) await toggleHistory(it, row.querySelector(".hist"), h); });
     row.addEventListener("click", async e=>{ const b=e.target.closest(".ackbtn"); if(!b) return;
       if(await toggleAck(it, +b.dataset.c, +b.dataset.n)) nav("detail", id, false, true); });
   }
