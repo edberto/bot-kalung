@@ -76,6 +76,13 @@ def table_names(path):
 
 # ---- schema parsing --------------------------------------------------------
 expected = _expected_columns()
+from bot_kalung.core.db import INDEXES, SCHEMA
+from bot_kalung.core.pg import statements
+creates = statements(SCHEMA) + statements(INDEXES)
+check("Postgres gets every CREATE whole: no comment's ';' splits a statement "
+      "(the worker crashed at startup on '-- set by …; the worker …')",
+      all(s.upper().startswith("CREATE") and s.count("(") == s.count(")") for s in creates)
+      and sum(s.upper().startswith("CREATE TABLE") for s in creates) == 17)
 check("all seventeen tables parsed from SCHEMA",
       set(expected) == {"shipments", "workflow_steps", "settings",
                         "message_templates", "bnct_checks", "notifications",

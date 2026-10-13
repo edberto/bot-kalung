@@ -32,6 +32,14 @@ def _translate(sql: str) -> str:
     return sql
 
 
+def statements(text: str) -> list[str]:
+    """The CREATE statements of a SQL script. Comments go first — whole-line AND
+    trailing ones: a ";" inside a trailing comment ("-- set by …; the worker …")
+    would split a CREATE TABLE in half and stop the worker from starting."""
+    src = "\n".join(line.split("--", 1)[0] for line in text.splitlines())
+    return [s.strip() for s in src.split(";") if "CREATE" in s.upper()]
+
+
 class _Cursor:
     """Wraps a psycopg cursor so `.execute` translates the SQLite-flavoured SQL."""
 
@@ -83,11 +91,6 @@ class PostgresDatabase:
         statements, and apply each to Postgres. CREATE ... IF NOT EXISTS makes it
         a no-op on an already-provisioned database."""
         from .db import INDEXES, SCHEMA, _expected_columns
-
-        def statements(text: str) -> list[str]:
-            src = "\n".join(line for line in text.splitlines()
-                            if not line.strip().startswith("--"))
-            return [s.strip() for s in src.split(";") if "CREATE" in s.upper()]
 
         with self.connect() as conn:
             for statement in statements(SCHEMA):
