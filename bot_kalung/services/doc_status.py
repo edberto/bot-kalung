@@ -390,7 +390,12 @@ def decide(current: str, auto_status: str | None, auto_ref: str | None,
         return None
     if RANK[inferred.status] > RANK.get(current, 0):
         return inferred.status
-    if inferred.is_rev and _utc19(inferred.file.created) > _utc19(last_change):
+    newer = inferred.file is not None and _utc19(inferred.file.created) > _utc19(last_change)
+    if inferred.is_rev and newer:
+        return inferred.status
+    # The revision loop: a revised draft arriving after the revision was asked
+    # for (Draf direvisi) is a new draft to review -> Draft diterima.
+    if current == "draft_revision" and inferred.status == "draft_received" and newer:
         return inferred.status
     return None
 
