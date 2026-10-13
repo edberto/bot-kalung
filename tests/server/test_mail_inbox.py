@@ -134,6 +134,16 @@ with tempfile.TemporaryDirectory() as tmp:
           mi._guess_from_name("TTJ DRAF PHYTO 08102026 KUALANAMU.docx")
           == {"doc_type": "phyto", "stage": "draft", "correction": False})
 
+    pdfs.update({"m4-0": b"%PDF already"})
+    again = message("m4", "Doc Exim <docexim.sbm@gmail.com>", "ongkalung@gmail.com", "Re: AMJ30",
+                    ["PEB 30 ttd.pdf"], when="1760000200000")
+    import hashlib
+    have = hashlib.md5(b"%PDF already").hexdigest()
+    mi.process(db, gmail, again, ask=lambda d, m: {"doc_type": "peb", "stage": "final", "correction": False},
+               in_drive=lambda s, md5: md5 == have)
+    check("a file already in the shipment folder is not queued",
+          not db.query("SELECT 1 FROM mail_queue WHERE message_id='m4'"))
+
     personal = message("m3", "friend@example.com", "edbertongko88@gmail.com", "Holiday photos",
                        ["beach.pdf"], thread="t9")
     check("mail outside document threads is ignored", mi.process(db, gmail, personal) == []

@@ -287,7 +287,39 @@ def _gentle(call, tries: int = 4):
             time.sleep(30 * (attempt + 1))
 
 
-def poll(db, gmail, ask=_ask_classify) -> list[str]:
+def drive_lookup(drive):
+    """in_drive(shipment, md5) -> True when that file is already somewhere in the
+    shipment folder (top level or a subfolder), by content. One listing per
+    shipment per poll."""
+    cache: dict = {}
+
+    def md5s(folder_id: str) -> set:
+        out, folders = set(), [folder_id]
+        for depth in range(2):
+            nxt = []
+            for fid in folders:
+                for f in drive.files().list(
+                        q=f"'{fid}' in parents and trashed=false", pageSize=1000,
+                        fields="files(id,mimeType,md5Checksum)", supportsAllDrives=True,
+                        includeItemsFromAllDrives=True).execute().get("files", []):
+                    if f["mimeType"] == "application/vnd.google-apps.folder":
+                        nxt.append(f["id"])
+                    elif f.get("md5Checksum"):
+                        out.add(f["md5Checksum"])
+            folders = nxt
+        return out
+
+    def in_drive(shipment, md5: str) -> bool:
+        ref = (shipment["folder_path"] or "") if shipment else ""
+        if not ref.startswith("drive:"):
+            return False
+        if ref not in cache:
+            cache[ref] = md5s(ref.split(":", 1)[1])
+        return md5 in cache[ref]
+    return in_drive
+
+
+def poll(db, gmail, ask=_ask_classify, drive=None) -> list[str]:
     """Read mail since the last poll (first run: the last FIRST_RUN_DAYS days).
     Returns report lines."""
     from ..core.settings import Settings
@@ -312,9 +344,10 @@ def poll(db, gmail, ask=_ask_classify) -> list[str]:
             continue
         msgs.append(_gentle(lambda: gmail.users().messages().get(
             userId="me", id=mid, format="full").execute(num_retries=5)))
+    in_drive = drive_lookup(drive) if drive is not None else None
     for msg in sorted(msgs, key=lambda m: int(m["internalDate"])):
         try:
-            report += process(db, gmail, msg, ask)
+            report += process(db, gmail, msg, ask, in_drive)
         except Exception as exc:      # noqa: BLE001 - one bad mail must not stop the rest
             log.warning("mail %s failed: %s", msg["id"], exc)
             continue
@@ -325,7 +358,7 @@ def poll(db, gmail, ask=_ask_classify) -> list[str]:
     return report
 
 
-def process(db, gmail, msg, ask=_ask_classify) -> list[str]:
+def process(db, gmail, msg, ask=_ask_classify, in_drive=None) -> list[str]:
     from .action_items import ActionItems
 
     h = _headers(msg)
@@ -378,6 +411,8 @@ def process(db, gmail, msg, ask=_ask_classify) -> list[str]:
         if shipment_id and db.query_one("SELECT 1 FROM mail_queue WHERE sha256=? AND shipment_id=?",
                                         (sha, shipment_id)):
             continue                               # the same file sent again
+        if shipment and in_drive and in_drive(shipment, hashlib.md5(data).hexdigest()):
+            continue                               # already saved in the shipment folder
         guess = classify(db, data, att, ask, kind)
         doc_type, stage = guess["doc_type"], guess["stage"]
         code = DOC_TYPES[doc_type][0]
@@ -422,8 +457,10 @@ def save_approved(db, gmail, drive, folder_resolver, check=None) -> list[str]:
                                        supportsAllDrives=True, includeItemsFromAllDrives=True
                                        ).execute().get("files", [])
             dup = next((f["name"] for f in there if f.get("md5Checksum") == md5 or f["name"] == name), None)
-            if dup:
-                status, note = "skipped", f"sudah ada: {dup}"
+            if dup:          # already in the folder: nothing to keep in the queue
+                db.execute("DELETE FROM mail_queue WHERE id=?", (e["id"],))
+                report.append(f"{e['filename']}: sudah ada ({dup}) — dihapus dari antrean")
+                continue
             else:
                 drive.files().create(body={"name": name, "parents": [sub.id]},
                                      media_body=MediaInMemoryUpload(data, mimetype=e["mime"] or None),

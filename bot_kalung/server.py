@@ -113,11 +113,11 @@ def _manual_checks(db, drive_client) -> None:
 def _mail_poll(db) -> None:
     """Read new mail into the approval queue (mail_inbox). Needs the Google
     sign-in (tools/google_signin.py); without it, nothing happens."""
-    gmail, _ = mail_inbox.clients()
+    gmail, drive = mail_inbox.clients()
     if gmail is None:
         return
     doc_checks.new_scan()
-    for line in mail_inbox.poll(db, gmail):
+    for line in mail_inbox.poll(db, gmail, drive=drive):
         log.info("mail: %s", line)
 
 
@@ -353,8 +353,9 @@ def main() -> None:
     last_scan = last_poll = 0.0
     try:
         last_scan_req = settings.get("scan_requested_at") or ""   # ignore a stale one at boot
+        last_mail_req = settings.get("mail_requested_at") or ""
     except Exception:      # noqa: BLE001
-        last_scan_req = ""
+        last_scan_req = last_mail_req = ""
     while True:
         now = time.monotonic()
         poll_interval = _interval(settings, "poll_interval_minutes", cfg["poll_interval"])
@@ -375,6 +376,15 @@ def main() -> None:
             last_scan_req = scan_req
         _safe(lambda: _manual_checks(db, drive_client), "check")
         _safe(lambda: _mail_save(db, drive_client), "mail save")
+        try:
+            mail_req = settings.get("mail_requested_at") or ""    # Kotak Masuk's "Periksa Email"
+        except Exception:      # noqa: BLE001
+            mail_req = last_mail_req
+        if mail_req != last_mail_req:
+            log.info("mail: on-demand request (%s)", mail_req)
+            _safe(lambda: _mail_poll(db), "mail")
+            _safe(lambda: settings.set("mail_checked_at", mail_req), "mail")
+            last_mail_req = mail_req
         time.sleep(20)
 
 

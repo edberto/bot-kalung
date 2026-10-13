@@ -1035,7 +1035,7 @@ function renderMore(){
 // -- KOTAK MASUK: email attachments waiting for approval (mail_inbox) ------
 const MAIL_DOCS = {peb:"PEB",npe:"NPE",coo:"COO",phyto:"Phyto",fumi:"Fumi",bl:"BL",insurance:"Insurance",other:"Dok (lainnya)"};
 const MAIL_DEST = {draft:"Draf",kirim:"Dok kirim",fumi:"Fumi",peb:"PEB & NPE"};
-const MAIL_STATUS = {saved:"✅ tersimpan",skipped:"↷ dilewati",rejected:"✕ ditolak",error:"⚠ gagal",approved:"⏳ disimpan…"};
+const MAIL_STATUS = {saved:"✅ tersimpan",rejected:"✕ ditolak",error:"⚠ gagal",approved:"⏳ disimpan…"};
 const GMAIL_USER = "edbertongko88@gmail.com";
 // Same as mail_inbox.file_name: "{prefix-}{EX}{seq}-{Doc}-{original}"
 function mailName(s,t,st,p,orig){ let l=(MAIL_DOCS[t]||"Dok").replace(" (lainnya)",""); if(t==="bl"&&st==="draft") l="BL draft";
@@ -1048,6 +1048,18 @@ async function renderInbox(){
   const ships=[...active].sort(shipSort), byId=Object.fromEntries(ships.map(s=>[s.id,s]));
   const w=document.createElement("div");
   const pending=(rows||[]).filter(r=>r.status==="pending"), done=(rows||[]).filter(r=>r.status!=="pending").slice(0,40);
+  const btn=el(`<button class="primary" style="margin-bottom:6px">🔄 Periksa Email Sekarang</button>`);
+  btn.onclick=async ()=>{
+    btn.disabled=true; btn.textContent="Memeriksa…";
+    const req=nowIso(); const {error}=await setSetting("mail_requested_at", req);
+    if(error){ toast("Gagal: "+error.message); btn.disabled=false; btn.textContent="🔄 Periksa Email Sekarang"; return; }
+    let tries=0;
+    const t=setInterval(async ()=>{ tries++;
+      if((await getSetting("mail_checked_at"))===req || tries>=30){ clearInterval(t);
+        if(state.view==="inbox"){ toast(tries>=30?"Belum selesai — coba lagi nanti":"Email sudah diperiksa"); nav("inbox",undefined,false,true); } }
+    }, 4000);
+  };
+  w.appendChild(btn);
   w.appendChild(el(`<div class="metaline" style="margin:0 2px 10px">Lampiran email dari luar tim. Periksa usulannya, ubah bila perlu, lalu Simpan — bot menaruh file di folder pengiriman (dilewati bila file yang sama sudah ada).</div>`));
   if(!pending.length) w.appendChild(el(`<div class="card muted">Tidak ada lampiran yang menunggu.</div>`));
   for(const r of pending){
