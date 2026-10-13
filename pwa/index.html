@@ -97,6 +97,22 @@
   .primary:disabled { opacity:.6; }
   .err { color:var(--danger); font-size:13px; margin-top:10px; min-height:18px; }
 
+  /* -- Kotak Masuk (email queue) -- */
+  .mq-file { font-weight:700; overflow-wrap:anywhere; }
+  .mq-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:8px 10px; margin-top:12px; }
+  .mq-grid label { display:flex; flex-direction:column; gap:4px; font-size:11px; font-weight:600;
+    color:var(--muted); text-transform:uppercase; letter-spacing:.03em; }
+  .mq-grid select { border:1px solid var(--border); border-radius:8px; padding:7px 8px; font-size:13px;
+    font-weight:600; background:var(--surface); color:var(--text); text-transform:none; letter-spacing:0; }
+  .mq-name { margin-top:12px; padding:8px 10px; background:var(--hover); border-radius:8px;
+    font-size:12px; color:var(--text-2); overflow-wrap:anywhere; }
+  .mq-name b { color:var(--text); }
+  .mq-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:12px; }
+  .mq-save { padding:8px 18px; background:var(--accent); color:#fff; border:none; border-radius:8px;
+    font-weight:700; font-size:14px; }
+  .mq-top { display:flex; align-items:center; gap:10px; margin:0 2px 12px; }
+  .mq-top .metaline { flex:1; margin:0; }
+
   /* -- cards & bits -- */
   .card { background:var(--surface); border:1px solid var(--border); border-radius:12px;
     box-shadow:var(--shadow); padding:14px; margin-bottom:12px; }
@@ -1049,33 +1065,33 @@ async function renderInbox(){
   const ships=[...active].sort(shipSort), byId=Object.fromEntries(ships.map(s=>[s.id,s]));
   const w=document.createElement("div");
   const pending=(rows||[]).filter(r=>r.status==="pending"), done=(rows||[]).filter(r=>r.status!=="pending").slice(0,40);
-  const btn=el(`<button class="primary" style="margin-bottom:6px">🔄 Periksa Email Sekarang</button>`);
+  const btn=el(`<button class="iconbtn" style="color:var(--accent);white-space:nowrap">🔄 Periksa Email</button>`);
   btn.onclick=async ()=>{
     btn.disabled=true; btn.textContent="Memeriksa…";
     const req=nowIso(); const {error}=await setSetting("mail_requested_at", req);
-    if(error){ toast("Gagal: "+error.message); btn.disabled=false; btn.textContent="🔄 Periksa Email Sekarang"; return; }
+    if(error){ toast("Gagal: "+error.message); btn.disabled=false; btn.textContent="🔄 Periksa Email"; return; }
     let tries=0;
     const t=setInterval(async ()=>{ tries++;
       if((await getSetting("mail_checked_at"))===req || tries>=30){ clearInterval(t);
         if(state.view==="inbox"){ toast(tries>=30?"Belum selesai — coba lagi nanti":"Email sudah diperiksa"); nav("inbox",undefined,false,true); } }
     }, 4000);
   };
-  w.appendChild(btn);
-  w.appendChild(el(`<div class="metaline" style="margin:0 2px 10px">Lampiran email dari luar tim. Periksa usulannya, ubah bila perlu, lalu Simpan — bot menaruh file di folder pengiriman (dilewati bila file yang sama sudah ada).</div>`));
+  const top=el(`<div class="mq-top"><div class="metaline">Lampiran email dari luar tim. Periksa usulannya, ubah bila perlu, lalu Simpan — bot menaruh file di folder pengiriman.</div></div>`);
+  top.appendChild(btn); w.appendChild(top);
   if(!pending.length) w.appendChild(el(`<div class="card muted">Tidak ada lampiran yang menunggu.</div>`));
   for(const r of pending){
     const c=el(`<div class="card">
-      <div class="rowtop"><b>${esc(r.filename)}</b></div>
-      <div class="metaline">${esc(r.subject||"")} · ${esc(r.sender||"")} · ${fmtDT(r.sent_at)} · <a href="https://mail.google.com/mail/u/?authuser=${GMAIL_USER}#all/${esc(r.thread_id)}" target="_blank" rel="noopener">buka email</a></div>
-      <div style="display:grid;grid-template-columns:auto 1fr;gap:6px 8px;align-items:center;margin-top:8px;font-size:13px">
-        <span>Pengiriman</span><select data-f="shipment_id"><option value="">— pilih —</option>${ships.map(s=>`<option value="${s.id}" ${s.id===r.shipment_id?"selected":""}>${esc(s.exporter_code)}${s.sequence_number}</option>`).join("")}</select>
-        <span>Dokumen</span><select data-f="doc_type">${opts(MAIL_DOCS,r.doc_type)}</select>
-        <span>Tahap</span><select data-f="stage">${opts({draft:"Draft",final:"Final"},r.stage)}</select>
-        <span>Awalan</span><select data-f="prefix">${opts({"":"—","REV":"REV","NOTUL":"NOTUL"},r.prefix||"")}</select>
-        <span>Folder</span><select data-f="dest">${opts(MAIL_DEST,r.dest)}</select>
+      <div class="mq-file">📎 ${esc(r.filename)}</div>
+      <div class="metaline" style="margin-top:3px">${esc(r.subject||"")} · ${esc(r.sender||"")} · ${fmtDT(r.sent_at)} · <a href="https://mail.google.com/mail/u/?authuser=${GMAIL_USER}#all/${esc(r.thread_id)}" target="_blank" rel="noopener">buka email</a></div>
+      <div class="mq-grid">
+        <label>Pengiriman<select data-f="shipment_id"><option value="">— pilih —</option>${ships.map(s=>`<option value="${s.id}" ${s.id===r.shipment_id?"selected":""}>${esc(s.exporter_code)}${s.sequence_number}</option>`).join("")}</select></label>
+        <label>Dokumen<select data-f="doc_type">${opts(MAIL_DOCS,r.doc_type)}</select></label>
+        <label>Tahap<select data-f="stage">${opts({draft:"Draft",final:"Final"},r.stage)}</select></label>
+        <label>Awalan<select data-f="prefix">${opts({"":"—","REV":"REV","NOTUL":"NOTUL"},r.prefix||"")}</select></label>
+        <label>Folder<select data-f="dest">${opts(MAIL_DEST,r.dest)}</select></label>
       </div>
-      <div class="metaline" style="margin-top:6px">Nama: <b class="nm"></b></div>
-      <div class="savebar" style="justify-content:flex-end;gap:8px;margin-top:8px"><button class="iconbtn rej" style="color:var(--danger)">✕ Tolak</button><button class="primary ok">✓ Simpan</button></div></div>`);
+      <div class="mq-name">Disimpan sebagai <b class="nm"></b></div>
+      <div class="mq-actions"><button class="iconbtn rej" style="color:var(--danger)">✕ Tolak</button><button class="mq-save ok">✓ Simpan</button></div></div>`);
     const val=f=>c.querySelector(`[data-f="${f}"]`).value;
     const draw=()=>{ c.querySelector(".nm").textContent=mailName(byId[val("shipment_id")],val("doc_type"),val("stage"),val("prefix"),r.filename); };
     c.querySelectorAll("select").forEach(s=>s.onchange=()=>{
