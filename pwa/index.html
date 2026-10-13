@@ -269,6 +269,7 @@
     <button data-tab="list"><span class="ic">📦</span>Aktif</button>
     <button data-tab="calendar"><span class="ic">📅</span>Kalender</button>
     <button data-tab="notif"><span class="ic">🔔</span>Notif<span class="tabbadge hidden" id="notifBadge">0</span></button>
+    <button data-tab="inbox"><span class="ic">📥</span>Masuk<span class="tabbadge hidden" id="inboxBadge">0</span></button>
     <button data-tab="more"><span class="ic">☰</span>Lainnya<span class="tabbadge hidden" id="moreBadge">0</span></button>
   </nav>
 </div>
@@ -505,6 +506,9 @@ async function getDueItems(){
 async function refreshBadge(){
   const { count } = await sb.from("notifications").select("id",{count:"exact",head:true}).eq("read",0);
   const b=$("notifBadge"); if(count>0){ b.textContent = count<100?count:"99+"; b.classList.remove("hidden"); } else b.classList.add("hidden");
+  // attachments waiting in Kotak Masuk
+  const { count: waiting } = await sb.from("mail_queue").select("id",{count:"exact",head:true}).eq("status","pending");
+  const ib=$("inboxBadge"); if(waiting>0){ ib.textContent = waiting<100?waiting:"99+"; ib.classList.remove("hidden"); } else ib.classList.add("hidden");
 }
 async function refreshForumBadge(){
   const seen = localStorage.getItem("forumSeen") || "1970-01-01";
@@ -516,7 +520,7 @@ async function refreshForumBadge(){
 
 // -- realtime: live sync across clients -----------------------------------
 let rtDebounce=null;
-const RT_LIST_VIEWS = new Set(["monitor","list","calendar","notif","forum","audit","history","vessels"]);
+const RT_LIST_VIEWS = new Set(["monitor","list","calendar","notif","forum","audit","history","vessels","inbox"]);
 function onRemoteChange(){
   clearTimeout(rtDebounce);
   rtDebounce=setTimeout(()=>{
@@ -539,8 +543,8 @@ function subscribeRealtime(){
 // -- router ---------------------------------------------------------------
 const TITLES = { monitor:"Monitor", list:"Pengiriman Aktif", calendar:"Kalender",
   notif:"Notifikasi", more:"Lainnya", history:"Riwayat", search:"Cari", audit:"Log Aktivitas",
-  settings:"Pengaturan", forum:"Forum", note:"Catatan", vessels:"Kelola Kapal", scan:"Pindai Folder", inbox:"Kotak Masuk Dokumen", detail:"Pengiriman" };
-const SUBVIEWS = new Set(["detail","history","search","audit","settings","forum","note","vessels","scan","inbox"]);
+  settings:"Pengaturan", forum:"Forum", note:"Catatan", vessels:"Kelola Kapal", scan:"Pindai Folder", inbox:"Kotak Masuk", detail:"Pengiriman" };
+const SUBVIEWS = new Set(["detail","history","search","audit","settings","forum","note","vessels","scan"]);
 
 // A future-dated JWT (device/server clock skew) rejects a request; it clears once
 // the token refreshes or the skew window passes, so we refresh + retry once.
@@ -1019,7 +1023,6 @@ function renderMore(){
   const w=el(`<div class="card menu" style="padding:0">
     <div class="row tap" data-go="forum"><span class="ic">💬</span>Forum</div>
     <div class="row tap" data-go="vessels"><span class="ic">🚢</span>Kelola Kapal</div>
-    <div class="row tap" data-go="inbox"><span class="ic">📥</span>Kotak Masuk Dokumen<span id="inboxCount" class="muted" style="margin-left:auto"></span></div>
     <div class="row tap" data-go="scan"><span class="ic">🔄</span>Pindai Folder</div>
     <div class="row tap" data-go="history"><span class="ic">🗂️</span>Riwayat</div>
     <div class="row tap" data-go="search"><span class="ic">🔍</span>Cari</div>
@@ -1028,8 +1031,6 @@ function renderMore(){
   w.querySelectorAll("[data-go]").forEach(r=>r.onclick=()=>nav(r.dataset.go));
   const info=el(`<div class="metaline" style="text-align:center;margin-top:16px">Masuk sebagai ${esc(state.email||"")}</div>`);
   $("views").innerHTML=""; $("views").appendChild(w); $("views").appendChild(info);
-  sb.from("mail_queue").select("id",{count:"exact",head:true}).eq("status","pending")
-    .then(({count})=>{ const c=$("inboxCount"); if(c&&count) c.textContent=`${count} menunggu`; });
 }
 
 // -- KOTAK MASUK: email attachments waiting for approval (mail_inbox) ------
@@ -1087,7 +1088,7 @@ async function renderInbox(){
       if(status==="approved") Object.assign(patch,{shipment_id:val("shipment_id"),doc_type:val("doc_type"),stage:val("stage"),prefix:val("prefix")||null,dest:val("dest"),proposed_name:c.querySelector(".nm").textContent});
       const {error}=await sb.from("mail_queue").update(patch).eq("id",r.id);
       if(error){ toast("Gagal: "+error.message); return; }
-      toast(status==="approved"?"Disetujui — bot menyimpan dalam ~20 detik":"Ditolak"); nav("inbox",undefined,false,true);
+      toast(status==="approved"?"Disetujui — bot menyimpan dalam ~20 detik":"Ditolak"); refreshBadge(); nav("inbox",undefined,false,true);
     };
     c.querySelector(".ok").onclick=()=>decide("approved"); c.querySelector(".rej").onclick=()=>decide("rejected");
     w.appendChild(c);
