@@ -15,9 +15,12 @@ from ..core.constants import (
     ACTION_ITEM_SEEDS,
     ACTION_STATUSES_DONE,
     ACTION_STATUSES,
-    DG_MARKING_CODES,
-    FUMI_COUNTRIES,
-    PHYTO_COO_COUNTRIES,
+    DG_EXPORTERS,
+    NO_BL_EXPORTERS,
+    NO_COO_DESTINATIONS,
+    NO_FUMI_EXPORTERS,
+    NO_PHYTO_DESTINATIONS,
+    NO_PHYTO_EXPORTERS,
 )
 from ..core.db import Database, new_id
 
@@ -31,22 +34,25 @@ def _now() -> str:
     return datetime.now(timezone.utc).replace(tzinfo=None).isoformat(timespec="seconds")
 
 
-def should_seed(code: str, country: str | None, exporter_code: str | None) -> bool:
-    """Whether a seed item applies to a shipment.
-
-    Fumi is for Pakistan/Philippines/India; Phyto and COO for Pakistan/
-    Philippines; Marking and DG for HOPSON (HAI) and JMI; everything else always.
-    A country that could not be read leaves the country-gated items out — the
-    worker adds them by hand if needed.
-    """
-    c = (country or "").strip().upper()
+def should_seed(code: str, country: str | None, exporter_code: str | None,
+                port: str | None = None) -> bool:
+    """Whether a seed item applies to a shipment (rules in constants). The
+    destination is checked against the port as well as the country, since a
+    transit cargo reads "Tajikistan Via Karachi" with country Pakistan. An
+    unknown destination excludes nothing."""
+    dest = f"{port or ''} {country or ''}".upper()
     ex = (exporter_code or "").strip().upper()
     if code == "fumi":
-        return c in FUMI_COUNTRIES
-    if code in ("phyto", "coo"):
-        return c in PHYTO_COO_COUNTRIES
-    if code in ("marking", "dg"):
-        return ex in DG_MARKING_CODES
+        return ex not in NO_FUMI_EXPORTERS
+    if code == "phyto":
+        return ex not in NO_PHYTO_EXPORTERS and not any(
+            d in dest for d in NO_PHYTO_DESTINATIONS)
+    if code == "coo":
+        return not any(d in dest for d in NO_COO_DESTINATIONS)
+    if code == "bl":
+        return ex not in NO_BL_EXPORTERS
+    if code == "dg":
+        return ex in DG_EXPORTERS
     return True
 
 
@@ -123,11 +129,18 @@ class ActionItems:
     # -- seeding on import ----------------------------------------------
 
     def seed(self, shipment_id: str, exporter_code: str | None,
-             destination_country: str | None) -> None:
-        """Insert the applicable seed items in order. Idempotent per code."""
+             destination_country: str | None,
+             destination_port: str | None = None) -> list[str]:
+        """Add the applicable seed items the shipment doesn't have yet, in
+        template order. Safe to re-run (existing codes are skipped). Returns the
+        codes added."""
+        have = {r["code"] for r in self.db.query(
+            "SELECT code FROM action_items WHERE shipment_id=?", (shipment_id,))}
+        added = []
         with self.db.cursor(write=True) as cur:
             for index, (code, title) in enumerate(ACTION_ITEM_SEEDS):
-                if not should_seed(code, destination_country, exporter_code):
+                if code in have or not should_seed(
+                        code, destination_country, exporter_code, destination_port):
                     continue
                 cur.execute(
                     "INSERT INTO action_items "
@@ -135,6 +148,8 @@ class ActionItems:
                     " created_at) VALUES (?,?,?,?,'pending',?,0,?)",
                     (new_id(), shipment_id, code, title,
                      (index + 1) * _POSITION_GAP, _now()))
+                added.append(code)
+        return added
 
     # -- writes ---------------------------------------------------------
 

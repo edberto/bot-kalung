@@ -22,18 +22,24 @@ def check(label, cond):
 
 
 # ---- conditional rules ----------------------------------------------------
-check("Fumi applies to Pakistan", should_seed("fumi", "Pakistan", "NIT"))
-check("Fumi applies to India", should_seed("fumi", "India", "NIT"))
-check("Fumi excludes China", not should_seed("fumi", "China", "JMI"))
-check("Phyto applies to Philippines", should_seed("phyto", "Philippines", "CKJ"))
-check("Phyto excludes India", not should_seed("phyto", "India", "NIT"))
-check("COO excludes India", not should_seed("coo", "India", "NIT"))
-check("Marking applies to HAI (HOPSON)", should_seed("marking", "Taiwan", "HAI"))
-check("DG applies to JMI", should_seed("dg", "China", "JMI"))
-check("DG excludes NIT", not should_seed("dg", "Pakistan", "NIT"))
-check("always-on items ignore country", should_seed("bl", None, "AMJ"))
-check("country-gated items drop when country is unknown",
-      not should_seed("fumi", None, "NIT"))
+check("Fumi: every exporter except HOPSON and JMI",
+      should_seed("fumi", "China", "NIT") and should_seed("fumi", None, "AMJ")
+      and not should_seed("fumi", "India", "HAI") and not should_seed("fumi", "India", "JMI"))
+check("Phyto: except HOPSON/JMI and China/India destinations",
+      should_seed("phyto", "Pakistan", "NIT") and should_seed("phyto", "Turkiye", "MFK")
+      and not should_seed("phyto", "India", "NIT") and not should_seed("phyto", "China", "AMJ")
+      and not should_seed("phyto", "Pakistan", "HAI"))
+check("COO: every destination except Tajikistan/Uzbekistan (port checked too)",
+      should_seed("coo", "India", "NIT")
+      and not should_seed("coo", "Pakistan", "GGN", "Tajikistan Via Karachi")
+      and not should_seed("coo", "Uzbekistan", "GGN"))
+check("BL: every exporter except CKJ",
+      should_seed("bl", None, "AMJ") and not should_seed("bl", "Philippines", "CKJ"))
+check("DG Decla: HOPSON and JMI only",
+      should_seed("dg", "China", "JMI") and not should_seed("dg", "Pakistan", "NIT"))
+check("Marking is no longer a seed item", should_seed("marking", "India", "HAI")
+      and "marking" not in [c for c, _ in __import__("bot_kalung.core.constants",
+                                                      fromlist=["x"]).ACTION_ITEM_SEEDS])
 
 
 with tempfile.TemporaryDirectory() as tmp:
@@ -59,14 +65,21 @@ with tempfile.TemporaryDirectory() as tmp:
     check("seed order follows the template (SI first, BL last of built-ins; no Dok Kirim)",
           nit_codes[0] == "si_vgm" and nit_codes[-1] == "bl")
 
-    # HAI (HOPSON) to India: Fumi yes, Phyto/COO no, Marking + DG yes.
+    # HAI (HOPSON) to India: no Fumi, no Phyto; COO yes; DG Decla yes.
     hai = new_shipment("HAI")
     items.seed(hai, "HAI", "India")
     hai_codes = [i.code for i in items.list(hai)]
-    check("India HAI seeds Fumi but not Phyto/COO",
-          "fumi" in hai_codes and "phyto" not in hai_codes and "coo" not in hai_codes)
-    check("HOPSON gets Marking + DG",
-          "marking" in hai_codes and "dg" in hai_codes)
+    check("India HAI: no Fumi/Phyto, COO yes",
+          "fumi" not in hai_codes and "phyto" not in hai_codes and "coo" in hai_codes)
+    check("HOPSON gets DG Decla (and no Marking)",
+          "dg" in hai_codes and "marking" not in hai_codes
+          and [i.title for i in items.list(hai) if i.code == "dg"] == ["DG Decla"])
+    check("re-seeding adds nothing and never duplicates",
+          items.seed(hai, "HAI", "India") == []
+          and len(items.list(hai)) == len(hai_codes))
+    items.delete(next(i.id for i in items.list(hai) if i.code == "coo"))
+    check("re-seeding adds back only what's missing",
+          items.seed(hai, "HAI", "India") == ["coo"])
 
     # ---- status changes + progress ---------------------------------------
     first = items.list(nit)[0]

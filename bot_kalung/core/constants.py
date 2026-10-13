@@ -133,18 +133,24 @@ ACTION_ITEM_SEEDS = [
     ("coo", "COO"),
     ("peb_npe", "PEB & NPE"),
     ("bl", "BL"),
-    ("marking", "Marking"),
-    ("dg", "DG"),
+    ("dg", "DG Decla"),
 ]
 # Not seeded at import: the scan adds it once the shipment folder has a bank
 # folder (Mandiri / BCA / BNI) — the documents go to the bank, not the buyer.
 DOK_BANK = ("dok_bank", "Dok Bank")
-# Fumi is required for Pakistan/Philippines/India; Phyto and COO for Pakistan/
-# Philippines only. Compared case-insensitively against the destination country.
-FUMI_COUNTRIES = {"PAKISTAN", "PHILIPPINES", "INDIA"}
-PHYTO_COO_COUNTRIES = {"PAKISTAN", "PHILIPPINES"}
-# Marking and DG (dangerous goods) apply only to HOPSON (code HAI) and JMI.
-DG_MARKING_CODES = {"HAI", "JMI"}
+# Which seed items apply (user, 2026-10-13) — exclusions, upper-case:
+#   Fumi   every exporter except HOPSON (HAI) and JMI
+#   Phyto  except HOPSON, JMI, and destinations China / India
+#   COO    except destinations Tajikistan / Uzbekistan (matched against the port
+#          too — GALLANA's are "Tajikistan Via Karachi", country Pakistan)
+#   BL     except CKJ
+#   DG Decla  HOPSON and JMI only
+NO_FUMI_EXPORTERS = {"HAI", "JMI"}
+NO_PHYTO_EXPORTERS = {"HAI", "JMI"}
+NO_PHYTO_DESTINATIONS = {"CHINA", "INDIA"}
+NO_COO_DESTINATIONS = {"TAJIKISTAN", "UZBEKISTAN"}
+NO_BL_EXPORTERS = {"CKJ"}
+DG_EXPORTERS = {"HAI", "JMI"}
 
 # PRD Section 6.3 — full workflow definition. Phase 2 steps are listed so the
 # checklist shows the whole process, but they render disabled.

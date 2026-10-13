@@ -221,6 +221,17 @@ def _refresh_workbook_fields(shipments: Shipments, row, fields, quarantine,
                        container_size_short=fields.container_size_short)
     if changes:
         shipments.set_workbook_fields(row["id"], changes)
+        if "destination_port" in changes:
+            # The country-dependent items (Phyto, COO) were decided from the
+            # destination known at import; a corrected destination adds any now
+            # required. Only on a change, so a deliberate deletion isn't undone.
+            added = ActionItems(shipments.db).seed(
+                row["id"], row["exporter_code"], fields.destination_country,
+                fields.destination_port)
+            if added:
+                result.report.append(
+                    f"{row['exporter_code']}{row['sequence_number']}: item ditambahkan "
+                    f"untuk tujuan baru ({', '.join(added)})")
         names = {"destination_port": "tujuan", "booking_number": "booking",
                  "container_quantity": "party"}
         result.report.append(
@@ -347,7 +358,8 @@ def run_scan(db: Database, drive_root, *, year: int | None = None, settings=None
             "quarantine_required": naming.is_quarantine_required(
                 fields.destination_country, quarantine),
         }, seed_steps=False)
-        action_items.seed(shipment_id, candidate.code, fields.destination_country)
+        action_items.seed(shipment_id, candidate.code, fields.destination_country,
+                          fields.destination_port)
         containers.populate(shipment_id, fields.containers,
                             size=fields.container_size_short)
         if fields.container_si:
