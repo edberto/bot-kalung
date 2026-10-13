@@ -252,6 +252,8 @@ class ShipmentFields:
     # [(sheet, value, ISO date)] right of each SI/INV/PL "ETD"/"ATD" label
     # (si_checks.read_etd_cells) — compared with the BL on-board date.
     etd_cells: list | None = None
+    # {container: {"seal", "tare"}} from the VGM (si_checks.read_vgm_rows).
+    vgm_rows: dict | None = None
     workbook: str | None = None
     warnings: list[str] = field(default_factory=list)
 

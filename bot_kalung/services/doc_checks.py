@@ -103,6 +103,31 @@ def _ask_claude(pdf: bytes) -> dict:
     return json.loads(next(b.text for b in resp.content if b.type == "text"))
 
 
+def _cached(db, ref: str, modified: str, produce, live: bool) -> dict | None:
+    """`produce()` (one Claude read) through the `ai_reads` cache. None when it
+    can't be read now: no API key (`live` = real Claude), budget spent, error."""
+    global _left
+    row = db.query_one("SELECT modified, data FROM ai_reads WHERE file_ref=?", (ref,))
+    if row is not None and row["modified"] == modified:
+        return json.loads(row["data"])
+    if _left <= 0 or (live and not os.environ.get("ANTHROPIC_API_KEY")):
+        return None
+    _left -= 1
+    try:
+        data = produce()
+    except Exception as exc:      # noqa: BLE001 - try again next scan
+        log.warning("AI read failed for %s: %s", ref, exc)
+        return None
+    if data is None:
+        return None
+    db.execute(
+        "INSERT INTO ai_reads (file_ref, modified, data, read_at) VALUES (?,?,?,?) "
+        "ON CONFLICT (file_ref) DO UPDATE SET modified=excluded.modified, "
+        "data=excluded.data, read_at=excluded.read_at",
+        (ref, modified, json.dumps(data, ensure_ascii=False), _now()))
+    return data
+
+
 class AiReader:
     """A DocFile's fields as read by Claude, through the `ai_reads` cache."""
 
@@ -110,29 +135,13 @@ class AiReader:
         self.db, self.fetch, self.ask = db, fetch, ask
 
     def __call__(self, f: doc_status.DocFile) -> dict | None:
-        global _left
         if not f.ref or not f.name.lower().endswith(".pdf"):
             return None
-        row = self.db.query_one("SELECT modified, data FROM ai_reads WHERE file_ref=?", (f.ref,))
-        if row is not None and row["modified"] == f.modified:
-            return json.loads(row["data"])
-        if _left <= 0 or (self.ask is _ask_claude and not os.environ.get("ANTHROPIC_API_KEY")):
-            return None
-        _left -= 1
-        try:
+
+        def produce():
             pdf = self.fetch(f.ref)
-            if len(pdf) > _MAX_PDF_BYTES:
-                return None
-            data = self.ask(pdf)
-        except Exception as exc:      # noqa: BLE001 - try again next scan
-            log.warning("AI read failed for %s: %s", f.name, exc)
-            return None
-        self.db.execute(
-            "INSERT INTO ai_reads (file_ref, modified, data, read_at) VALUES (?,?,?,?) "
-            "ON CONFLICT (file_ref) DO UPDATE SET modified=excluded.modified, "
-            "data=excluded.data, read_at=excluded.read_at",
-            (f.ref, f.modified, json.dumps(data, ensure_ascii=False), _now()))
-        return data
+            return self.ask(pdf) if len(pdf) <= _MAX_PDF_BYTES else None
+        return _cached(self.db, f.ref, f.modified, produce, self.ask is _ask_claude)
 
 
 # -- comparison helpers --------------------------------------------------------
@@ -260,15 +269,189 @@ def atd_check(files, fields, read) -> dict | None:
     return {**head, "done": not notes, "notes": notes, "file": _file(f)}
 
 
-def compute(db, folder, fields, previous: dict) -> list[dict]:
-    """[do, atd] for a shipment folder; an undecidable check keeps `previous[key]`."""
+# -- container photos (1D) -------------------------------------------------------
+# Not for HOPSON (HAI) and JMI (the user's rule).
+PHOTO_SKIP = {"HAI", "JMI"}
+_IMAGE = re.compile(r"(?i)\.(jpe?g|png)$")
+_MAX_PHOTOS = 6
+
+_PHOTO_PROMPT = """These photos show ONE export container at stuffing in Indonesia:
+typically the container doors, the handwritten delivery note ("surat pengantar" /
+"surat jalan"), the inside, and a terminal screenshot. Read (null when not shown):
+- door_container_number: the container number painted on the doors, 4 letters +
+  7 digits including the check digit (often boxed), e.g. "ONEU5311830".
+- tare_kg: the TARE weight in kg painted on the doors, as an integer.
+- sheet_container_number, sheet_seal_number, sheet_do_number: the container
+  number, seal number and DO / booking number handwritten on the delivery note."""
+
+_PHOTO_SCHEMA = {
+    "type": "object",
+    "properties": {
+        **{k: {"type": ["string", "null"]} for k in (
+            "door_container_number", "sheet_container_number", "sheet_seal_number",
+            "sheet_do_number")},
+        "tare_kg": {"type": ["integer", "null"]},
+    },
+    "required": ["door_container_number", "tare_kg", "sheet_container_number",
+                 "sheet_seal_number", "sheet_do_number"],
+    "additionalProperties": False,
+}
+
+
+def _jpeg(data: bytes) -> bytes:
+    """Phone photos shrunk to what Claude reads anyway (1568 px long edge)."""
+    import io
+
+    from PIL import Image
+
+    im = Image.open(io.BytesIO(data))
+    im.thumbnail((1568, 1568))
+    out = io.BytesIO()
+    im.convert("RGB").save(out, "JPEG", quality=85)
+    return out.getvalue()
+
+
+def _ask_photos(images: list[bytes]) -> dict:
+    import anthropic
+
+    content = [{"type": "image", "source": {
+        "type": "base64", "media_type": "image/jpeg",
+        "data": base64.standard_b64encode(_jpeg(i)).decode()}} for i in images]
+    resp = anthropic.Anthropic().beta.messages.create(
+        model=MODEL,
+        max_tokens=4000,
+        betas=["server-side-fallback-2026-06-01"],
+        fallbacks=[{"model": "claude-opus-4-8"}],
+        output_config={"effort": "low",
+                       "format": {"type": "json_schema", "schema": _PHOTO_SCHEMA}},
+        messages=[{"role": "user", "content": content + [{"type": "text", "text": _PHOTO_PROMPT}]}],
+    )
+    if resp.stop_reason != "end_turn":
+        raise RuntimeError(f"AI read stopped: {resp.stop_reason}")
+    return json.loads(next(b.text for b in resp.content if b.type == "text"))
+
+
+def _photo_sets(folder, containers) -> dict:
+    """{container_no: [image nodes]} from Foto/: one subfolder per container
+    ("1.ONEU5311830-galang 8 oct"), or the photos loose in Foto/ when the
+    shipment has a single container."""
+    from . import drive
+
+    foto = next((c for c in drive._safe_iterdir(folder)
+                 if c.is_dir() and c.name.strip().lower() == "foto"), None)
+    if foto is None:
+        return {}, []
+    entries = drive._safe_iterdir(foto)
+    out = {}
+    for c in containers:
+        sub = next((d for d in entries if d.is_dir() and c in _norm(d.name)), None)
+        if sub is not None:
+            out[c] = [f for f in drive._safe_iterdir(sub)
+                      if not f.is_dir() and _IMAGE.search(f.name)]
+    loose = [f for f in entries if not f.is_dir() and _IMAGE.search(f.name)]
+    if len(containers) == 1 and loose and not out:
+        out[containers[0]] = loose
+    # Container folders whose number isn't on the VGM (a swapped container).
+    strays = sorted({m.group(0) for d in entries if d.is_dir()
+                     for m in [re.search(r"[A-Z]{4}\d{7}", _norm(d.name))]
+                     if m and m.group(0) not in containers})
+    return {c: sorted(imgs, key=lambda f: f.name)[:_MAX_PHOTOS]
+            for c, imgs in out.items() if imgs}, strays
+
+
+def _digits(s) -> int | None:
+    d = re.sub(r"\D", "", str(s or ""))
+    return int(d) if d else None
+
+
+def _edits(a: str, b: str) -> int:
+    """Levenshtein distance."""
+    row = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        prev, row[0] = row[0], i
+        for j, cb in enumerate(b, 1):
+            prev, row[j] = row[j], min(row[j] + 1, row[j - 1] + 1, prev + (ca != cb))
+    return row[-1]
+
+
+def _handwritten_ok(written, expected) -> bool:
+    """A handwritten number vs the workbook's, digits only (a seal's letters,
+    "ID16903AB", are scrawled and misread), allowing two misread / dropped /
+    extra digits — the handwriting is that rough.
+    ponytail: also lets a genuine small slip through — tighten if needed."""
+    w, e = re.sub(r"\D", "", str(written or "")), re.sub(r"\D", "", str(expected or ""))
+    if len(w) < 4 or len(e) < 4:
+        return True                       # nothing number-like to compare
+    return e in w or w in e or _edits(w, e) <= 2
+
+
+# ISO 6346 letter values: A=10 upward, skipping multiples of 11.
+_ISO_LETTER = dict(zip("ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+                       [v for v in range(10, 39) if v % 11]))
+
+
+def _iso6346_ok(number) -> bool:
+    """A container number with a valid check digit — anything else is a misread."""
+    n = _norm(number)
+    if not re.fullmatch(r"[A-Z]{4}\d{7}", n):
+        return False
+    total = sum((int(ch) if ch.isdigit() else _ISO_LETTER[ch]) << i for i, ch in enumerate(n[:10]))
+    return total % 11 % 10 == int(n[10])
+
+
+def photo_check(folder, fields, db, fetch, ask=_ask_photos) -> dict | None:
+    """Each VGM container's photos vs the workbook: the door number and tare,
+    and the delivery note's container, seal and DO number."""
+    head = {"key": "photos", "label": "Foto kontainer"}
+    rows = fields.vgm_rows or {}
+    if not rows:
+        return None
+    sets, strays = _photo_sets(folder, list(rows))
+    notes = [f"folder foto {s} tidak ada di VGM" for s in strays]
+    if not sets:
+        return {**head, "done": False, "notes": notes + ["foto belum ada"]}
+    notes += [f"{c}: foto belum ada" for c in rows if c not in sets]
+    for c, imgs in sets.items():
+        refs = [doc_status._ref(i) for i in imgs]
+        d = _cached(db, "photos:" + ",".join(refs),
+                    ",".join(doc_status._modified(i) for i in imgs),
+                    lambda refs=refs: ask([fetch(r) for r in refs]), ask is _ask_photos)
+        if d is None:
+            return None               # undecided — keep the previous check
+        vgm = rows[c]
+        if (_iso6346_ok(d.get("door_container_number"))
+                and not _same_number(d["door_container_number"], c)):
+            notes.append(f"{c}: nomor di pintu {d['door_container_number']}")
+        tare = _digits(vgm.get("tare"))
+        if d.get("tare_kg") and tare and d["tare_kg"] != tare:
+            notes.append(f"{c}: tare foto {d['tare_kg']} ≠ VGM {tare}")
+        if not _handwritten_ok(d.get("sheet_container_number"), c):
+            notes.append(f"{c}: surat pengantar menulis {d['sheet_container_number']}")
+        if not _handwritten_ok(d.get("sheet_seal_number"), vgm.get("seal")):
+            notes.append(f"{c}: seal surat pengantar {d['sheet_seal_number']} ≠ VGM {vgm['seal']}")
+        if not _handwritten_ok(d.get("sheet_do_number"), fields.booking_number):
+            notes.append(f"{c}: DO surat pengantar {d['sheet_do_number']} ≠ booking "
+                         f"{fields.booking_number}")
+    return {**head, "done": not notes, "notes": notes}
+
+
+def compute(db, folder, fields, previous: dict, exporter: str = "") -> list[dict]:
+    """[do, atd] (not AMI/PMA/CKJ) and [photos] (not HAI/JMI) for a shipment
+    folder; an undecidable check keeps `previous[key]`."""
+    from .si_checks import SKIP_EXPORTERS
+
+    ex = exporter.upper()
     files = doc_status.list_files(folder)
+    keys = ([] if ex in SKIP_EXPORTERS else ["do", "atd"]) + ([] if ex in PHOTO_SKIP else ["photos"])
     if not files:
-        return [c for c in (previous.get("do"), previous.get("atd")) if c]
-    read = AiReader(db, doc_status._fetcher(folder))
+        return [previous[k] for k in keys if previous.get(k)]
+    fetch = doc_status._fetcher(folder)
+    read = AiReader(db, fetch)
+    run = {"do": lambda: do_check(files, fields, read),
+           "atd": lambda: atd_check(files, fields, read),
+           "photos": lambda: photo_check(folder, fields, db, fetch)}
     out = []
-    for key, check in (("do", do_check(files, fields, read)),
-                       ("atd", atd_check(files, fields, read))):
+    for key, check in ((k, run[k]()) for k in keys):
         check = check if check is not None else previous.get(key)
         if check:
             out.append(check)

@@ -162,6 +162,21 @@ def _parse_number(value: str):
     return ("custom", int(numbers[0]), month, year)
 
 
+def read_vgm_rows(grids: dict) -> dict:
+    """{container_no: {"seal": ..., "tare": ...}} from the VGM's container table
+    (shown values, "" when empty) — for the container-photo check."""
+    vgm = next((g for name, g in grids.items() if _kind(name) == "vgm"), None)
+    t = vgm is not None and _table(vgm)
+    if not t:
+        return {}
+    _, _, seal_col, tare_col = t
+    _, rows = _containers(vgm, 60)
+    show = lambda v: "" if not _filled(v) else (                     # noqa: E731
+        str(int(v)) if isinstance(v, float) and v.is_integer() else str(v).strip())
+    return {n: {"seal": show(vgm.cell(r, seal_col)) if seal_col else "",
+                "tare": show(vgm.cell(r, tare_col)) if tare_col else ""} for r, n in rows}
+
+
 _ETD_LABEL = re.compile(r"(?i)^\s*[ae]td(\s*/\s*[ae]td)?\s*:?\s*$")
 
 

@@ -305,6 +305,7 @@ def read_shipment_fields(folder) -> ShipmentFields:
         fields.si_checks = si_checks.compute(grids, fields.container_quantity)
         fields.doc_numbers = si_checks.read_numbers(grids)
         fields.etd_cells = si_checks.read_etd_cells(grids)
+        fields.vgm_rows = si_checks.read_vgm_rows(grids)
     except Exception as exc:      # noqa: BLE001 - a bad workbook must not crash a scan
         fields.warnings.append(f"Gagal membaca Excel: {exc}")
     return fields

@@ -208,7 +208,8 @@ def _store_si_checks(db, shipment_id: str, exporter_code: str | None, fields,
     shipment's sequence: the folder number, except AMI/PMA (buyer's ordering),
     whose sequence is the code number in the folder name ("1.PMA02-..." -> 2;
     the workbook's code number if the name isn't known). With the `folder`, the
-    AI-read DO and BL checks (doc_checks) follow, also not for AMI/PMA/CKJ."""
+    AI-read checks follow (doc_checks): DO and BL (not AMI/PMA/CKJ), container
+    photos (not HAI/JMI)."""
     import re as _re
     from .drive import main_workbook_sequence
     from .si_checks import OWN_ORDER_EXPORTERS, SKIP_EXPORTERS, numbers_check
@@ -221,7 +222,7 @@ def _store_si_checks(db, shipment_id: str, exporter_code: str | None, fields,
             m = _re.match(r"^\s*\d+\.\s*[A-Za-z]+-?(\d+)", folder_name or "")
             seq = int(m.group(1)) if m else main_workbook_sequence(fields.workbook or "")
         checks.append(numbers_check(fields.doc_numbers, {seq} if seq is not None else set()))
-    if folder is not None and ex not in SKIP_EXPORTERS and fields.si_checks is not None:
+    if folder is not None and fields.si_checks is not None:
         import json
         row = db.query_one("SELECT checks FROM action_items WHERE shipment_id=? "
                            "AND code='si_vgm'", (shipment_id,))
@@ -229,7 +230,7 @@ def _store_si_checks(db, shipment_id: str, exporter_code: str | None, fields,
             previous = {c["key"]: c for c in json.loads((row and row["checks"]) or "[]")}
         except ValueError:
             previous = {}
-        checks += doc_checks.compute(db, folder, fields, previous)
+        checks += doc_checks.compute(db, folder, fields, previous, ex)
     if checks:
         ActionItems(db).set_checks(shipment_id, "si_vgm", checks)
 

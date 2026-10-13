@@ -100,6 +100,42 @@ check("ETD / ATD cells are read from SI, INV and PL",
       cells == [("SI  benar", "20 OCTOBER 2026", "2026-10-20"),
                 ("Inv Buyer", "21 OCT 2026", "2026-10-21"), ("P.List buyer", None, None)])
 
+# ---- container photos (1D) ------------------------------------------------------
+check("ISO 6346 check digit: real numbers pass, a misread fails",
+      doc_checks._iso6346_ok("ONEU5311830") and doc_checks._iso6346_ok("CSGU6170181")
+      and not doc_checks._iso6346_ok("ONEU5311831"))
+check("handwriting tolerance: a misread / dropped digit or seal letters pass",
+      doc_checks._handwritten_ok("2335871090", "2335877090")
+      and doc_checks._handwritten_ok("233587600", "2335876840")
+      and doc_checks._handwritten_ok("1690363", "ID16903AB")
+      and not doc_checks._handwritten_ok("2339999999", "2335877090"))
+
+with tempfile.TemporaryDirectory() as tmp:
+    root = Path(tmp)
+    for d in ("1.ONEU5311830-galang 8 oct", "2.MISU5170585-kanopan"):
+        (root / "Foto" / d).mkdir(parents=True)
+        (root / "Foto" / d / "a.jpeg").write_bytes(b"x")
+    db = Database(db_path_for(root / "db"))
+    db.initialize()
+    pf = ShipmentFields(booking_number="MESG11846400",
+                        vgm_rows={"ONEU5311830": {"seal": "ID16903AB", "tare": "3,700"},
+                                  "MISU5152909": {"seal": "S2", "tare": "3800"}})
+    good = {"door_container_number": "ONEU5311830", "tare_kg": 3700,
+            "sheet_container_number": "ONEU 5311 830", "sheet_seal_number": "1690363",
+            "sheet_do_number": "KESG11846400"}
+    doc_checks.new_scan()
+    r = doc_checks.photo_check(str(root), pf, db, lambda ref: b"", ask=lambda imgs: good)
+    check("photos: a matching container passes; a VGM container without photos and a "
+          "photo folder for a container not on the VGM are both named",
+          r["notes"] == ["folder foto MISU5170585 tidak ada di VGM", "MISU5152909: foto belum ada"])
+    pf.vgm_rows = {"ONEU5311830": pf.vgm_rows["ONEU5311830"]}
+    bad = {**good, "tare_kg": 3800, "door_container_number": "ONEU5311831"}
+    db.execute("DELETE FROM ai_reads")
+    r = doc_checks.photo_check(str(root), pf, db, lambda ref: b"", ask=lambda imgs: bad)
+    check("photos: a tare that differs is flagged; a door number failing its check "
+          "digit (misread) is not", r["notes"] == ["folder foto MISU5170585 tidak ada di VGM",
+                                                  "ONEU5311830: tare foto 3800 ≠ VGM 3700"])
+
 # the cache: one ask per file version, and the per-scan budget
 with tempfile.TemporaryDirectory() as tmp:
     db = Database(db_path_for(Path(tmp)))
