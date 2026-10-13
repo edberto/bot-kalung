@@ -1,8 +1,8 @@
 """SI/VGM checklist items that need AI reading (doc automation 1C, step 2).
 
   do   "Draft awal (DO)": the DO / booking confirmation in the shipment folder's
-       top level matches the workbook — DO number vs booking no., party, POD,
-       vessel/voyage, ETD.
+       top level (or DO & CC/) matches the workbook — DO number vs booking no.,
+       party, POD, vessel/voyage. Not ETD: the BL date is the source of truth.
   atd  "ATD (BL)": once the BL is in Dok kirim, its laden-on-board date matches
        every ETD/ATD cell on the SI / INV / PL sheets; before that, "BL belum
        diterima".
@@ -203,8 +203,8 @@ def _bls(files) -> list:
 
 
 def do_check(files, fields, read) -> dict | None:
-    """The DO against the workbook. Its ETD is the initial one and the workbook's
-    is updated when the vessel slips, so ETD only counts once the BL is in."""
+    """The DO against the workbook. ETD is not compared: the DO only gives the
+    initial value — the BL on-board date (atd_check) is the one that counts."""
     head = {"key": "do", "label": "Draft awal (DO)"}
     found = None
     for f in _do_candidates(files, fields.booking_number):
@@ -234,9 +234,6 @@ def do_check(files, fields, read) -> dict | None:
         notes.append(f"Kapal DO {d['vessel']} ≠ Excel {fields.vessel_name}")
     if fields.voyage and not _same_voyage(d.get("voyage"), fields.voyage):
         notes.append(f"Voyage DO {d['voyage']} ≠ Excel {fields.voyage}")
-    etd = _iso(d.get("etd"))
-    if etd and fields.etd and etd != fields.etd and _bls(files):
-        notes.append(f"ETD DO {_fmt(etd)} ≠ Excel {_fmt(fields.etd)}")
     return {**head, "done": not notes, "notes": notes, "file": _file(f)}
 
 

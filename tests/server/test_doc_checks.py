@@ -55,9 +55,10 @@ check("a matching DO is done and names its file",
 reads["2335877090.pdf"] = {**DO, "quantity": 3, "pod": "Kattupalli", "etd": "2026-10-22",
                            "vessel": "MAO GANG", "number": "2339999999"}
 r = doc_checks.do_check(files, fields, read)
-check("every mismatch is listed; ETD not yet (no BL)", len(r["notes"]) == 4 and not r["done"])
+check("every mismatch is listed", len(r["notes"]) == 4 and not r["done"])
 r = doc_checks.do_check(files + [F("kirim", "X-OBL.pdf")], fields, read)
-check("...ETD counts once the BL is in", len(r["notes"]) == 5)
+check("...never the DO's ETD (only the BL date counts)",
+      len(r["notes"]) == 4 and not any("ETD" in n for n in r["notes"]))
 from bot_kalung.services.doc_status import folder_kind
 check("HAI/JMI's DO in DO & CC/ is a candidate",
       folder_kind("DO & CC") == "do_cc" and [f.name for f in doc_checks._do_candidates(
