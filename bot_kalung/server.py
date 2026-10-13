@@ -21,6 +21,7 @@ import logging
 import os
 import re
 import sys
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -347,15 +348,19 @@ def main() -> None:
         return
 
     settings = Settings(db)
+    # The quick lane: the PWA's buttons (approve, 🔍, Periksa Email) and the
+    # mail read must not wait behind a scan that can take minutes. Its own Drive
+    # client — googleapiclient clients are not thread-safe.
+    threading.Thread(target=_quick_lane, daemon=True, name="quick",
+                     args=(db, drive_api.DriveClient(cfg["drive_creds"]), cfg)).start()
     log.info("worker started (default scan every %ds, poll every %ds; "
              "intervals overridable from the PWA)",
              cfg["scan_interval"], cfg["poll_interval"])
     last_scan = last_poll = 0.0
     try:
         last_scan_req = settings.get("scan_requested_at") or ""   # ignore a stale one at boot
-        last_mail_req = settings.get("mail_requested_at") or ""
     except Exception:      # noqa: BLE001
-        last_scan_req = last_mail_req = ""
+        last_scan_req = ""
     while True:
         now = time.monotonic()
         poll_interval = _interval(settings, "poll_interval_minutes", cfg["poll_interval"])
@@ -371,20 +376,37 @@ def main() -> None:
             if scan_req != last_scan_req:
                 log.info("scan: on-demand request (%s)", scan_req)
             _safe(lambda: _scan_once(db, drive_client), "scan")
-            _safe(lambda: _mail_poll(db), "mail")
             last_scan = time.monotonic()
             last_scan_req = scan_req
-        _safe(lambda: _manual_checks(db, drive_client), "check")
+        time.sleep(20)
+
+
+def _quick_lane(db, drive_client, cfg) -> None:
+    """Every 20 s, independent of the scan: save approved queue entries, run
+    the 🔍 checks, and read mail — at the scan interval, or right away on
+    Kotak Masuk's "Periksa Email"."""
+    settings = Settings(db)
+    try:
+        last_mail_req = settings.get("mail_requested_at") or ""   # ignore a stale one at boot
+    except Exception:      # noqa: BLE001
+        last_mail_req = ""
+    last_mail = 0.0
+    while True:
         _safe(lambda: _mail_save(db, drive_client), "mail save")
+        _safe(lambda: _manual_checks(db, drive_client), "check")
         try:
-            mail_req = settings.get("mail_requested_at") or ""    # Kotak Masuk's "Periksa Email"
+            mail_req = settings.get("mail_requested_at") or ""
         except Exception:      # noqa: BLE001
             mail_req = last_mail_req
-        if mail_req != last_mail_req:
-            log.info("mail: on-demand request (%s)", mail_req)
+        due = time.monotonic() - last_mail >= _interval(settings, "scan_interval_minutes",
+                                                         cfg["scan_interval"])
+        if due or mail_req != last_mail_req:
+            if mail_req != last_mail_req:
+                log.info("mail: on-demand request (%s)", mail_req)
             _safe(lambda: _mail_poll(db), "mail")
-            _safe(lambda: settings.set("mail_checked_at", mail_req), "mail")
-            last_mail_req = mail_req
+            if mail_req != last_mail_req:
+                _safe(lambda: settings.set("mail_checked_at", mail_req), "mail")
+            last_mail, last_mail_req = time.monotonic(), mail_req
         time.sleep(20)
 
 
