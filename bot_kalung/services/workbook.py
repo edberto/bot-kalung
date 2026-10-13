@@ -301,6 +301,9 @@ def read_shipment_fields(folder) -> ShipmentFields:
             _read_vgm(vgm, fields)
         else:
             fields.warnings.append("Sheet VGM tidak ditemukan.")
+        from . import si_checks
+        fields.si_checks = si_checks.compute(grids, fields.container_quantity)
+        fields.doc_numbers = si_checks.read_numbers(grids)
     except Exception as exc:      # noqa: BLE001 - a bad workbook must not crash a scan
         fields.warnings.append(f"Gagal membaca Excel: {exc}")
     return fields

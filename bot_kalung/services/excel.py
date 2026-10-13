@@ -244,6 +244,11 @@ class ShipmentFields:
     # them: "Ket" (where/when loaded) -> "note", "tarik" (pickup date) -> "tarik".
     # {container_no: {"note": ..., "tarik": ...}}; None = no such columns.
     container_si: dict | None = None
+    # SI/VGM checklist (si_checks.compute) — None when not read (e.g. Excel/COM).
+    si_checks: list | None = None
+    # Document numbers per VGM/INV/PL sheet (si_checks.read_numbers) — finished
+    # into the number check by the scan, which knows the shipment's own numbers.
+    doc_numbers: dict | None = None
     workbook: str | None = None
     warnings: list[str] = field(default_factory=list)
 

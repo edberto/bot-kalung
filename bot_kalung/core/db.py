@@ -178,7 +178,8 @@ CREATE TABLE IF NOT EXISTS action_items (
     auto_status        TEXT,
     auto_evidence      TEXT,
     auto_evidence_ref  TEXT,
-    auto_detail        TEXT
+    auto_detail        TEXT,
+    checks             TEXT
 );
 
 -- Containers for a scanned shipment, populated from the VGM read and tracked on

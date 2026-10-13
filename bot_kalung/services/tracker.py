@@ -177,6 +177,9 @@ def _detect_vessel_voyage_changes(shipments: Shipments, vessels: MonitoredVessel
             containers.set_si_columns(row["id"], fields.container_si)
 
         _refresh_workbook_fields(shipments, row, fields, quarantine, result)
+        _store_si_checks(shipments.db, row["id"], row["exporter_code"], fields,
+                         row["sequence_number"],
+                         getattr(folder, "name", None) or os.path.basename(str(folder)))
 
         new_vessel, new_voyage = fields.vessel_name, fields.voyage
         if not new_vessel or not new_voyage:
@@ -193,6 +196,30 @@ def _detect_vessel_voyage_changes(shipments: Shipments, vessels: MonitoredVessel
         label = f"{row['exporter_code']}{row['sequence_number']}"
         was = f"{row['vessel_name'] or '?'} {row['voyage'] or '?'}".strip()
         result.vessel_changes.append(f"{label}: {was} → {new_vessel} {new_voyage}")
+
+
+def _store_si_checks(db, shipment_id: str, exporter_code: str | None, fields,
+                     folder_seq: int | None, folder_name: str | None = None) -> None:
+    """The SI/VGM checklist (si_checks) onto the shipment's "SI / VGM / INV / PL"
+    item, only from a successful workbook read. Containers + dates are not for
+    AMI/PMA/CKJ; the document-number check is for everyone, against the
+    shipment's sequence: the folder number, except AMI/PMA (buyer's ordering),
+    whose sequence is the code number in the folder name ("1.PMA02-..." -> 2;
+    the workbook's code number if the name isn't known)."""
+    import re as _re
+    from .drive import main_workbook_sequence
+    from .si_checks import OWN_ORDER_EXPORTERS, SKIP_EXPORTERS, numbers_check
+
+    ex = (exporter_code or "").upper()
+    checks = [] if ex in SKIP_EXPORTERS else list(fields.si_checks or [])
+    if fields.doc_numbers is not None:
+        seq = folder_seq
+        if ex in OWN_ORDER_EXPORTERS:
+            m = _re.match(r"^\s*\d+\.\s*[A-Za-z]+-?(\d+)", folder_name or "")
+            seq = int(m.group(1)) if m else main_workbook_sequence(fields.workbook or "")
+        checks.append(numbers_check(fields.doc_numbers, {seq} if seq is not None else set()))
+    if checks:
+        ActionItems(db).set_checks(shipment_id, "si_vgm", checks)
 
 
 def _refresh_workbook_fields(shipments: Shipments, row, fields, quarantine,
@@ -364,6 +391,8 @@ def run_scan(db: Database, drive_root, *, year: int | None = None, settings=None
                             size=fields.container_size_short)
         if fields.container_si:
             containers.set_si_columns(shipment_id, fields.container_si)
+        _store_si_checks(db, shipment_id, candidate.code, fields, candidate.sequence,
+                         candidate.folder.name)
         _ensure_vessel_monitored(vessels, fields.vessel_name, fields.voyage)
         registry.record(candidate.code, candidate.sequence, _folder_ref(candidate.folder),
                         done=False, shipment_id=shipment_id)

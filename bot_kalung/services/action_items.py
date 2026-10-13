@@ -201,6 +201,22 @@ class ActionItems:
                 "auto_evidence_ref=?, auto_detail=? WHERE id=?",
                 (auto_status, evidence, evidence_ref, detail, item_id))
 
+    def set_checks(self, shipment_id: str, code: str, checks: list) -> bool:
+        """Store an item's checklist (JSON). Written only when it changed — each
+        write is a realtime event in every open PWA. True if it changed."""
+        import json
+
+        row = self.db.query_one(
+            "SELECT id, checks FROM action_items WHERE shipment_id=? AND code=?",
+            (shipment_id, code))
+        if row is None:
+            return False
+        value = json.dumps(checks, ensure_ascii=False)
+        if row["checks"] == value:
+            return False
+        self.db.execute("UPDATE action_items SET checks=? WHERE id=?", (value, row["id"]))
+        return True
+
     def set_due_date(self, item_id: str, iso: str | None) -> None:
         self.db.execute(
             "UPDATE action_items SET due_date=?, updated_at=? WHERE id=?",

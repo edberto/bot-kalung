@@ -50,6 +50,7 @@ SUPABASE_DB_URL=postgresql://postgres.<ref>:PASSWORD@aws-0-<region>.pooler.supab
 DRIVE_CREDENTIALS=/opt/bot-kalung/secrets/bot-kalung-7861b7295b7d.json
 SCAN_INTERVAL_MINUTES=30
 POLL_INTERVAL_MINUTES=5
+ANTHROPIC_API_KEY=sk-ant-...   # AI reading of scanned BLs / DOs (doc automation)
 EOF
 chmod 600 /opt/bot-kalung/secrets/server.env
 ```
