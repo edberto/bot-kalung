@@ -183,7 +183,11 @@ CREATE TABLE IF NOT EXISTS action_items (
     checks             TEXT,
     check_requested_at TEXT,  -- set by the PWA's 🔍 button; the worker checks now and clears it
     alerted_at         TEXT,  -- when the "revisi > 6 jam" notification went out for this round
-    acks               TEXT   -- JSON [{key, note, file, at}]: check notes the team chose to ignore
+    acks               TEXT,  -- JSON [{key, note, file, at}]: check notes the team chose to ignore
+    mail_status        TEXT,  -- the status a team reply set (OK / revisi), mail_inbox
+    mail_evidence      TEXT,  -- who and what: "Kevin: tolong ganti consignee"
+    mail_evidence_ref  TEXT,  -- the Gmail thread id
+    mail_at            TEXT   -- when that reply was sent (UTC)
 );
 
 -- Containers for a scanned shipment, populated from the VGM read and tracked on

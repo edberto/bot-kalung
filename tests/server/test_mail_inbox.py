@@ -144,6 +144,50 @@ with tempfile.TemporaryDirectory() as tmp:
     check("a file already in the shipment folder is not queued",
           not db.query("SELECT 1 FROM mail_queue WHERE message_id='m4'"))
 
+    # ---- team replies: OK / revisi from the text --------------------------------
+    def text_msg(mid, sender, subject, text, when, thread="t1"):
+        body = base64.urlsafe_b64encode(text.encode()).decode()
+        return {"id": mid, "threadId": thread, "internalDate": when,
+                "payload": {"headers": [{"name": "From", "value": sender},
+                                        {"name": "To", "value": "docexim.sbm@gmail.com"},
+                                        {"name": "Subject", "value": "Re: AMJ30"}],
+                            "mimeType": "text/plain", "body": {"data": body}}}
+
+    db.execute("UPDATE action_items SET status='draft_received', updated_at='2025-10-09T00:00:00' "
+               "WHERE shipment_id=? AND code IN ('peb_npe','coo','phyto')", (amj,))
+    asked = []
+    verdicts = {"verdicts": [{"doc": "coo", "verdict": "ok", "quote": "COO ok"},
+                             {"doc": "peb_npe", "verdict": "revise", "quote": "PEB tolong ganti berat"},
+                             {"doc": "phyto", "verdict": "none", "quote": ""}]}
+    reply = text_msg("r1", "Kevin <achentan96@gmail.com>", "Re: AMJ30",
+                     "COO ok, PEB tolong ganti berat\n\nOn Fri, Doc Exim wrote:\n> lama", "1760100000000")
+    mi.process(db, gmail, reply, reply_ask=lambda text, docs, att: asked.append(text) or verdicts)
+    check("a team reply sets OK / revisi per document it names, leaves the rest",
+          (status(amj, "coo"), status(amj, "peb_npe"), status(amj, "phyto"))
+          == ("draft_ok", "draft_revision", "draft_received"))
+    check("...reads only the new text, not the quoted thread", asked == ["COO ok, PEB tolong ganti berat"])
+    ev = db.query_one("SELECT mail_status, mail_evidence, mail_evidence_ref FROM action_items "
+                      "WHERE shipment_id=? AND code='peb_npe'", (amj,))
+    check("...and keeps the email as evidence",
+          (ev["mail_status"], ev["mail_evidence"], ev["mail_evidence_ref"])
+          == ("draft_revision", "achentan96: PEB tolong ganti berat", "t1"))
+    mi.process(db, gmail, reply, reply_ask=lambda *a: asked.append("again") or verdicts)
+    old = text_msg("r2", "Kevin <achentan96@gmail.com>", "Re: AMJ30", "PEB ok", "1750000000000")
+    mi.process(db, gmail, old, reply_ask=lambda *a: {"verdicts": [
+        {"doc": "peb_npe", "verdict": "ok", "quote": "PEB ok"}]})
+    check("an email older than the last status change changes nothing; the same email isn't read twice",
+          status(amj, "peb_npe") == "draft_revision" and asked.count("again") == 0)
+    db.execute("UPDATE action_items SET status='final' WHERE shipment_id=? AND code='coo'", (amj,))
+    other = text_msg("r3", "Docexim <docexim.sbm@gmail.com>", "Re: AMJ30", "COO ok", "1760200000000")
+    mi.process(db, gmail, other, reply_ask=lambda *a: {"verdicts": [
+        {"doc": "coo", "verdict": "revise", "quote": "x"}]})
+    check("replies from outside the team never set OK / revisi; a final document isn't touched",
+          status(amj, "coo") == "final")
+    q = mi._relevant_query(db, 1760000000)
+    check("the search also fetches team mail without attachments (text replies)",
+          q.startswith("after:1760000000 {(has:attachment") and "from:achentan96@gmail.com" in q
+          and "(to:docexim.sbm@gmail.com OR cc:docexim.sbm@gmail.com)" in q)
+
     personal = message("m3", "friend@example.com", "edbertongko88@gmail.com", "Holiday photos",
                        ["beach.pdf"], thread="t9")
     check("mail outside document threads is ignored", mi.process(db, gmail, personal) == []

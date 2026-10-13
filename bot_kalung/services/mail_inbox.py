@@ -215,6 +215,119 @@ def classify(db, data: bytes, att: dict, ask=_ask_classify, kind: str | None = N
     return _guess_from_name(att["filename"], kind)
 
 
+# -- team replies: OK / revisi from the email text --------------------------------------------
+_REVIEWABLE = ("draft_received", "draft_revision", "draft_ok")
+# Where the quoted thread starts. Gmail wraps "On Mon, Oct 12, 2026 at 10:00 X
+# <x@y> wrote:" over two lines, so the match may span a line break.
+_QUOTE_START = re.compile(r"(?ims)^(on\s.{0,300}?\swrote:|pada\s.{0,300}?\smenulis:"
+                          r"|-----\s*original message|from: .+@)")
+_PAPERWORK = re.compile(r"(?i)(?<![a-z])(si|vgm|inv|invoice|pl|p\.?\s?list|packing)(?![a-z])")
+
+_REPLY_PROMPT = """A member of an Indonesian exporter's shipping team wrote this email in a
+thread about these documents of one shipment: {docs}.
+Attachments on this email: {attachments}.
+
+For each document, did the writer APPROVE the latest draft ("ok", "sudah benar",
+"lanjut", "approved", "silakan final"), ask for CHANGES to it (corrections,
+"tolong ganti / revisi / salah", or an attached marked-up copy of that document),
+or NEITHER (not about it, a question, just forwarding)? Only say ok / revise when
+the text clearly refers to that document — or, with a single document in the
+thread, clearly to the draft. When unsure, "none". "quote": the few words that
+decided it (empty for none).
+
+Email text:
+{text}"""
+
+_REPLY_SCHEMA = {
+    "type": "object",
+    "properties": {"verdicts": {"type": "array", "items": {
+        "type": "object",
+        "properties": {"doc": {"type": "string"},
+                       "verdict": {"type": "string", "enum": ["ok", "revise", "none"]},
+                       "quote": {"type": "string"}},
+        "required": ["doc", "verdict", "quote"], "additionalProperties": False}}},
+    "required": ["verdicts"], "additionalProperties": False,
+}
+
+
+def _body_text(payload) -> str:
+    """The new text of an email: its plain-text part without the quoted thread."""
+    def parts(p):
+        yield p
+        for sub in p.get("parts", []) or []:
+            yield from parts(sub)
+    plain = next((p for p in parts(payload) if p.get("mimeType") == "text/plain"
+                  and p.get("body", {}).get("data")), None)
+    html = next((p for p in parts(payload) if p.get("mimeType") == "text/html"
+                 and p.get("body", {}).get("data")), None)
+    part = plain or html
+    if part is None:
+        return ""
+    text = base64.urlsafe_b64decode(part["body"]["data"]).decode("utf-8", "replace")
+    if part is html:
+        text = re.sub(r"(?s)<(style|script).*?</\1>|<[^>]+>", " ", text)
+    m = _QUOTE_START.search(text)
+    text = text[:m.start()] if m else text
+    text = "\n".join(l for l in text.splitlines() if not l.lstrip().startswith(">"))
+    return re.sub(r"[ \t]+", " ", text).strip()[:3000]
+
+
+def _ask_reply(text: str, docs: dict, attachments: list[str]) -> dict:
+    import anthropic
+
+    prompt = _REPLY_PROMPT.format(
+        docs=", ".join(f'"{code}" ({label})' for code, label in docs.items()),
+        attachments=", ".join(attachments) or "none", text=text or "(no text)")
+    resp = anthropic.Anthropic().beta.messages.create(
+        model=doc_checks.MODEL, max_tokens=2000,
+        betas=["server-side-fallback-2026-06-01"], fallbacks=[{"model": "claude-opus-4-8"}],
+        output_config={"effort": "low", "format": {"type": "json_schema", "schema": _REPLY_SCHEMA}},
+        messages=[{"role": "user", "content": prompt}],
+    )
+    if resp.stop_reason != "end_turn":
+        raise RuntimeError(f"AI read stopped: {resp.stop_reason}")
+    return json.loads(next(b.text for b in resp.content if b.type == "text"))
+
+
+def apply_reply(db, msg, shipment, kind: str, sender: str, sent_at: str, atts: list,
+                ask=_ask_reply) -> list[str]:
+    """A team reply that approves or asks for changes moves the document(s) it
+    is about: -> Draft OK, or -> Draf direvisi (also back from Draft OK: a
+    change asked after the OK). Only documents at a draft stage, and only when
+    the reply is newer than the item's last status change; never from or to
+    Final. The email is kept as the evidence (mail_* columns)."""
+    rows = {r["code"]: r for r in db.query(
+        "SELECT id, code, title, status, updated_at FROM action_items WHERE shipment_id=?",
+        (shipment["id"],)) if r["code"] in KIND_CODES[kind] and r["status"] in _REVIEWABLE}
+    docs_attached = [a["filename"] for a in atts if not _PAPERWORK.search(a["filename"])]
+    text = _body_text(msg["payload"])
+    if not rows or not (text or docs_attached):
+        return []
+    got = doc_checks._cached(
+        db, f"reply:{msg['id']}", "1",
+        lambda: ask(text, {c: r["title"] for c, r in rows.items()}, docs_attached),
+        ask is _ask_reply)
+    report, label = [], f"{shipment['exporter_code']}{shipment['sequence_number']}"
+    who = sender.split("@")[0]
+    for v in (got or {}).get("verdicts", []):
+        row = rows.get(v.get("doc"))
+        if row is None or v["verdict"] == "none":
+            continue
+        if sent_at <= (row["updated_at"] or "").replace(" ", "T")[:19]:
+            continue                       # something newer already set this status
+        new = {"ok": "draft_ok", "revise": "draft_revision"}[v["verdict"]]
+        if new == row["status"] or (new == "draft_ok" and row["status"] == "draft_ok"):
+            continue
+        quote = (v.get("quote") or "").strip()[:120]
+        db.execute("UPDATE action_items SET status=?, updated_at=?, mail_status=?, mail_evidence=?, "
+                   "mail_evidence_ref=?, mail_at=? WHERE id=?",
+                   (new, sent_at, new, f"{who}: {quote}" if quote else who, msg["threadId"],
+                    sent_at, row["id"]))
+        report.append(f"{label}: {row['title']} -> {'Draft OK' if new == 'draft_ok' else 'Draf direvisi'}"
+                      f" (email {who}: {quote})")
+    return report
+
+
 # -- naming and placement --------------------------------------------------------------------
 def default_dest(doc_type: str, stage: str) -> str:
     if stage == "draft":
@@ -260,16 +373,23 @@ def _sent_at(msg) -> str:
         .replace(tzinfo=None).isoformat(timespec="seconds")
 
 
-def _relevant_query(db) -> str:
-    """Gmail search for mail that can matter — attachments only, and from/to the
-    known parties or the team, or naming an active shipment's DO in the subject
-    (BL threads come from varying senders). The rest of the inbox is never read."""
-    people = sorted(TEAM | set(KIND_BY_ADDRESS))
-    dos = [_norm(r["booking_number"]) for r in db.query(
-        "SELECT booking_number FROM shipments WHERE status='active' AND booking_number IS NOT NULL")]
-    terms = [f"from:{p} OR to:{p} OR cc:{p}" for p in people]
-    terms += [f"subject:{d}" for d in sorted(set(dos)) if len(d) >= 6]
-    return "{" + " ".join(f"({t})" for t in terms) + "}"
+def _relevant_query(db, after: int) -> str:
+    """Gmail search for mail that can matter; the rest of the inbox is never read.
+      - with attachments: from/to the parties or the team, or an active DO
+        number in the subject (BL threads come from varying senders);
+      - from the team to a party, or about a DO, even without attachments —
+        a text reply ("ok lanjut", "tolong ganti …") sets OK / revisi."""
+    parties = sorted(KIND_BY_ADDRESS)
+    dos = sorted({_norm(r["booking_number"]) for r in db.query(
+        "SELECT booking_number FROM shipments WHERE status='active' AND booking_number IS NOT NULL")
+        if len(_norm(r["booking_number"])) >= 6})
+    anyone = [f"(from:{p} OR to:{p} OR cc:{p})" for p in sorted(TEAM | set(parties))]
+    about = [f"(to:{p} OR cc:{p})" for p in parties] + [f"subject:{d}" for d in dos]
+    subjects = [f"subject:{d}" for d in dos]
+    from_team = "{" + " ".join(f"from:{p}" for p in sorted(TEAM)) + "}"
+    with_files = "(has:attachment {" + " ".join(anyone + subjects) + "})"
+    replies = f"({from_team} {{{' '.join(about)}}})"
+    return f"after:{after} {{{with_files} {replies}}}"
 
 
 def _gentle(call, tries: int = 4):
@@ -328,7 +448,7 @@ def poll(db, gmail, ask=_ask_classify, drive=None) -> list[str]:
     after = int(settings.get("mail_after") or 0) or int(datetime.now(timezone.utc).timestamp()) \
         - FIRST_RUN_DAYS * 86400
     ids, token = [], None
-    query = f"after:{after} has:attachment " + _relevant_query(db)
+    query = _relevant_query(db, after)
     while True:
         resp = gmail.users().messages().list(userId="me", q=query, pageToken=token,
                                              maxResults=500).execute(num_retries=5)
@@ -358,7 +478,7 @@ def poll(db, gmail, ask=_ask_classify, drive=None) -> list[str]:
     return report
 
 
-def process(db, gmail, msg, ask=_ask_classify, in_drive=None) -> list[str]:
+def process(db, gmail, msg, ask=_ask_classify, in_drive=None, reply_ask=_ask_reply) -> list[str]:
     from .action_items import ActionItems
 
     h = _headers(msg)
@@ -399,6 +519,8 @@ def process(db, gmail, msg, ask=_ask_classify, in_drive=None) -> list[str]:
                 if row and row["status"] == "pending":
                     items.set_status(row["id"], "in_progress")
                     report.append(f"{label}: {row['title']} -> Dikerjakan (email '{subject}')")
+        elif shipment and kind:
+            report += apply_reply(db, msg, shipment, kind, sender, sent_at, atts, reply_ask)
         return report
 
     for att in atts:

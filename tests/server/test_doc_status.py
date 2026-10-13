@@ -144,6 +144,14 @@ check("revision loop: a new draft after Draf direvisi -> Draft diterima",
 check("...but not a draft older than the revision request",
       ds.decide("draft_revision", "draft_revision", "ref:draft/PEB draft.pdf", revised,
                 last_change="2026-10-04T00:00:00") is None)
+remarked = ds.Inferred("draft_revision", ds.DocFile("draft", "PEB draft.pdf", "ref:draft/PEB draft.pdf",
+                                                     "2026-10-01T00:00:00", "2026-10-05T00:00:00"))
+check("a red correction drawn after the draft was OK'd -> Draf direvisi (newest review wins)",
+      ds.decide("draft_ok", "draft_ok", "ref:draft/PEB draft.pdf#ok", remarked,
+                last_change="2026-10-04T00:00:00") == "draft_revision")
+check("...but not marks older than the OK",
+      ds.decide("draft_ok", "draft_ok", "ref:draft/PEB draft.pdf#ok", remarked,
+                last_change="2026-10-06T00:00:00") is None)
 check("same evidence as last time -> leave a manual edit alone",
       ds.decide("pending", "final", "ref:kirim/a.pdf", fwd) is None)
 

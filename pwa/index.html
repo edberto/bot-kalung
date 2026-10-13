@@ -404,6 +404,12 @@ function autoEvidence(it){
   const who = it.auto_detail ? ` · ${esc(it.auto_detail)}` : "";   // e.g. "OK oleh ongkalung"
   return `<div class="metaline" style="font-size:12px">🤖 ${esc(STATUS_LABEL[it.auto_status]||it.auto_status)} — ${file}${who}${manual}</div>`;
 }
+// The team reply that set OK / revisi (mail_inbox), with a link to the thread.
+function mailEvidence(it){
+  if(!it.mail_status) return "";
+  const link = it.mail_evidence_ref ? ` · <a href="https://mail.google.com/mail/u/?authuser=${GMAIL_USER}#all/${esc(it.mail_evidence_ref)}" target="_blank" rel="noopener">buka email</a>` : "";
+  return `<div class="metaline" style="font-size:12px">✉️ ${esc(STATUS_LABEL[it.mail_status]||it.mail_status)} — ${fmtDT(it.mail_at)} · ${esc(it.mail_evidence||"")}${link}</div>`;
+}
 function folderUrl(fp){ return fp && fp.startsWith("drive:") ? `https://drive.google.com/drive/folders/${fp.slice(6)}` : null; }
 function uuid(){ return crypto.randomUUID(); }
 
@@ -759,7 +765,7 @@ async function renderDetail(id){
     ic.appendChild(all);
   }
   for(const it of items){
-    const row=el(`<div class="item il" style="border-left-color:${STATUS_COLOR[it.status]||"#6b7280"}"><div class="t">${esc(it.title)}${it.is_custom?' <span class="muted">(tambahan)</span>':""}<div class="metaline" style="font-size:11px">Status sejak ${fmtDT(it.updated_at||it.created_at)}${revisionLate(it)?` · <b style="color:var(--danger)">⏰ revisi &gt; ${REVISION_HOURS} jam</b>`:""}</div>${autoEvidence(it)}${checklist(it)}</div></div>`);
+    const row=el(`<div class="item il" style="border-left-color:${STATUS_COLOR[it.status]||"#6b7280"}"><div class="t">${esc(it.title)}${it.is_custom?' <span class="muted">(tambahan)</span>':""}<div class="metaline" style="font-size:11px">Status sejak ${fmtDT(it.updated_at||it.created_at)}${revisionLate(it)?` · <b style="color:var(--danger)">⏰ revisi &gt; ${REVISION_HOURS} jam</b>`:""}</div>${autoEvidence(it)}${mailEvidence(it)}${checklist(it)}</div></div>`);
     const sel=el(`<select class="status">${STATUS.map(([v,l])=>`<option value="${v}" ${it.status===v?"selected":""}>${l}</option>`).join("")}</select>`);
     sel.onchange=async ()=>{ const {error}=await sb.from("action_items").update({status:sel.value,updated_at:nowIso()}).eq("id",it.id); toast(error?"Gagal: "+error.message:"Status disimpan"); if(!error){ it.status=sel.value; row.style.borderLeftColor=STATUS_COLOR[sel.value]; } };
     const del=el(`<button class="linkbtn" style="color:var(--danger)">✕</button>`);

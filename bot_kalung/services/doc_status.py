@@ -397,7 +397,15 @@ def decide(current: str, auto_status: str | None, auto_ref: str | None,
     # for (Draf direvisi) is a new draft to review -> Draft diterima.
     if current == "draft_revision" and inferred.status == "draft_received" and newer:
         return inferred.status
+    # OK <-> revisi: the newest review wins, from red marks or (mail_inbox) a
+    # reply. A red correction drawn after the draft was OK'd is newer evidence.
+    marked_later = inferred.file is not None and _utc19(inferred.file.modified) > _utc19(last_change)
+    if {current, inferred.status} <= REVIEW and marked_later:
+        return inferred.status
     return None
+
+
+REVIEW = {"draft_ok", "draft_revision"}
 
 
 def own_sequences(shipment, files: list[DocFile]) -> set[int]:
