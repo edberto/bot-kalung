@@ -181,7 +181,8 @@ CREATE TABLE IF NOT EXISTS action_items (
     auto_detail        TEXT,
     checks             TEXT,
     check_requested_at TEXT,  -- set by the PWA's 🔍 button; the worker checks now and clears it
-    alerted_at         TEXT   -- when the "revisi > 6 jam" notification went out for this round
+    alerted_at         TEXT,  -- when the "revisi > 6 jam" notification went out for this round
+    acks               TEXT   -- JSON [{key, note, file, at}]: check notes the team chose to ignore
 );
 
 -- Containers for a scanned shipment, populated from the VGM read and tracked on

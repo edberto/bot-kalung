@@ -580,6 +580,9 @@ def content_checks(db, folder, fields, exporter: str, shipment: dict,
     reader = doc_status.DraftReader(db, fetch)
     status = {r["code"]: (r["status"], r["checks"]) for r in db.query(
         "SELECT code, status, checks FROM action_items WHERE shipment_id=?", (shipment["id"],))}
+    acks = {r["code"]: r["acks"] for r in db.query(
+        "SELECT code, acks FROM action_items WHERE shipment_id=? AND acks IS NOT NULL",
+        (shipment["id"],))}
     for code in CONTENT_DOCS:
         if code not in status or (codes is not None and code not in codes):
             continue
@@ -595,9 +598,24 @@ def content_checks(db, folder, fields, exporter: str, shipment: dict,
             if old and old != "[]":
                 items.set_checks(shipment["id"], code, [])
             continue
+        if inferred.file is not None and inferred.file.is_rev and acks.get(code):
+            _reset_acks(db, shipment["id"], code, acks[code], inferred.file.ref)
         check = content_check(code, inferred.file, fields, exporter, db, fetch, ask)
         if check is not None:
             items.set_checks(shipment["id"], code, [check])
+
+
+def _reset_acks(db, shipment_id: str, code: str, raw: str, rev_ref: str) -> None:
+    """A REV / NOTUL draft is a correction round: the content issues ignored on
+    an earlier file count again (ignores made on this REV file itself stay)."""
+    try:
+        acks = json.loads(raw or "[]")
+    except ValueError:
+        acks = []
+    keep = [a for a in acks if a.get("key") != "content" or a.get("file") == rev_ref]
+    if len(keep) != len(acks):
+        db.execute("UPDATE action_items SET acks=? WHERE shipment_id=? AND code=?",
+                   (json.dumps(keep, ensure_ascii=False) if keep else None, shipment_id, code))
 
 
 def compute(db, folder, fields, previous: dict, exporter: str = "") -> list[dict]:

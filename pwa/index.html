@@ -351,12 +351,29 @@ function afterCheck(ids, shipmentId){
       if(state.view==="detail" && state.param===shipmentId){ toast(tries>=45?"Pengecekan belum selesai — coba muat ulang nanti":"Pengecekan selesai"); nav("detail",shipmentId,false,true); } }
   }, 4000);
 }
+// Check notes the team chose to ignore ("abaikan"), per item: [{key, note, file, at}].
+// The server drops content ignores when a REV/NOTUL draft arrives.
+function acksOf(it){ try { return JSON.parse(it.acks||"[]"); } catch { return []; } }
+function isAcked(acks,c,n){ return acks.some(a=>a.key===c.key&&a.note===n); }
+function checkDone(it,c){ const acks=acksOf(it); return c.done || (c.notes||[]).every(n=>isAcked(acks,c,n)); }
 function checklist(it){
   let checks=[]; try { checks=JSON.parse(it.checks||"[]"); } catch { return ""; }
   if(!checks.length) return "";
+  const acks=acksOf(it);
   const src=f=>!f?"":` — ${f.ref&&f.ref.startsWith("drive:")?`<a href="https://drive.google.com/file/d/${esc(f.ref.slice(6))}/view" target="_blank" rel="noopener">${esc(f.name)}</a>`:esc(f.name)}`;
-  return `<div style="margin-top:4px">${checks.map(c=>`<div style="font-size:12px">${c.done?"✅":"⬜"} ${esc(c.label)}${src(c.file)}</div>${
-    (c.notes||[]).map(n=>`<div style="font-size:11px;color:var(--warn,#d97706);margin-left:20px">• ${esc(n)}</div>`).join("")}`).join("")}</div>`;
+  return `<div style="margin-top:4px">${checks.map((c,ci)=>`<div style="font-size:12px">${checkDone(it,c)?"✅":"⬜"} ${esc(c.label)}${src(c.file)}</div>${
+    (c.notes||[]).map((n,ni)=>{ const a=isAcked(acks,c,n);
+      return `<div style="font-size:11px;margin-left:20px;color:${a?"var(--muted)":"var(--warn,#d97706)"}">• <span style="${a?"text-decoration:line-through":""}">${esc(n)}</span> <button class="linkbtn ackbtn" style="font-size:11px" data-item="${esc(it.id)}" data-c="${ci}" data-n="${ni}">${a?"batal abaikan":"abaikan"}</button></div>`; }).join("")}`).join("")}</div>`;
+}
+async function toggleAck(it, ci, ni){
+  const c=JSON.parse(it.checks||"[]")[ci]; if(!c) return; const n=(c.notes||[])[ni];
+  let acks=acksOf(it);
+  acks = isAcked(acks,c,n) ? acks.filter(a=>!(a.key===c.key&&a.note===n))
+                           : [...acks,{key:c.key,note:n,file:(c.file&&c.file.ref)||null,at:nowIso()}];
+  const value=acks.length?JSON.stringify(acks):null;
+  const {error}=await sb.from("action_items").update({acks:value}).eq("id",it.id);
+  if(error){ toast("Gagal: "+error.message); return false; }
+  it.acks=value; return true;
 }
 // Which file the bot read to set an action item's status — so a wrong pick is easy to spot.
 const STATUS_LABEL = Object.fromEntries(STATUS.map(([v,l])=>[v,l]));
@@ -465,7 +482,7 @@ function showApp(){ $("splash").classList.add("hidden"); $("login").classList.ad
 async function getActive(){
   if(state.active) return state.active;
   const { data, error } = await sb.from("shipments")
-    .select("id,exporter_code,sequence_number,vessel_name,voyage,etd_belawan,etd_source,destination_port,destination_country,container_quantity,container_size_short,booking_number,quarantine_required,notes,folder_path,action_items(status,title,updated_at,checks),containers(container_no,last_status_code)")
+    .select("id,exporter_code,sequence_number,vessel_name,voyage,etd_belawan,etd_source,destination_port,destination_country,container_quantity,container_size_short,booking_number,quarantine_required,notes,folder_path,action_items(status,title,updated_at,checks,acks),containers(container_no,last_status_code)")
     .eq("status","active");
   if(error) throw error;
   state.active = data||[]; return state.active;
@@ -575,7 +592,7 @@ function openDetail(id){ state.detailFrom = SUBVIEWS.has(state.view)?state.detai
 // ("perlu revisi"), and a revision going on for more than 6 hours.
 const REVISION_HOURS = 6;
 function revisionLate(it){ return it.status==="draft_revision" && it.updated_at && (Date.now()-new Date(asUTC(it.updated_at)))>REVISION_HOURS*36e5; }
-function needsRevision(it){ if(it.status!=="draft_received") return false; try { return JSON.parse(it.checks||"[]").some(c=>c.key==="content"&&!c.done); } catch { return false; } }
+function needsRevision(it){ if(it.status!=="draft_received") return false; try { return JSON.parse(it.checks||"[]").some(c=>c.key==="content"&&!checkDone(it,c)); } catch { return false; } }
 function docAlerts(s){
   const it=s.action_items||[];
   const need=it.filter(needsRevision).map(i=>i.title), late=it.filter(revisionLate).map(i=>i.title);
@@ -733,6 +750,8 @@ async function renderDetail(id){
       row.appendChild(chk);
     }
     row.appendChild(del); ic.appendChild(row);
+    row.addEventListener("click", async e=>{ const b=e.target.closest(".ackbtn"); if(!b) return;
+      if(await toggleAck(it, +b.dataset.c, +b.dataset.n)) nav("detail", id, false, true); });
   }
   const add=el(`<div class="savebar" style="justify-content:flex-start;margin-top:12px"><button class="iconbtn" style="color:var(--accent)">+ Tambah Item</button></div>`);
   add.querySelector("button").onclick=async ()=>{

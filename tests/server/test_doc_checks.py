@@ -217,6 +217,25 @@ with tempfile.TemporaryDirectory() as tmp:
     check("check-now on PEB updates PEB's status only (the COO draft waits for its own check)",
           st["peb_npe"] == "draft_received" and st["coo"] == "pending")
 
+    # ignored ("abaikan") content issues come back with a REV / NOTUL draft
+    import os
+    import time
+    old_ref = str(root / "Draf" / "PEB draft.pdf")
+    ack = json.dumps([{"key": "content", "note": "x", "file": old_ref},
+                      {"key": "do", "note": "y", "file": None}])
+    db.execute("UPDATE action_items SET acks=? WHERE shipment_id=? AND code='peb_npe'", (ack, sid))
+    acks = lambda: json.loads(db.query_one(                                         # noqa: E731
+        "SELECT acks FROM action_items WHERE shipment_id=? AND code='peb_npe'", (sid,))["acks"] or "[]")
+    doc_checks.content_checks(db, str(root), cf, "AMJ", {"id": sid, "sequence_number": 30}, bad)
+    check("ignores stay while the draft is the same", len(acks()) == 2)
+    rev = root / "Draf" / "REV PEB draft.pdf"
+    rev.write_bytes(b"%PDF")
+    later = time.time() + 60
+    os.utime(rev, (later, later))
+    doc_checks.content_checks(db, str(root), cf, "AMJ", {"id": sid, "sequence_number": 30}, bad)
+    check("a REV draft resets the content ignores (others stay)",
+          [a["key"] for a in acks()] == ["do"])
+
 # the cache: one ask per file version, and the per-scan budget
 with tempfile.TemporaryDirectory() as tmp:
     db = Database(db_path_for(Path(tmp)))
