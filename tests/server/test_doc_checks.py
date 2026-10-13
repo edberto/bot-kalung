@@ -205,6 +205,18 @@ with tempfile.TemporaryDirectory() as tmp:
                "updated_at='2026-10-02T00:00:00' WHERE shipment_id=? AND code='peb_npe'", (sid,))
     check("a new revision round notifies again", items.alert_overdue_revisions(store) == 1)
 
+    # the check-now button on one document touches only that document
+    from bot_kalung.services import tracker
+    (root / "Draf" / "COO draft.pdf").write_bytes(b"%PDF")
+    db.execute("UPDATE shipments SET folder_path=? WHERE id=?", (str(root), sid))
+    db.execute("UPDATE action_items SET status='pending', auto_status=NULL, auto_evidence=NULL, "
+               "auto_evidence_ref=NULL WHERE shipment_id=?", (sid,))
+    tracker.check_items(db, sid, {"peb_npe"}, read_fields=lambda folder: ShipmentFields())
+    st = {r["code"]: r["status"] for r in db.query(
+        "SELECT code, status FROM action_items WHERE shipment_id=?", (sid,))}
+    check("check-now on PEB updates PEB's status only (the COO draft waits for its own check)",
+          st["peb_npe"] == "draft_received" and st["coo"] == "pending")
+
 # the cache: one ask per file version, and the per-scan budget
 with tempfile.TemporaryDirectory() as tmp:
     db = Database(db_path_for(Path(tmp)))

@@ -322,10 +322,11 @@ def _fetcher(folder):
     return lambda ref: open(ref, "rb").read()
 
 
-def sync_shipment(items, shipment, folder) -> list[str]:
+def sync_shipment(items, shipment, folder, codes=None) -> list[str]:
     """Apply the folder's evidence to one shipment's action items. Returns
     report lines for the statuses it changed. An empty/unreadable folder
-    (e.g. trashed) changes nothing."""
+    (e.g. trashed) changes nothing. `codes` limits it to those items (the PWA's
+    🔍 on one document)."""
     from ..core.constants import ACTION_STATUS_LABELS
 
     files = list_files(folder)
@@ -338,6 +339,8 @@ def sync_shipment(items, shipment, folder) -> list[str]:
     seqs = own_sequences(shipment, files)
     reader = DraftReader(items.db, _fetcher(folder))
     for it in items.auto_rows(shipment["id"]):
+        if codes is not None and it["code"] not in codes:
+            continue
         inferred = infer(it["code"], files, shipment["exporter_code"] or "", seqs, reader)
         if inferred is None:
             continue

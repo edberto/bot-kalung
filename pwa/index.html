@@ -340,7 +340,17 @@ function isDoneCode(code){ const n=parseInt(code,10); return !isNaN(n) && n>=50;
 function parseBnctDate(s){ const m=/(\d{1,2})\/(\d{1,2})\/(\d{4})/.exec(s||""); return m?`${m[3]}-${m[2].padStart(2,"0")}-${m[1].padStart(2,"0")}`:null; }
 // Sub-checks the bot works out from the workbook (SI/VGM: containers, dates);
 // each problem it found is listed under its check.
-const CHECKABLE = new Set(["si_vgm","peb_npe","fumi","phyto","coo","bl"]);   // items the 🔍 button re-checks
+const CHECKABLE = new Set(["si_vgm","peb_npe","fumi","phyto","coo","bl","dok_bank"]);   // items the 🔍 button re-checks
+// After a check request: wait until the worker clears it (~20 s + the check),
+// then redraw the shipment — the detail view isn't redrawn by realtime events.
+function afterCheck(ids, shipmentId){
+  let tries=0;
+  const t=setInterval(async ()=>{ tries++;
+    const {data}=await sb.from("action_items").select("id").in("id",ids).not("check_requested_at","is",null);
+    if((data&&!data.length) || tries>=45){ clearInterval(t);
+      if(state.view==="detail" && state.param===shipmentId){ toast(tries>=45?"Pengecekan belum selesai — coba muat ulang nanti":"Pengecekan selesai"); nav("detail",shipmentId,false,true); } }
+  }, 4000);
+}
 function checklist(it){
   let checks=[]; try { checks=JSON.parse(it.checks||"[]"); } catch { return ""; }
   if(!checks.length) return "";
@@ -699,6 +709,17 @@ async function renderDetail(id){
   w.appendChild(el(`<div class="sectlabel">Item Tindakan</div>`));
   const ic=el(`<div class="card"></div>`);
   if(!items.length) ic.appendChild(el(`<div class="muted">Tidak ada item.</div>`));
+  const checkable=items.filter(it=>CHECKABLE.has(it.code));
+  if(checkable.length){   // re-check every document now (status + checks), not waiting for the scan
+    const busy=checkable.some(it=>it.check_requested_at);
+    const all=el(`<div class="savebar" style="justify-content:flex-end;margin:0 0 6px"><button class="iconbtn" style="color:var(--accent)">${busy?"⏳ Sedang dicek…":"🔍 Cek semua dokumen"}</button></div>`);
+    const b=all.querySelector("button");
+    b.onclick=async ()=>{ b.disabled=true;
+      const {error}=await sb.from("action_items").update({check_requested_at:nowIso()}).in("id",checkable.map(it=>it.id));
+      toast(error?"Gagal: "+error.message:"Pengecekan semua dokumen diminta — hasil muncul dalam ~1 menit");
+      if(error) b.disabled=false; else { b.textContent="⏳ Sedang dicek…"; afterCheck(checkable.map(it=>it.id), id); } };
+    ic.appendChild(all);
+  }
   for(const it of items){
     const row=el(`<div class="item il" style="border-left-color:${STATUS_COLOR[it.status]||"#6b7280"}"><div class="t">${esc(it.title)}${it.is_custom?' <span class="muted">(tambahan)</span>':""}<div class="metaline" style="font-size:11px">Status sejak ${fmtDT(it.updated_at||it.created_at)}${revisionLate(it)?` · <b style="color:var(--danger)">⏰ revisi &gt; ${REVISION_HOURS} jam</b>`:""}</div>${autoEvidence(it)}${checklist(it)}</div></div>`);
     const sel=el(`<select class="status">${STATUS.map(([v,l])=>`<option value="${v}" ${it.status===v?"selected":""}>${l}</option>`).join("")}</select>`);
@@ -708,7 +729,7 @@ async function renderDetail(id){
     row.appendChild(sel);
     if(CHECKABLE.has(it.code)){   // ad-hoc check now, instead of waiting for the next scan
       const chk=el(`<button class="linkbtn" title="Cek dokumen sekarang">${it.check_requested_at?"⏳":"🔍"}</button>`);
-      chk.onclick=async ()=>{ const {error}=await sb.from("action_items").update({check_requested_at:nowIso()}).eq("id",it.id); toast(error?"Gagal: "+error.message:"Pengecekan diminta — hasil muncul dalam ~1 menit"); if(!error) chk.textContent="⏳"; };
+      chk.onclick=async ()=>{ const {error}=await sb.from("action_items").update({check_requested_at:nowIso()}).eq("id",it.id); toast(error?"Gagal: "+error.message:"Pengecekan diminta — hasil muncul dalam ~1 menit"); if(!error){ chk.textContent="⏳"; afterCheck([it.id], id); } };
       row.appendChild(chk);
     }
     row.appendChild(del); ic.appendChild(row);

@@ -564,7 +564,7 @@ def _small_enough(pdf: bytes, then):
 
 
 def content_checks(db, folder, fields, exporter: str, shipment: dict,
-                   ask=_ask_content) -> None:
+                   ask=_ask_content, codes=None) -> None:
     """The content check onto each document item (PEB, Fumi, Phyto, COO, BL),
     only while it is at Draft diterima: the highlights are for annotating the
     draft and asking for a revision. Once the item moves on (revision asked,
@@ -581,7 +581,7 @@ def content_checks(db, folder, fields, exporter: str, shipment: dict,
     status = {r["code"]: (r["status"], r["checks"]) for r in db.query(
         "SELECT code, status, checks FROM action_items WHERE shipment_id=?", (shipment["id"],))}
     for code in CONTENT_DOCS:
-        if code not in status:
+        if code not in status or (codes is not None and code not in codes):
             continue
         current, old = status[code]
         inferred = doc_status.infer(code, files, exporter, seqs, reader)

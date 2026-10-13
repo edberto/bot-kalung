@@ -90,20 +90,24 @@ def _resolver(drive_client):
 
 
 def _manual_checks(db, drive_client) -> None:
-    """Shipments whose 🔍 button was pressed in the PWA: check them now. The
-    request is cleared even if the check fails, so a broken folder isn't retried
-    every 20 s."""
-    for row in db.query("SELECT DISTINCT shipment_id FROM action_items "
+    """Items whose check button was pressed in the PWA (🔍 on one document, or
+    "Cek semua"): check them now, one pass per shipment. Requests are cleared
+    even if the check fails, so a broken folder isn't retried every 20 s."""
+    wanted: dict = {}
+    for row in db.query("SELECT id, shipment_id, code FROM action_items "
                         "WHERE check_requested_at IS NOT NULL"):
-        sid = row["shipment_id"]
+        wanted.setdefault(row["shipment_id"], []).append(row)
+    for sid, rows in wanted.items():
+        codes = {r["code"] for r in rows}
         try:
-            log.info("check: on-demand for %s", sid)
-            tracker.check_shipment(db, sid, _resolver(drive_client))
+            log.info("check: on-demand for %s %s", sid, sorted(codes))
+            tracker.check_items(db, sid, codes, _resolver(drive_client))
         except Exception:      # noqa: BLE001
             log.exception("check failed for %s", sid)
         finally:
-            db.execute("UPDATE action_items SET check_requested_at=NULL WHERE shipment_id=?",
-                       (sid,))
+            for r in rows:
+                db.execute("UPDATE action_items SET check_requested_at=NULL WHERE id=?",
+                           (r["id"],))
 
 
 def _scan_once(db, drive_client) -> None:
