@@ -9,7 +9,7 @@ be added and any item can be deleted (lifecycle is manual, per the user).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 
 from ..core.constants import (
     ACTION_ITEM_SEEDS,
@@ -26,7 +26,9 @@ _POSITION_GAP = 1000.0
 
 
 def _now() -> str:
-    return datetime.now().isoformat(timespec="seconds")
+    # UTC, like the PWA and Drive, so doc_status can compare a file's upload
+    # time against the last status change.
+    return datetime.now(timezone.utc).replace(tzinfo=None).isoformat(timespec="seconds")
 
 
 def should_seed(code: str, country: str | None, exporter_code: str | None) -> bool:
@@ -142,6 +144,46 @@ class ActionItems:
         self.db.execute(
             "UPDATE action_items SET status=?, updated_at=? WHERE id=?",
             (status, _now(), item_id))
+
+    # -- automatic status (doc_status) -----------------------------------
+
+    def auto_rows(self, shipment_id: str) -> list:
+        """Built-in items with their last automatic inference."""
+        return self.db.query(
+            "SELECT id, code, title, status, auto_status, auto_evidence, "
+            "auto_evidence_ref, updated_at, created_at FROM action_items "
+            "WHERE shipment_id=? AND is_custom=0",
+            (shipment_id,))
+
+    def ensure_item(self, shipment_id: str, code: str, title: str) -> bool:
+        """Add a built-in item (at the end) if the shipment lacks it. True if added."""
+        if self.db.query_one("SELECT 1 FROM action_items WHERE shipment_id=? AND code=?",
+                             (shipment_id, code)):
+            return False
+        top = self.db.query_one(
+            "SELECT MAX(position) AS p FROM action_items WHERE shipment_id=?",
+            (shipment_id,))
+        position = ((top["p"] if top else None) or 0.0) + _POSITION_GAP
+        self.db.execute(
+            "INSERT INTO action_items (id, shipment_id, code, title, status, position, "
+            "is_custom, created_at) VALUES (?,?,?,?, 'pending', ?, 0, ?)",
+            (new_id(), shipment_id, code, title, position, _now()))
+        return True
+
+    def record_auto(self, item_id: str, status: str | None, auto_status: str,
+                    evidence: str | None, evidence_ref: str | None) -> None:
+        """Store the bot's inference (and the file behind it); `status` is the new
+        status to apply, or None to leave the current one (e.g. a manual edit)."""
+        if status is not None:
+            self.db.execute(
+                "UPDATE action_items SET status=?, auto_status=?, auto_evidence=?, "
+                "auto_evidence_ref=?, updated_at=? WHERE id=?",
+                (status, auto_status, evidence, evidence_ref, _now(), item_id))
+        else:
+            self.db.execute(
+                "UPDATE action_items SET auto_status=?, auto_evidence=?, "
+                "auto_evidence_ref=? WHERE id=?",
+                (auto_status, evidence, evidence_ref, item_id))
 
     def set_due_date(self, item_id: str, iso: str | None) -> None:
         self.db.execute(

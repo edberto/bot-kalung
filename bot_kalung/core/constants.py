@@ -133,10 +133,12 @@ ACTION_ITEM_SEEDS = [
     ("coo", "COO"),
     ("peb_npe", "PEB & NPE"),
     ("bl", "BL"),
-    ("dok_kirim", "Dok Kirim"),
     ("marking", "Marking"),
     ("dg", "DG"),
 ]
+# Not seeded at import: the scan adds it once the shipment folder has a bank
+# folder (Mandiri / BCA / BNI) — the documents go to the bank, not the buyer.
+DOK_BANK = ("dok_bank", "Dok Bank")
 # Fumi is required for Pakistan/Philippines/India; Phyto and COO for Pakistan/
 # Philippines only. Compared case-insensitively against the destination country.
 FUMI_COUNTRIES = {"PAKISTAN", "PHILIPPINES", "INDIA"}

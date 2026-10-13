@@ -337,6 +337,17 @@ function isDoneCode(code){ const n=parseInt(code,10); return !isNaN(n) && n>=50;
 // BNCT dates read "DD/MM/YYYY HH:MM" — return the ISO date, for a monitored
 // vessel with no shipment (whose ETD comes from the reading, not a shipment).
 function parseBnctDate(s){ const m=/(\d{1,2})\/(\d{1,2})\/(\d{4})/.exec(s||""); return m?`${m[3]}-${m[2].padStart(2,"0")}-${m[1].padStart(2,"0")}`:null; }
+// Which file the bot read to set an action item's status — so a wrong pick is easy to spot.
+const STATUS_LABEL = Object.fromEntries(STATUS.map(([v,l])=>[v,l]));
+function autoEvidence(it){
+  if(!it.auto_status) return "";
+  const ref=it.auto_evidence_ref||"", name=it.auto_evidence;
+  const file = !name ? "tanpa file"
+    : ref.startsWith("drive:") ? `<a href="https://drive.google.com/file/d/${esc(ref.slice(6))}/view" target="_blank" rel="noopener">${esc(name)}</a>`
+    : esc(name);
+  const manual = it.status!==it.auto_status ? " · <i>diubah manual</i>" : "";
+  return `<div class="metaline" style="font-size:12px">🤖 ${esc(STATUS_LABEL[it.auto_status]||it.auto_status)} — ${file}${manual}</div>`;
+}
 function folderUrl(fp){ return fp && fp.startsWith("drive:") ? `https://drive.google.com/drive/folders/${fp.slice(6)}` : null; }
 function uuid(){ return crypto.randomUUID(); }
 
@@ -666,7 +677,7 @@ async function renderDetail(id){
   const ic=el(`<div class="card"></div>`);
   if(!items.length) ic.appendChild(el(`<div class="muted">Tidak ada item.</div>`));
   for(const it of items){
-    const row=el(`<div class="item il" style="border-left-color:${STATUS_COLOR[it.status]||"#6b7280"}"><div class="t">${esc(it.title)}${it.is_custom?' <span class="muted">(tambahan)</span>':""}</div></div>`);
+    const row=el(`<div class="item il" style="border-left-color:${STATUS_COLOR[it.status]||"#6b7280"}"><div class="t">${esc(it.title)}${it.is_custom?' <span class="muted">(tambahan)</span>':""}${autoEvidence(it)}</div></div>`);
     const sel=el(`<select class="status">${STATUS.map(([v,l])=>`<option value="${v}" ${it.status===v?"selected":""}>${l}</option>`).join("")}</select>`);
     sel.onchange=async ()=>{ const {error}=await sb.from("action_items").update({status:sel.value,updated_at:nowIso()}).eq("id",it.id); toast(error?"Gagal: "+error.message:"Status disimpan"); if(!error){ it.status=sel.value; row.style.borderLeftColor=STATUS_COLOR[sel.value]; } };
     const del=el(`<button class="linkbtn" style="color:var(--danger)">✕</button>`);

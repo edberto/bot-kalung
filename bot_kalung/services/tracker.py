@@ -16,7 +16,7 @@ from datetime import date, datetime
 
 from ..core.constants import DEFAULT_QUARANTINE_COUNTRIES
 from ..core.db import Database, new_id
-from . import excel, naming, scanner, workbook
+from . import doc_status, excel, naming, scanner, workbook
 from .action_items import ActionItems
 from .containers import Containers
 from .shipments import Shipments
@@ -228,6 +228,28 @@ def _refresh_workbook_fields(shipments: Shipments, row, fields, quarantine,
             f"workbook ({', '.join(v for k, v in names.items() if k in changes)})")
 
 
+def _sync_doc_statuses(shipments: Shipments, action_items: ActionItems, by_key: dict,
+                       folder_resolver, result: ScanApplyResult) -> None:
+    """Infer every active shipment's action-item statuses from its Drive folder
+    (doc_status). Reuses the scan's own folder node when it is the shipment's
+    current folder; one shipment failing never stops the scan."""
+    for row in shipments.active():
+        cand = by_key.get((row["exporter_code"], row["sequence_number"]))
+        if cand is not None and _folder_ref(cand.folder) == row["folder_path"]:
+            folder = cand.folder
+        elif row["folder_path"]:
+            folder = (folder_resolver(row["folder_path"]) if folder_resolver
+                      else row["folder_path"])
+        else:
+            continue
+        try:
+            result.report += doc_status.sync_shipment(action_items, row, folder)
+        except Exception as exc:      # noqa: BLE001 - a bad folder must not stop the scan
+            result.warnings.append(
+                f"{row['exporter_code']}{row['sequence_number']}: "
+                f"status dokumen gagal ({exc})")
+
+
 def _dedupe_shared_folders(shipments: Shipments, by_key: dict,
                            result: ScanApplyResult) -> None:
     """Enforce one folder -> one shipment. If a folder is re-coded to a brand-new
@@ -350,4 +372,6 @@ def run_scan(db: Database, drive_root, *, year: int | None = None, settings=None
     # the same folder — drop the stale duplicate once the folder's live identity
     # is known. Runs after re-pointing so folder_path reflects the current scan.
     _dedupe_shared_folders(shipments, plan.by_key, result)
+    # Action-item statuses follow the files in each shipment folder.
+    _sync_doc_statuses(shipments, action_items, plan.by_key, folder_resolver, result)
     return result

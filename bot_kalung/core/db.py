@@ -174,7 +174,10 @@ CREATE TABLE IF NOT EXISTS action_items (
     is_custom    INTEGER NOT NULL DEFAULT 0,
     due_date     TEXT,
     created_at   TEXT NOT NULL,
-    updated_at   TEXT
+    updated_at   TEXT,
+    auto_status        TEXT,
+    auto_evidence      TEXT,
+    auto_evidence_ref  TEXT
 );
 
 -- Containers for a scanned shipment, populated from the VGM read and tracked on

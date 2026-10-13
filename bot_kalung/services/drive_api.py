@@ -69,10 +69,11 @@ class DriveClient:
         while True:
             resp = self._svc.files().list(
                 q=query, pageSize=1000, pageToken=token,
-                fields="nextPageToken, files(id, name, mimeType)").execute()
+                fields="nextPageToken, files(id, name, mimeType, createdTime)").execute()
             for f in resp.get("files", []):
                 nodes.append(DriveNode(self, f["id"], f["name"],
-                                       f["mimeType"] == FOLDER_MIME))
+                                       f["mimeType"] == FOLDER_MIME,
+                                       created=f.get("createdTime")))
             token = resp.get("nextPageToken")
             if not token:
                 return nodes
@@ -102,8 +103,10 @@ class DriveNode:
     exporter folders.
     """
 
-    def __init__(self, client: DriveClient, file_id, name: str, is_folder: bool):
+    def __init__(self, client: DriveClient, file_id, name: str, is_folder: bool,
+                 created: str | None = None):
         self._client = client
+        self.created = created      # Drive createdTime (ISO, UTC) — when it was added
         self.id = file_id
         self._name = name
         self._is_folder = is_folder

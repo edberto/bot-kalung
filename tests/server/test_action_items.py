@@ -56,8 +56,8 @@ with tempfile.TemporaryDirectory() as tmp:
           {"fumi", "phyto", "coo"} <= set(nit_codes))
     check("NIT gets no Marking/DG",
           "marking" not in nit_codes and "dg" not in nit_codes)
-    check("seed order follows the template (SI first, Dok Kirim last of built-ins)",
-          nit_codes[0] == "si_vgm" and nit_codes[-1] == "dok_kirim")
+    check("seed order follows the template (SI first, BL last of built-ins; no Dok Kirim)",
+          nit_codes[0] == "si_vgm" and nit_codes[-1] == "bl")
 
     # HAI (HOPSON) to India: Fumi yes, Phyto/COO no, Marking + DG yes.
     hai = new_shipment("HAI")
