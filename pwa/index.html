@@ -767,7 +767,11 @@ async function renderDetail(id){
   for(const it of items){
     const row=el(`<div class="item il" style="border-left-color:${STATUS_COLOR[it.status]||"#6b7280"}"><div class="t">${esc(it.title)}${it.is_custom?' <span class="muted">(tambahan)</span>':""}<div class="metaline" style="font-size:11px">Status sejak ${fmtDT(it.updated_at||it.created_at)}${revisionLate(it)?` · <b style="color:var(--danger)">⏰ revisi &gt; ${REVISION_HOURS} jam</b>`:""}</div>${autoEvidence(it)}${mailEvidence(it)}${checklist(it)}</div></div>`);
     const sel=el(`<select class="status">${STATUS.map(([v,l])=>`<option value="${v}" ${it.status===v?"selected":""}>${l}</option>`).join("")}</select>`);
-    sel.onchange=async ()=>{ const {error}=await sb.from("action_items").update({status:sel.value,updated_at:nowIso()}).eq("id",it.id); toast(error?"Gagal: "+error.message:"Status disimpan"); if(!error){ it.status=sel.value; row.style.borderLeftColor=STATUS_COLOR[sel.value]; } };
+    sel.onchange=async ()=>{
+      const patch={status:sel.value,updated_at:nowIso()};
+      // first time at Draft OK or beyond: later versions are corrections (REV / NOTUL)
+      if(!it.ok_at && STATUS.findIndex(([v])=>v===sel.value) >= STATUS.findIndex(([v])=>v==="draft_ok")) patch.ok_at=patch.updated_at;
+      const {error}=await sb.from("action_items").update(patch).eq("id",it.id); toast(error?"Gagal: "+error.message:"Status disimpan"); if(!error){ it.status=sel.value; row.style.borderLeftColor=STATUS_COLOR[sel.value]; } };
     const del=el(`<button class="linkbtn" style="color:var(--danger)">✕</button>`);
     del.onclick=async ()=>{ if(!confirm(`Hapus item "${it.title}"?`)) return; const {error}=await sb.from("action_items").delete().eq("id",it.id); if(error){toast("Gagal: "+error.message);return;} toast("Item dihapus"); row.remove(); };
     row.appendChild(sel);

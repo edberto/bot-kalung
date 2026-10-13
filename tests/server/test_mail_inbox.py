@@ -101,18 +101,28 @@ with tempfile.TemporaryDirectory() as tmp:
     check("the same mail again adds nothing", len(db.query("SELECT 1 FROM mail_queue")) == 2)
 
     # after the PEB was OK'd: a new version is a correction
-    db.execute("UPDATE action_items SET status='draft_ok', updated_at='2025-10-09T08:56:00' "
-               "WHERE shipment_id=? AND code='peb_npe'", (amj,))
-    check("a draft after OK, nobody from the team asked -> REV",
-          mi.correction_prefix(db, amj, "peb_npe", "draft", "t1", "2025-10-09T09:00:00", False) == "REV")
+    db.execute("UPDATE action_items SET status='draft_ok', updated_at='2025-10-09T08:56:00', "
+               "ok_at='2025-10-09T08:56:00' WHERE shipment_id=? AND code='peb_npe'", (amj,))
+    cp = lambda code, stage: mi.correction_prefix(db, amj, code, stage, "t1", "2025-10-09T09:00:00")  # noqa: E731
+    check("a draft after OK, nobody from the team asked -> REV", cp("peb_npe", "draft") == "REV")
+    check("the first final after OK is the normal cycle -> no prefix", cp("peb_npe", "final") == "")
+    check("before OK (revision loop) -> no prefix", cp("coo", "draft") == "")
     db.execute("INSERT INTO mail_seen (message_id, thread_id, from_team, sent_at) "
                "VALUES ('m9', 't1', 1, '2025-10-09T08:58:00')")
     check("a draft after OK that the team asked for (team mail since the OK) -> NOTUL",
-          mi.correction_prefix(db, amj, "peb_npe", "draft", "t1", "2025-10-09T09:00:00", False) == "NOTUL")
-    check("the first final after OK is the normal cycle -> no prefix",
-          mi.correction_prefix(db, amj, "peb_npe", "final", "t1", "2025-10-09T09:00:00", False) == "")
-    check("before OK (revision loop) -> no prefix",
-          mi.correction_prefix(db, amj, "coo", "draft", "t1", "2025-10-09T09:00:00", False) == "")
+          cp("peb_npe", "draft") == "NOTUL")
+    db.execute("UPDATE action_items SET status='draft_revision' WHERE shipment_id=? AND code='peb_npe'", (amj,))
+    check("...still NOTUL after the change request moved the status back to Draf direvisi",
+          cp("peb_npe", "draft") == "NOTUL" and cp("peb_npe", "final") == "NOTUL")
+    db.execute("UPDATE action_items SET status='draft_ok', ok_at=NULL WHERE shipment_id=? "
+               "AND code='peb_npe'", (amj,))
+    ActionItems(db).set_status(db.query_one("SELECT id FROM action_items WHERE shipment_id=? "
+                                            "AND code='peb_npe'", (amj,))["id"], "final")
+    check("reaching Draft OK or later records ok_at (set_status / record_auto / replies)",
+          db.query_one("SELECT ok_at FROM action_items WHERE shipment_id=? AND code='peb_npe'",
+                       (amj,))["ok_at"] is not None)
+    db.execute("UPDATE action_items SET status='draft_ok', ok_at=NULL WHERE shipment_id=? "
+               "AND code='peb_npe'", (amj,))
 
     check("names: a BL draft is 'BL draft'; no shipment yet is marked",
           mi.file_name({"exporter_code": "AMJ", "sequence_number": 30}, "bl", "draft", "", "x.pdf")

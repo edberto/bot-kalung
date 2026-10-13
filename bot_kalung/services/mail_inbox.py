@@ -320,9 +320,10 @@ def apply_reply(db, msg, shipment, kind: str, sender: str, sent_at: str, atts: l
             continue
         quote = (v.get("quote") or "").strip()[:120]
         db.execute("UPDATE action_items SET status=?, updated_at=?, mail_status=?, mail_evidence=?, "
-                   "mail_evidence_ref=?, mail_at=? WHERE id=?",
+                   "mail_evidence_ref=?, mail_at=?, "
+                   "ok_at=CASE WHEN ?=1 THEN COALESCE(ok_at, ?) ELSE ok_at END WHERE id=?",
                    (new, sent_at, new, f"{who}: {quote}" if quote else who, msg["threadId"],
-                    sent_at, row["id"]))
+                    sent_at, int(new == "draft_ok"), sent_at, row["id"]))
         report.append(f"{label}: {row['title']} -> {'Draft OK' if new == 'draft_ok' else 'Draf direvisi'}"
                       f" (email {who}: {quote})")
     return report
@@ -346,20 +347,24 @@ def file_name(shipment, doc_type: str, stage: str, prefix: str, original: str) -
 
 
 def correction_prefix(db, shipment_id: str, code: str | None, stage: str, thread_id: str,
-                      sent_at: str, said_correction: bool) -> str:
-    """"" for the normal cycle (draft, revision loop, the first final). After the
-    document was OK'd, another version is a correction: "NOTUL" when the team
-    asked for the change in this thread (a team mail since the OK), else "REV"."""
-    item = code and db.query_one("SELECT status, updated_at FROM action_items "
+                      sent_at: str) -> str:
+    """The user's rule: "" for the normal cycle — draft, the revision loop, and
+    the first final after the OK. Once the document has been OK'd (ok_at, kept
+    even if a change request moved the status back), any other version is a
+    correction: "NOTUL" when the team asked for it (a team mail in this thread
+    since the OK), else "REV" (the other side corrected it on their own)."""
+    item = code and db.query_one("SELECT status, ok_at FROM action_items "
                                  "WHERE shipment_id=? AND code=?", (shipment_id, code))
+    if not item or not item["ok_at"]:
+        return ""
     rank = doc_status.RANK
-    after_ok = bool(item) and rank.get(item["status"], 0) >= rank["draft_ok"]
-    first_final = stage == "final" and item and rank.get(item["status"], 0) < rank["final"]
-    if not after_ok or first_final:
-        return "REV" if said_correction and item and rank.get(item["status"], 0) >= rank["draft_received"] else ""
+    first_final = stage == "final" and rank.get(item["status"], 0) < rank["final"] and \
+        item["status"] == "draft_ok"
+    if first_final:
+        return ""
     asked = db.query_one(
         "SELECT 1 FROM mail_seen WHERE thread_id=? AND from_team=1 AND sent_at > ? AND sent_at < ?",
-        (thread_id, (item["updated_at"] or "").replace(" ", "T")[:19], sent_at))
+        (thread_id, item["ok_at"].replace(" ", "T")[:19], sent_at))
     return "NOTUL" if asked else "REV"
 
 
@@ -538,8 +543,8 @@ def process(db, gmail, msg, ask=_ask_classify, in_drive=None, reply_ask=_ask_rep
         guess = classify(db, data, att, ask, kind)
         doc_type, stage = guess["doc_type"], guess["stage"]
         code = DOC_TYPES[doc_type][0]
-        prefix = correction_prefix(db, shipment_id, code, stage, thread_id, sent_at,
-                                   guess["correction"]) if shipment_id else ""
+        prefix = correction_prefix(db, shipment_id, code, stage, thread_id, sent_at) \
+            if shipment_id else ""
         db.execute(
             "INSERT INTO mail_queue (id, created_at, message_id, thread_id, part_id, filename, mime, "
             "size, sha256, shipment_id, subject, sender, sent_at, doc_type, stage, prefix, dest, "
