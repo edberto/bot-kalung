@@ -314,6 +314,8 @@ def container_digest(received):
 def _safe(fn, label: str) -> None:
     try:
         fn()
+    except bnct.BnctError as exc:  # the portal briefly down (522 …): one line, next poll retries
+        log.warning("%s: BNCT unreachable, retrying next poll (%s)", label, exc)
     except Exception as exc:      # noqa: BLE001 - a cycle must never kill the worker
         log.exception("%s failed: %s", label, exc)
 
