@@ -13,7 +13,7 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from ..core.constants import DEFAULT_QUARANTINE_COUNTRIES
 from ..core.db import Database, new_id
@@ -64,20 +64,32 @@ class ScannedRegistry:
     def __init__(self, db: Database):
         self.db = db
 
-    def registered_keys(self) -> set[tuple[str, int]]:
+    def registered_keys(self, recheck_days: int = 30) -> set[tuple[str, int]]:
+        """The (code, seq) a scan skips. A folder judged done WITHOUT being
+        imported in the last `recheck_days` is looked at again: NIT22 looked
+        finished on its first scan (its Dok kirim already had an export doc)
+        and was never imported. ponytail: older verdicts stay final, so a scan
+        doesn't re-read every old finished folder."""
+        cutoff = (datetime.now() - timedelta(days=recheck_days)).isoformat(timespec="seconds")
         rows = self.db.query(
-            "SELECT exporter_code, sequence_number FROM scanned_shipments")
+            "SELECT exporter_code, sequence_number FROM scanned_shipments "
+            "WHERE NOT (done=1 AND shipment_id IS NULL AND imported_at >= ?)", (cutoff,))
         return {(r["exporter_code"], r["sequence_number"]) for r in rows}
 
     def record(self, code: str, sequence: int, folder_path: str | None,
                *, done: bool, shipment_id: str | None = None) -> None:
-        # INSERT OR IGNORE on the (code, seq) unique key: a scan should never
-        # collide (registered keys are filtered out first), but this keeps a
-        # racing second scan from raising instead of quietly no-op'ing.
+        # Upsert on the (code, seq) unique key: a re-checked "done" folder that
+        # turns out not to be finished is imported and its row updated.
         self.db.execute(
-            "INSERT OR IGNORE INTO scanned_shipments "
+            "INSERT INTO scanned_shipments "
             "(id, exporter_code, sequence_number, folder_path, done, "
-            " shipment_id, imported_at) VALUES (?,?,?,?,?,?,?)",
+            " shipment_id, imported_at) VALUES (?,?,?,?,?,?,?) "
+            "ON CONFLICT (exporter_code, sequence_number) DO UPDATE SET "
+            "folder_path=excluded.folder_path, done=excluded.done, "
+            "shipment_id=excluded.shipment_id, "
+            # still done: keep the first date, so the re-check window ages out
+            "imported_at=CASE WHEN scanned_shipments.done=1 AND excluded.done=1 "
+            "THEN scanned_shipments.imported_at ELSE excluded.imported_at END",
             (new_id(), code, sequence, folder_path,
              1 if done else 0, shipment_id, _now()))
 

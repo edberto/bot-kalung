@@ -106,7 +106,8 @@ with tempfile.TemporaryDirectory() as tmp:
           and "dok_kirim" not in item_codes)
 
     # Registry holds every handled (code, seq): imported + done.
-    keys = tracker.ScannedRegistry(db).registered_keys()
+    keys = {(r["exporter_code"], r["sequence_number"])
+            for r in db.query("SELECT exporter_code, sequence_number FROM scanned_shipments")}
     check("registry records imported and done alike",
           {("AMJ", 1), ("AMJ", 2), ("AMJ", 3), ("NIT", 1)} <= keys)
 
@@ -330,6 +331,32 @@ with tempfile.TemporaryDirectory() as tmp:
           db.query_one("SELECT * FROM shipments WHERE id=?", (a,)) is not None
           and db.query_one("SELECT * FROM shipments WHERE id=?", (b,)) is not None)
 
+
+# ---- registry: a recent "done" verdict without an import is re-checked (NIT22)
+with tempfile.TemporaryDirectory() as tmp:
+    db = Database(db_path_for(Path(tmp)))
+    db.initialize()
+    reg = tracker.ScannedRegistry(db)
+    from datetime import datetime as _dt, timedelta as _td
+    recent = (_dt.now() - _td(days=5)).isoformat(timespec="seconds")
+    old = (_dt.now() - _td(days=90)).isoformat(timespec="seconds")
+    for sid in ("s21", "s22"):
+        db.execute("INSERT INTO shipments (id, exporter_code, sequence_number, status, created_at) "
+                   "VALUES (?, 'NIT', ?, 'active', '2026-10-01')", (sid, int(sid[1:])))
+    for seq, done, sid, at in ((22, 1, None, recent), (12, 1, None, old), (21, 0, "s21", recent)):
+        db.execute("INSERT INTO scanned_shipments (id, exporter_code, sequence_number, folder_path, "
+                   "done, shipment_id, imported_at) VALUES (?, 'NIT', ?, 'f', ?, ?, ?)",
+                   (f"r{seq}", seq, done, sid, at))
+    check("a folder judged done without import in the last 30 days is re-checked; older ones aren't",
+          reg.registered_keys() == {("NIT", 12), ("NIT", 21)})
+    reg.record("NIT", 22, "f", done=True)
+    check("re-recording a still-done folder keeps its first date (the re-check window ages out)",
+          db.query_one("SELECT imported_at FROM scanned_shipments WHERE sequence_number=22")["imported_at"]
+          == recent)
+    reg.record("NIT", 22, "f", done=False, shipment_id="s22")
+    row = db.query_one("SELECT done, shipment_id FROM scanned_shipments WHERE sequence_number=22")
+    check("importing it updates the registry row (no duplicate on the next scan)",
+          (row["done"], row["shipment_id"]) == (0, "s22") and ("NIT", 22) in reg.registered_keys())
 
 print()
 if failures:
