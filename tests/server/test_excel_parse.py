@@ -62,6 +62,10 @@ check("EVER CONCERT splits the same way",
       _split_vessel_voyage("EVER CONCERT 0809-092N") == ("EVER CONCERT", "0809-092N"))
 check("Wan Hai's hyphenated voyage is unaffected",
       _split_vessel_voyage("WAN HAI 101-N375") == ("WAN HAI 101", "N375"))
+check("CKJ: a digits-only voyage hyphenated on -> split (HUA XIN-678)",
+      _split_vessel_voyage("HUA XIN-678") == ("HUA XIN", "678")
+      and _split_vessel_voyage("MSC SUPARNA F - SB548A") == ("MSC SUPARNA F", "SB548A")
+      and _split_vessel_voyage("WAN HAI 101") == ("WAN HAI 101", None))
 
 # ---- _split_destination + _clean_booking ----------------------------------
 check("destination splits port and country",

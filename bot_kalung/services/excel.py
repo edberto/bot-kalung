@@ -343,11 +343,18 @@ def _split_vessel_voyage(value) -> tuple[str | None, str | None]:
     evergreen = re.match(r"^(?P<vessel>.*\S)\s+(?P<voyage>\d{3,4}-\d{2,4}[A-Za-z])$", text)
     if evergreen:
         return evergreen.group("vessel").strip(), evergreen.group("voyage").upper()
-    match = re.match(r"^(?P<vessel>.*\S)[\s\-]+(?P<voyage>\S+)$", text)
+    match = re.match(r"^(?P<vessel>.*\S)(?P<sep>[\s\-]+)(?P<voyage>[^\s\-]+)$", text)
     if match:
         voyage = match.group("voyage")
+        # "MSC SUPARNA F - SB548A": the " - " belongs to neither side
+        hyphenated = "-" in match.group("sep") or match.group("vessel").endswith("-")
+        vessel = match.group("vessel").rstrip(" -")
         if re.search(r"[A-Za-z]", voyage) and re.search(r"\d", voyage):
-            return match.group("vessel").strip(), voyage.upper()
+            return vessel, voyage.upper()
+        # All digits: a voyage only when hyphenated on ("HUA XIN-678", CKJ);
+        # after a space it is the vessel's own number ("WAN HAI 101").
+        if voyage.isdigit() and hyphenated:
+            return vessel, voyage
     return text, None
 
 
