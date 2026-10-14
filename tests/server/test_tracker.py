@@ -204,6 +204,24 @@ with tempfile.TemporaryDirectory() as tmp:
           and nit1_blank["booking_number"] == "2318229000"
           and nit1_blank["container_quantity"] == 5)
 
+    def vessel_only(name):
+        def read(folder):
+            f = fake_fields(folder)
+            f.vessel_name, f.voyage = name, None    # a vessel, no voyage in the cell
+            return f
+        return read
+
+    tracker.run_scan(db, root, year=2026, read_fields=fake_fields, reread_fields=vessel_only("Integra"))
+    same = db.query_one("SELECT * FROM shipments WHERE id=?", (nit1["id"],))
+    check("same vessel, no voyage in the workbook -> the stored voyage is kept",
+          (same["vessel_name"], same["voyage"]) == ("INTEGRA", "163E"))
+    moved = tracker.run_scan(db, root, year=2026, read_fields=fake_fields,
+                             reread_fields=vessel_only("HUA XIN 678"))
+    other = db.query_one("SELECT * FROM shipments WHERE id=?", (nit1["id"],))
+    check("a different vessel with no voyage -> vessel updated, the old voyage cleared",
+          (other["vessel_name"], other["voyage"]) == ("HUA XIN 678", None)
+          and any("voyage belum ada" in c for c in moved.vessel_changes))
+
     # ---- header fields follow the workbook (NIT20: imported from the wrong
     # folder, later re-pointed — destination/booking must not stay stale) ----
     def corrected_fields(folder):

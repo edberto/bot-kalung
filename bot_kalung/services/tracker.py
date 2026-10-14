@@ -11,6 +11,7 @@ read and the BL page reader are both injectable).
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field
 from datetime import date, datetime
 
@@ -21,6 +22,11 @@ from .action_items import ActionItems
 from .containers import Containers
 from .shipments import Shipments
 from .vessel_monitor import MonitoredVessels
+
+
+def _vessel_key(name) -> str:
+    """A vessel name for comparing: "HUA XIN-678" == "Hua Xin 678"."""
+    return re.sub(r"[^A-Z0-9]", "", str(name or "").upper())
 
 
 def _ensure_vessel_monitored(vessels: MonitoredVessels, name: str | None,
@@ -183,11 +189,23 @@ def _detect_vessel_voyage_changes(shipments: Shipments, vessels: MonitoredVessel
                          folder)
 
         new_vessel, new_voyage = fields.vessel_name, fields.voyage
-        if not new_vessel or not new_voyage:
-            continue           # unreadable / incomplete — don't overwrite
+        if not new_vessel:
+            continue           # unreadable / empty — don't overwrite
 
         old_vessel = (row["vessel_name"] or "").strip().upper()
         old_voyage = (row["voyage"] or "").strip().upper()
+        if not new_voyage:
+            # The workbook names a vessel but no voyage ("HUA XIN-678"). Same
+            # vessel: keep the stored voyage (it may have been entered by hand).
+            # A different vessel: the old voyage belonged to the old one — clear it.
+            if _vessel_key(new_vessel) == _vessel_key(row["vessel_name"]):
+                continue
+            shipments.set_vessel_voyage(row["id"], new_vessel, None)
+            label = f"{row['exporter_code']}{row['sequence_number']}"
+            was = f"{row['vessel_name'] or '?'} {row['voyage'] or '?'}".strip()
+            result.vessel_changes.append(
+                f"{label}: {was} → {new_vessel} (voyage belum ada di workbook)")
+            continue
         if (new_vessel.strip().upper() == old_vessel
                 and new_voyage.strip().upper() == old_voyage):
             continue           # no change
