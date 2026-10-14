@@ -29,11 +29,6 @@ CUSTOM_PREFIX = "custom:"
 _POSITION_GAP = 1000.0
 
 
-def is_ok(status: str) -> int:
-    """Draft OK or beyond: from then on, a new version is a correction (REV / NOTUL)."""
-    return int(ACTION_STATUSES.index(status) >= ACTION_STATUSES.index("draft_ok"))
-
-
 def _now() -> str:
     # UTC, like the PWA and Drive, so doc_status can compare a file's upload
     # time against the last status change.
@@ -164,11 +159,9 @@ class ActionItems:
     def set_status(self, item_id: str, status: str) -> None:
         if status not in ACTION_STATUSES:
             raise ValueError(f"unknown action status: {status}")
-        now = _now()
         self.db.execute(
-            "UPDATE action_items SET status=?, updated_at=?, "
-            "ok_at=CASE WHEN ?=1 THEN COALESCE(ok_at, ?) ELSE ok_at END WHERE id=?",
-            (status, now, is_ok(status), now, item_id))
+            "UPDATE action_items SET status=?, updated_at=? WHERE id=?",
+            (status, _now(), item_id))
 
     # -- automatic status (doc_status) -----------------------------------
 
@@ -201,13 +194,10 @@ class ActionItems:
         """Store the bot's inference (and the file behind it); `status` is the new
         status to apply, or None to leave the current one (e.g. a manual edit)."""
         if status is not None:
-            now = _now()
             self.db.execute(
                 "UPDATE action_items SET status=?, auto_status=?, auto_evidence=?, "
-                "auto_evidence_ref=?, auto_detail=?, updated_at=?, "
-                "ok_at=CASE WHEN ?=1 THEN COALESCE(ok_at, ?) ELSE ok_at END WHERE id=?",
-                (status, auto_status, evidence, evidence_ref, detail, now,
-                 is_ok(status), now, item_id))
+                "auto_evidence_ref=?, auto_detail=?, updated_at=? WHERE id=?",
+                (status, auto_status, evidence, evidence_ref, detail, _now(), item_id))
         else:
             self.db.execute(
                 "UPDATE action_items SET auto_status=?, auto_evidence=?, "

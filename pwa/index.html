@@ -781,10 +781,7 @@ async function renderDetail(id){
     const row=el(`<div class="item il" style="border-left-color:${STATUS_COLOR[it.status]||"#6b7280"}"><div class="t">${esc(it.title)}${it.is_custom?' <span class="muted">(tambahan)</span>':""}<div class="metaline" style="font-size:11px">Status sejak ${fmtDT(it.updated_at||it.created_at)}${revisionLate(it)?` · <b style="color:var(--danger)">⏰ revisi &gt; ${REVISION_HOURS} jam</b>`:""} · <button class="linkbtn histbtn" style="font-size:11px;padding:0">riwayat</button></div><div class="hist"></div>${autoEvidence(it)}${mailEvidence(it)}${checklist(it)}</div></div>`);
     const sel=el(`<select class="status">${STATUS.map(([v,l])=>`<option value="${v}" ${it.status===v?"selected":""}>${l}</option>`).join("")}</select>`);
     sel.onchange=async ()=>{
-      const patch={status:sel.value,updated_at:nowIso()};
-      // first time at Draft OK or beyond: later versions are corrections (REV / NOTUL)
-      if(!it.ok_at && STATUS.findIndex(([v])=>v===sel.value) >= STATUS.findIndex(([v])=>v==="draft_ok")) patch.ok_at=patch.updated_at;
-      const {error}=await sb.from("action_items").update(patch).eq("id",it.id); toast(error?"Gagal: "+error.message:"Status disimpan"); if(!error){ it.status=sel.value; row.style.borderLeftColor=STATUS_COLOR[sel.value]; } };
+      const {error}=await sb.from("action_items").update({status:sel.value,updated_at:nowIso()}).eq("id",it.id); toast(error?"Gagal: "+error.message:"Status disimpan"); if(!error){ it.status=sel.value; row.style.borderLeftColor=STATUS_COLOR[sel.value]; } };
     const del=el(`<button class="linkbtn" style="color:var(--danger)">✕</button>`);
     del.onclick=async ()=>{ if(!confirm(`Hapus item "${it.title}"?`)) return; const {error}=await sb.from("action_items").delete().eq("id",it.id); if(error){toast("Gagal: "+error.message);return;} toast("Item dihapus"); row.remove(); };
     row.appendChild(sel);
@@ -1100,9 +1097,9 @@ async function renderInbox(){
         if(state.view==="inbox"){ toast(tries>=30?"Belum selesai — coba lagi nanti":"Email sudah diperiksa"); nav("inbox",undefined,false,true); } }
     }, 4000);
   };
-  const top=el(`<div class="mq-top"><div class="metaline">Lampiran email dari luar tim. Periksa usulannya, ubah bila perlu, lalu Simpan — bot menaruh file di folder pengiriman.</div></div>`);
+  const top=el(`<div class="mq-top"><div class="metaline">Lampiran email dari luar tim disimpan otomatis ke folder pengirimannya (nama sama → "-Copy"). Di sini hanya yang dokumen atau pengirimannya tidak dikenali — periksa lalu Simpan atau Tolak.</div></div>`);
   top.appendChild(btn); w.appendChild(top);
-  if(!pending.length) w.appendChild(el(`<div class="card muted">Tidak ada lampiran yang menunggu.</div>`));
+  if(!pending.length) w.appendChild(el(`<div class="card muted">Tidak ada lampiran yang perlu diperiksa.</div>`));
   for(const r of pending){
     const c=el(`<div class="card">
       <div class="mq-file">📎 ${esc(r.filename)}</div>
@@ -1111,13 +1108,12 @@ async function renderInbox(){
         <label>Pengiriman<select data-f="shipment_id"><option value="">— pilih —</option>${ships.map(s=>`<option value="${s.id}" ${s.id===r.shipment_id?"selected":""}>${esc(s.exporter_code)}${s.sequence_number}</option>`).join("")}</select></label>
         <label>Dokumen<select data-f="doc_type">${opts(MAIL_DOCS,r.doc_type)}</select></label>
         <label>Tahap<select data-f="stage">${opts({draft:"Draft",final:"Final"},r.stage)}</select></label>
-        <label>Awalan<select data-f="prefix">${opts({"":"—","REV":"REV","NOTUL":"NOTUL"},r.prefix||"")}</select></label>
         <label>Folder<select data-f="dest">${opts(MAIL_DEST,r.dest)}</select></label>
       </div>
       <div class="mq-name">Disimpan sebagai <b class="nm"></b></div>
       <div class="mq-actions"><button class="iconbtn rej" style="color:var(--danger)">✕ Tolak</button><button class="mq-save ok">✓ Simpan</button></div></div>`);
     const val=f=>c.querySelector(`[data-f="${f}"]`).value;
-    const draw=()=>{ c.querySelector(".nm").textContent=mailName(byId[val("shipment_id")],val("doc_type"),val("stage"),val("prefix"),r.filename); };
+    const draw=()=>{ c.querySelector(".nm").textContent=mailName(byId[val("shipment_id")],val("doc_type"),val("stage"),"",r.filename); };
     c.querySelectorAll("select").forEach(s=>s.onchange=()=>{
       if(s.dataset.f==="stage"||s.dataset.f==="doc_type") c.querySelector('[data-f="dest"]').value = val("stage")==="draft"?"draft":(val("doc_type")==="fumi"?"fumi":"kirim");
       draw(); });
@@ -1125,7 +1121,7 @@ async function renderInbox(){
     const decide=async (status)=>{
       if(status==="approved" && !val("shipment_id")){ toast("Pilih pengirimannya dulu"); return; }
       const patch={status, decided_at:nowIso()};
-      if(status==="approved") Object.assign(patch,{shipment_id:val("shipment_id"),doc_type:val("doc_type"),stage:val("stage"),prefix:val("prefix")||null,dest:val("dest"),proposed_name:c.querySelector(".nm").textContent});
+      if(status==="approved") Object.assign(patch,{shipment_id:val("shipment_id"),doc_type:val("doc_type"),stage:val("stage"),dest:val("dest"),proposed_name:c.querySelector(".nm").textContent});
       const {error}=await sb.from("mail_queue").update(patch).eq("id",r.id);
       if(error){ toast("Gagal: "+error.message); return; }
       toast(status==="approved"?"Disetujui — bot menyimpan dalam ~20 detik":"Ditolak"); refreshBadge(); nav("inbox",undefined,false,true);
@@ -1134,7 +1130,7 @@ async function renderInbox(){
     w.appendChild(c);
   }
   if(done.length){
-    w.appendChild(el(`<div class="sectlabel">Terakhir diproses</div>`));
+    w.appendChild(el(`<div class="sectlabel">Terakhir disimpan</div>`));
     const h=el(`<div class="card"></div>`);
     for(const r of done) h.appendChild(el(`<div class="metaline" style="padding:4px 0;border-bottom:1px solid var(--border)">${MAIL_STATUS[r.status]||esc(r.status)} · ${byId[r.shipment_id]?badge(byId[r.shipment_id].exporter_code,byId[r.shipment_id].sequence_number):""} ${esc(r.proposed_name||r.filename)}${r.note?`<div style="font-size:11px">${esc(r.note)}</div>`:""}</div>`));
     w.appendChild(h);

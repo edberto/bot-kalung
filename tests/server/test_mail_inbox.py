@@ -94,35 +94,27 @@ with tempfile.TemporaryDirectory() as tmp:
                b"%PDF coo": {"doc_type": "coo", "stage": "draft", "correction": False}}
     mi.process(db, gmail, reply, ask=lambda data, mime: guesses[data])
     q = db.query("SELECT * FROM mail_queue ORDER BY part_id")
+    check("known documents of a known shipment are saved straight away (approved for the quick lane)",
+          {r["status"] for r in q} == {"approved"})
+    pdfs.update({"m5-0": b"%PDF tank"})
+    mi.process(db, gmail, message("m5", "Doc Exim <docexim.sbm@gmail.com>", "ongkalung@gmail.com",
+                                  "Re: AMJ30", ["TANK CERT.pdf"], when="1760000150000"),
+               ask=lambda d, m: {"doc_type": "other", "stage": "final", "correction": False})
+    check("an unknown document waits in the queue",
+          db.query_one("SELECT status FROM mail_queue WHERE message_id='m5'")["status"] == "pending")
+    check("a same-named different file becomes -Copy, -Copy 2 — never overwritten",
+          mi.unique_name("AMJ30-PEB-PEB 30.pdf", {"x.pdf"}) == "AMJ30-PEB-PEB 30.pdf"
+          and mi.unique_name("AMJ30-PEB-PEB 30.pdf", {"AMJ30-PEB-PEB 30.pdf"}) == "AMJ30-PEB-PEB 30-Copy.pdf"
+          and mi.unique_name("a.pdf", {"a.pdf", "a-Copy.pdf"}) == "a-Copy 2.pdf")
     check("each attachment from docexim is queued with its type, folder and name",
           [(r["doc_type"], r["dest"], r["proposed_name"]) for r in q]
           == [("peb", "draft", "AMJ30-PEB-PEB 30.pdf"), ("coo", "draft", "AMJ30-COO-AMJ COO 30.pdf")])
     mi.process(db, gmail, reply, ask=lambda data, mime: guesses[data])
-    check("the same mail again adds nothing", len(db.query("SELECT 1 FROM mail_queue")) == 2)
+    check("the same mail again adds nothing",
+          len(db.query("SELECT 1 FROM mail_queue WHERE message_id='m2'")) == 2)
 
-    # after the PEB was OK'd: a new version is a correction
-    db.execute("UPDATE action_items SET status='draft_ok', updated_at='2025-10-09T08:56:00', "
-               "ok_at='2025-10-09T08:56:00' WHERE shipment_id=? AND code='peb_npe'", (amj,))
-    cp = lambda code, stage: mi.correction_prefix(db, amj, code, stage, "t1", "2025-10-09T09:00:00")  # noqa: E731
-    check("a draft after OK, nobody from the team asked -> REV", cp("peb_npe", "draft") == "REV")
-    check("the first final after OK is the normal cycle -> no prefix", cp("peb_npe", "final") == "")
-    check("before OK (revision loop) -> no prefix", cp("coo", "draft") == "")
-    db.execute("INSERT INTO mail_seen (message_id, thread_id, from_team, sent_at) "
-               "VALUES ('m9', 't1', 1, '2025-10-09T08:58:00')")
-    check("a draft after OK that the team asked for (team mail since the OK) -> NOTUL",
-          cp("peb_npe", "draft") == "NOTUL")
-    db.execute("UPDATE action_items SET status='draft_revision' WHERE shipment_id=? AND code='peb_npe'", (amj,))
-    check("...still NOTUL after the change request moved the status back to Draf direvisi",
-          cp("peb_npe", "draft") == "NOTUL" and cp("peb_npe", "final") == "NOTUL")
-    db.execute("UPDATE action_items SET status='draft_ok', ok_at=NULL WHERE shipment_id=? "
-               "AND code='peb_npe'", (amj,))
-    ActionItems(db).set_status(db.query_one("SELECT id FROM action_items WHERE shipment_id=? "
-                                            "AND code='peb_npe'", (amj,))["id"], "final")
-    check("reaching Draft OK or later records ok_at (set_status / record_auto / replies)",
-          db.query_one("SELECT ok_at FROM action_items WHERE shipment_id=? AND code='peb_npe'",
-                       (amj,))["ok_at"] is not None)
-    db.execute("UPDATE action_items SET status='draft_ok', ok_at=NULL WHERE shipment_id=? "
-               "AND code='peb_npe'", (amj,))
+    check("no REV / NOTUL prefix from the bot — the team adds those by hand",
+          all(not r["prefix"] for r in db.query("SELECT prefix FROM mail_queue")))
 
     check("names: a BL draft is 'BL draft'; no shipment yet is marked",
           mi.file_name({"exporter_code": "AMJ", "sequence_number": 30}, "bl", "draft", "", "x.pdf")

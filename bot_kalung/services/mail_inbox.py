@@ -320,10 +320,9 @@ def apply_reply(db, msg, shipment, kind: str, sender: str, sent_at: str, atts: l
             continue
         quote = (v.get("quote") or "").strip()[:120]
         db.execute("UPDATE action_items SET status=?, updated_at=?, mail_status=?, mail_evidence=?, "
-                   "mail_evidence_ref=?, mail_at=?, "
-                   "ok_at=CASE WHEN ?=1 THEN COALESCE(ok_at, ?) ELSE ok_at END WHERE id=?",
+                   "mail_evidence_ref=?, mail_at=? WHERE id=?",
                    (new, sent_at, new, f"{who}: {quote}" if quote else who, msg["threadId"],
-                    sent_at, int(new == "draft_ok"), sent_at, row["id"]))
+                    sent_at, row["id"]))
         report.append(f"{label}: {row['title']} -> {'Draft OK' if new == 'draft_ok' else 'Draf direvisi'}"
                       f" (email {who}: {quote})")
     return report
@@ -337,35 +336,13 @@ def default_dest(doc_type: str, stage: str) -> str:
 
 
 def file_name(shipment, doc_type: str, stage: str, prefix: str, original: str) -> str:
-    """"REV-AMJ30-PEB-PEB 035.pdf": {prefix}{EX}{seq}-{Doc}-{original name}. A BL
+    """"AMJ30-PEB-PEB 035.pdf": {prefix}{EX}{seq}-{Doc}-{original name}. A BL
     draft is labelled "BL draft" so the status rules recognise it in Draf."""
     label = DOC_TYPES.get(doc_type, DOC_TYPES["other"])[1]
     if doc_type == "bl" and stage == "draft":
         label = "BL draft"
     head = f"{shipment['exporter_code']}{shipment['sequence_number']}" if shipment else "TANPA-PENGIRIMAN"
     return f"{prefix + '-' if prefix else ''}{head}-{label}-{original}"
-
-
-def correction_prefix(db, shipment_id: str, code: str | None, stage: str, thread_id: str,
-                      sent_at: str) -> str:
-    """The user's rule: "" for the normal cycle — draft, the revision loop, and
-    the first final after the OK. Once the document has been OK'd (ok_at, kept
-    even if a change request moved the status back), any other version is a
-    correction: "NOTUL" when the team asked for it (a team mail in this thread
-    since the OK), else "REV" (the other side corrected it on their own)."""
-    item = code and db.query_one("SELECT status, ok_at FROM action_items "
-                                 "WHERE shipment_id=? AND code=?", (shipment_id, code))
-    if not item or not item["ok_at"]:
-        return ""
-    rank = doc_status.RANK
-    first_final = stage == "final" and rank.get(item["status"], 0) < rank["final"] and \
-        item["status"] == "draft_ok"
-    if first_final:
-        return ""
-    asked = db.query_one(
-        "SELECT 1 FROM mail_seen WHERE thread_id=? AND from_team=1 AND sent_at > ? AND sent_at < ?",
-        (thread_id, item["ok_at"].replace(" ", "T")[:19], sent_at))
-    return "NOTUL" if asked else "REV"
 
 
 # -- the poll -------------------------------------------------------------------------------------
@@ -545,25 +522,44 @@ def process(db, gmail, msg, ask=_ask_classify, in_drive=None, reply_ask=_ask_rep
         guess = classify(db, data, att, ask, kind)
         doc_type, stage = guess["doc_type"], guess["stage"]
         code = DOC_TYPES[doc_type][0]
-        prefix = correction_prefix(db, shipment_id, code, stage, thread_id, sent_at) \
-            if shipment_id else ""
+        prefix = ""                                # REV / NOTUL: the team adds those by hand
+        auto = bool(shipment_id) and doc_type != "other"
         db.execute(
             "INSERT INTO mail_queue (id, created_at, message_id, thread_id, part_id, filename, mime, "
             "size, sha256, shipment_id, subject, sender, sent_at, doc_type, stage, prefix, dest, "
-            "proposed_name, status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending')",
+            "proposed_name, status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (f"{msg['id']}:{att['part']}", _now(), msg["id"], thread_id, att["part"], att["filename"],
              att["mime"], len(data), sha, shipment_id, subject, sender, sent_at, doc_type, stage,
              prefix, default_dest(doc_type, stage),
-             file_name(shipment, doc_type, stage, prefix, att["filename"])))
-        report.append(f"{label}: {att['filename']} masuk antrean ({doc_type}, {stage})")
+             file_name(shipment, doc_type, stage, prefix, att["filename"]),
+             # A known document of a known shipment is saved straight away (the
+             # user sorts the Drive out); anything else waits in Kotak Masuk.
+             "approved" if auto else "pending"))
+        report.append(f"{label}: {att['filename']} -> "
+                      f"{'disimpan' if auto else 'Kotak Masuk'} ({doc_type}, {stage})")
     return report
 
 
 # -- saving approved entries -------------------------------------------------------------------------
+def unique_name(name: str, taken: set) -> str:
+    """`name`, or "name-Copy.pdf", "name-Copy 2.pdf", … — never overwrite."""
+    if name not in taken:
+        return name
+    stem, dot, ext = name.rpartition(".")
+    stem, ext = (stem, dot + ext) if dot else (name, "")
+    n = 1
+    while True:
+        candidate = f"{stem}-Copy{'' if n == 1 else f' {n}'}{ext}"
+        if candidate not in taken:
+            return candidate
+        n += 1
+
+
 def save_approved(db, gmail, drive, folder_resolver, check=None) -> list[str]:
-    """Put each approved queue entry into its shipment folder, as the signed-in
-    user. Skipped when the folder already has the same file (same content, or
-    same name); then `check(shipment_id, codes)` refreshes that document."""
+    """Put each approved entry into its shipment folder, as the signed-in user.
+    The same file (same content) already in the folder: the entry is dropped.
+    A different file with the same name: saved as "…-Copy". Then
+    `check(shipment_id, codes)` refreshes that document."""
     from googleapiclient.http import MediaInMemoryUpload
 
     report = []
@@ -585,12 +581,13 @@ def save_approved(db, gmail, drive, folder_resolver, check=None) -> list[str]:
                                        fields="files(name,md5Checksum)", pageSize=1000,
                                        supportsAllDrives=True, includeItemsFromAllDrives=True
                                        ).execute().get("files", [])
-            dup = next((f["name"] for f in there if f.get("md5Checksum") == md5 or f["name"] == name), None)
+            dup = next((f["name"] for f in there if f.get("md5Checksum") == md5), None)
             if dup:          # already in the folder: nothing to keep in the queue
                 db.execute("DELETE FROM mail_queue WHERE id=?", (e["id"],))
                 report.append(f"{e['filename']}: sudah ada ({dup}) — dihapus dari antrean")
                 continue
             else:
+                name = unique_name(name, {f["name"] for f in there})
                 drive.files().create(body={"name": name, "parents": [sub.id]},
                                      media_body=MediaInMemoryUpload(data, mimetype=e["mime"] or None),
                                      fields="id", supportsAllDrives=True).execute()

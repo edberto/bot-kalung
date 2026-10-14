@@ -187,8 +187,7 @@ CREATE TABLE IF NOT EXISTS action_items (
     mail_status        TEXT,  -- the status a team reply set (OK / revisi), mail_inbox
     mail_evidence      TEXT,  -- who and what: "Kevin: tolong ganti consignee"
     mail_evidence_ref  TEXT,  -- the Gmail thread id
-    mail_at            TEXT,  -- when that reply was sent (UTC)
-    ok_at              TEXT   -- first reached Draft OK or later: later versions are REV / NOTUL
+    mail_at            TEXT   -- when that reply was sent (UTC)
 );
 
 -- Containers for a scanned shipment, populated from the VGM read and tracked on
