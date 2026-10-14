@@ -102,6 +102,18 @@ with tempfile.TemporaryDirectory() as tmp:
                ask=lambda d, m: {"doc_type": "other", "stage": "final", "correction": False})
     check("an unknown document waits in the queue",
           db.query_one("SELECT status FROM mail_queue WHERE message_id='m5'")["status"] == "pending")
+    entry = {"sent_at": "2026-10-13T08:00:00", "filename": "PEB 30.pdf"}
+    check("already saved: same content, whenever it was added",
+          mi.already_saved(entry, [{"name": "x.pdf", "md5Checksum": "abc", "createdTime": "2026-01-01T00:00:00Z"}],
+                           "abc", "AMJ30-PEB-PEB 30.pdf") == "x.pdf")
+    check("already saved: same name added after the email arrived (saved by hand)",
+          mi.already_saved(entry, [{"name": "PEB 30.pdf", "md5Checksum": "zzz",
+                                    "createdTime": "2026-10-13T09:00:00.000Z"}], "abc", "AMJ30-PEB-PEB 30.pdf")
+          == "PEB 30.pdf")
+    check("...but a same-named file from before the email is an older version -> save as -Copy",
+          mi.already_saved(entry, [{"name": "AMJ30-PEB-PEB 30.pdf", "md5Checksum": "zzz",
+                                    "createdTime": "2026-10-12T09:00:00.000Z"}], "abc", "AMJ30-PEB-PEB 30.pdf")
+          is None)
     check("a same-named different file becomes -Copy, -Copy 2 — never overwritten",
           mi.unique_name("AMJ30-PEB-PEB 30.pdf", {"x.pdf"}) == "AMJ30-PEB-PEB 30.pdf"
           and mi.unique_name("AMJ30-PEB-PEB 30.pdf", {"AMJ30-PEB-PEB 30.pdf"}) == "AMJ30-PEB-PEB 30-Copy.pdf"

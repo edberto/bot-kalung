@@ -12,9 +12,9 @@ from __future__ import annotations
 from ..core.constants import NTFY_DEFAULT_SERVER, NTFY_TOPIC
 
 # ntfy Priority header per notification kind (5 = max urgency, for the LOLO alert).
-_PRIORITY = {"schedule": "3", "alongside": "4", "departing": "5", "revision": "4"}
+_PRIORITY = {"schedule": "3", "alongside": "4", "departing": "5", "revision": "4", "file": "3"}
 _TAGS = {"schedule": "calendar", "alongside": "anchor", "departing": "warning",
-         "revision": "hourglass"}
+         "revision": "hourglass", "file": "file_folder"}
 
 
 def subscribe_url(settings) -> str:

@@ -23,7 +23,7 @@ import re
 import sys
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .core.pg import PostgresDatabase
@@ -132,8 +132,20 @@ def _mail_save(db, drive_client) -> None:
     resolver = _resolver(drive_client)
     for line in mail_inbox.save_approved(
             db, gmail, drive, resolver,
-            check=lambda sid, codes: tracker.check_items(db, sid, codes, resolver)):
+            check=lambda sid, codes: tracker.check_items(db, sid, codes, resolver),
+            notify=lambda s, files: _notify_saved(db, s, files)):
         log.info("mail save: %s", line)
+
+
+def _notify_saved(db, shipment, files) -> None:
+    """One notification per shipment for the files just saved from email — in
+    the app and pushed right away (the poll's pusher skips kind 'file')."""
+    label = f"{shipment['exporter_code']}{shipment['sequence_number']}"
+    title = f"{label}: {len(files)} file disimpan ({', '.join(sorted({d for d, _ in files}))})"
+    body = "\n".join(where for _, where in files)
+    NotificationStore(db).add("file", shipment["id"], title, body,
+                              created_at=datetime.now(timezone.utc).replace(tzinfo=None).isoformat(timespec="seconds"))
+    ntfy.publish(Settings(db), title, body, kind="file")
 
 
 def _scan_once(db, drive_client) -> None:
@@ -249,7 +261,7 @@ def _push_new_notifications(db, seen_ids: set) -> None:
     pushed = 0
     for row in db.query(
             "SELECT id, kind, title, body FROM notifications ORDER BY created_at"):
-        if row["id"] in seen_ids:
+        if row["id"] in seen_ids or row["kind"] == "file":   # 'file' is pushed when created
             continue
         if ntfy.publish(settings, row["title"], row["body"] or "", kind=row["kind"]):
             pushed += 1

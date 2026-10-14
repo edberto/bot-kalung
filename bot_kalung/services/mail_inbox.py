@@ -555,14 +555,28 @@ def unique_name(name: str, taken: set) -> str:
         n += 1
 
 
-def save_approved(db, gmail, drive, folder_resolver, check=None) -> list[str]:
+def already_saved(entry, there: list, md5: str, name: str) -> str | None:
+    """The file in the folder that makes saving pointless, or None: the same
+    content, or the same name (the bot's or the attachment's own) added AFTER
+    the email arrived — someone already saved it by hand."""
+    for f in there:
+        if f.get("md5Checksum") == md5:
+            return f["name"]
+        later = (f.get("createdTime") or "")[:19] > (entry["sent_at"] or "")
+        if later and f["name"] in (name, entry["filename"]):
+            return f["name"]
+    return None
+
+
+def save_approved(db, gmail, drive, folder_resolver, check=None, notify=None) -> list[str]:
     """Put each approved entry into its shipment folder, as the signed-in user.
-    The same file (same content) already in the folder: the entry is dropped.
-    A different file with the same name: saved as "…-Copy". Then
-    `check(shipment_id, codes)` refreshes that document."""
+    Already there (already_saved): the entry is dropped. A different, older
+    file with the same name: saved as "…-Copy". Then `check(shipment_id,
+    codes)` refreshes that document, and `notify(shipment, [(doc, where)])`
+    tells the team, once per shipment."""
     from googleapiclient.http import MediaInMemoryUpload
 
-    report = []
+    report, saved = [], {}
     for e in db.query("SELECT * FROM mail_queue WHERE status='approved'"):
         status, note = "error", None
         try:
@@ -578,10 +592,10 @@ def save_approved(db, gmail, drive, folder_resolver, check=None) -> list[str]:
             name = file_name(s, e["doc_type"], e["stage"], e["prefix"] or "", e["filename"])
             md5 = hashlib.md5(data).hexdigest()
             there = drive.files().list(q=f"'{sub.id}' in parents and trashed=false",
-                                       fields="files(name,md5Checksum)", pageSize=1000,
+                                       fields="files(name,md5Checksum,createdTime)", pageSize=1000,
                                        supportsAllDrives=True, includeItemsFromAllDrives=True
                                        ).execute().get("files", [])
-            dup = next((f["name"] for f in there if f.get("md5Checksum") == md5), None)
+            dup = already_saved(e, there, md5, name)
             if dup:          # already in the folder: nothing to keep in the queue
                 db.execute("DELETE FROM mail_queue WHERE id=?", (e["id"],))
                 report.append(f"{e['filename']}: sudah ada ({dup}) — dihapus dari antrean")
@@ -592,6 +606,8 @@ def save_approved(db, gmail, drive, folder_resolver, check=None) -> list[str]:
                                      media_body=MediaInMemoryUpload(data, mimetype=e["mime"] or None),
                                      fields="id", supportsAllDrives=True).execute()
                 status, note = "saved", f"{sub.name}/{name}"
+                saved.setdefault(s["id"], (s, []))[1].append(
+                    (DOC_TYPES.get(e["doc_type"], DOC_TYPES["other"])[1], note))
                 code = DOC_TYPES.get(e["doc_type"], (None,))[0]
                 if check and code:
                     check(s["id"], {code})
@@ -600,4 +616,7 @@ def save_approved(db, gmail, drive, folder_resolver, check=None) -> list[str]:
         db.execute("UPDATE mail_queue SET status=?, note=?, decided_at=? WHERE id=?",
                    (status, note, _now(), e["id"]))
         report.append(f"{e['filename']}: {status}{' — ' + note if note else ''}")
+    if notify:
+        for s, files in saved.values():
+            notify(s, files)
     return report
