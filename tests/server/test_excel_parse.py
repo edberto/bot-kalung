@@ -66,6 +66,11 @@ check("digits are the vessel's own number, hyphenated or not; ' - ' is dropped f
       _split_vessel_voyage("HUA XIN-678") == ("HUA XIN-678", None)
       and _split_vessel_voyage("MSC SUPARNA F - SB548A") == ("MSC SUPARNA F", "SB548A")
       and _split_vessel_voyage("WAN HAI 101") == ("WAN HAI 101", None))
+check("a 'V.' / 'VOY.' voyage prefix is dropped (NIT22 sat apart from the other 029N shipments)",
+      _split_vessel_voyage("MAO GANG GUANG ZHOU V.029N") == ("MAO GANG GUANG ZHOU", "029N")
+      and _split_vessel_voyage("INTEGRA V-190E") == ("INTEGRA", "190E")
+      and _split_vessel_voyage("MTT REYA VOY. 26RY149N") == ("MTT REYA", "26RY149N")
+      and _split_vessel_voyage("KOTA VOYAGER 0123W") == ("KOTA VOYAGER", "0123W"))
 check("CKJ28: 'HUA XIN 678-644N' is vessel HUA XIN 678, voyage 644N (not an Evergreen voyage)",
       _split_vessel_voyage("HUA XIN 678-644N") == ("HUA XIN 678", "644N"))
 

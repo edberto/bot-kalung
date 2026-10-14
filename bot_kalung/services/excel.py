@@ -337,7 +337,9 @@ def _split_vessel_voyage(value) -> tuple[str | None, str | None]:
     """
     if not isinstance(value, str) or not value.strip():
         return None, None
-    text = value.strip()
+    # "V." / "VOY." just means voyage: "MAO GANG GUANG ZHOU V.029N" -> ... 029N,
+    # "INTEGRA V-190E" -> INTEGRA 190E — or it would sit apart from "029N".
+    text = re.sub(r"(?i)\s+(VOY|V)\.?\s*[-.]?\s*(?=\S*\d\S*$)", " ", value.strip())
     # Evergreen writes "GREEN CELESTE 0808-132N": the whole "0808-132N" is the
     # voyage (their voyage no. + the service voyage), not "0808" glued to the name.
     # Exactly 4 digits: "HUA XIN 678-644N" is vessel "HUA XIN 678" + voyage 644N.
