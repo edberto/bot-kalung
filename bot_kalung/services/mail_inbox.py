@@ -371,7 +371,8 @@ def _relevant_query(db, after: int) -> str:
     from_team = "{" + " ".join(f"from:{p}" for p in sorted(TEAM)) + "}"
     with_files = "(has:attachment {" + " ".join(anyone + subjects) + "})"
     replies = f"({from_team} {{{' '.join(about)}}})"
-    return f"after:{after} {{{with_files} {replies}}}"
+    # -in:scheduled: a scheduled send carries its future send time
+    return f"after:{after} -in:scheduled {{{with_files} {replies}}}"
 
 
 def _gentle(call, tries: int = 4):
@@ -427,8 +428,10 @@ def poll(db, gmail, ask=_ask_classify, drive=None) -> list[str]:
     from ..core.settings import Settings
 
     settings = Settings(db)
-    after = int(settings.get("mail_after") or 0) or int(datetime.now(timezone.utc).timestamp()) \
-        - FIRST_RUN_DAYS * 86400
+    now = int(datetime.now(timezone.utc).timestamp())
+    # never "read up to" a moment in the future (it would skip mail arriving
+    # before it); heals a value set before that was guarded
+    after = min(int(settings.get("mail_after") or 0) or now - FIRST_RUN_DAYS * 86400, now - 900)
     ids, token = [], None
     query = _relevant_query(db, after)
     while True:
@@ -456,7 +459,7 @@ def poll(db, gmail, ask=_ask_classify, drive=None) -> list[str]:
         newest = max(newest, int(msg["internalDate"]) // 1000)
     # 15 minutes of overlap so nothing falls between two polls; mail_seen keeps
     # a message from being handled twice
-    settings.set("mail_after", str(max(after, newest - 900)))
+    settings.set("mail_after", str(max(after, min(newest, now) - 900)))
     return report
 
 

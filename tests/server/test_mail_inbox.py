@@ -199,7 +199,7 @@ with tempfile.TemporaryDirectory() as tmp:
           status(amj, "coo") == "final")
     q = mi._relevant_query(db, 1760000000)
     check("the search also fetches team mail without attachments (text replies)",
-          q.startswith("after:1760000000 {(has:attachment") and "from:achentan96@gmail.com" in q
+          q.startswith("after:1760000000 -in:scheduled {(has:attachment") and "from:achentan96@gmail.com" in q
           and "(to:docexim.sbm@gmail.com OR cc:docexim.sbm@gmail.com)" in q)
 
     personal = message("m3", "friend@example.com", "edbertongko88@gmail.com", "Holiday photos",
