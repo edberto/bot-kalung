@@ -75,6 +75,13 @@ check("Phyto: Draf -> Draft diterima, Dok kirim -> Final",
 check("COO: Draf -> Draft diterima, Dok kirim -> Hardcopy diterima",
       status("coo", [F("draft", "AMJ COO 27092026.pdf")]) == "draft_received"
       and status("coo", [F("kirim", "AMJ27-COO.pdf")]) == "hardcopy_received")
+from dataclasses import replace as _replace
+fumi_docx = _replace(F("draft", "PT. ABDUAL MANAN INDONESIA 0801CN.docx"), kind="fumi")
+check("a file the email reader saved under the sender's name is known by its recorded type",
+      status("fumi", [fumi_docx]) == "draft_received"
+      and status("fumi", [F("draft", "PT. ABDUAL MANAN INDONESIA 0801CN.docx")]) is None
+      and status("insurance", [_replace(F("kirim", "PT. HOPSON CERT. 7.pdf"), kind="insurance")], "HAI")
+      == "hardcopy_received")
 check("Insurance: draft in Draf -> Draft diterima; in Dok kirim -> Hardcopy diterima "
       "(the insurer's invoice doesn't count)",
       status("insurance", [F("draft", "HAI35-Ins draft.pdf")], "HAI") == "draft_received"

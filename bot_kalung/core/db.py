@@ -270,7 +270,8 @@ CREATE TABLE IF NOT EXISTS mail_queue (
     proposed_name TEXT,
     status        TEXT NOT NULL DEFAULT 'pending',
     note          TEXT,
-    decided_at    TEXT
+    decided_at    TEXT,
+    saved_ref     TEXT
 );
 
 CREATE TABLE IF NOT EXISTS vessel_schedules (

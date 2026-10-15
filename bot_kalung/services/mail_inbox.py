@@ -336,13 +336,10 @@ def default_dest(doc_type: str, stage: str) -> str:
 
 
 def file_name(shipment, doc_type: str, stage: str, prefix: str, original: str) -> str:
-    """"AMJ30-PEB-PEB 035.pdf": {prefix}{EX}{seq}-{Doc}-{original name}. A BL
-    draft is labelled "BL draft" so the status rules recognise it in Draf."""
-    label = DOC_TYPES.get(doc_type, DOC_TYPES["other"])[1]
-    if doc_type == "bl" and stage == "draft":
-        label = "BL draft"
-    head = f"{shipment['exporter_code']}{shipment['sequence_number']}" if shipment else "TANPA-PENGIRIMAN"
-    return f"{prefix + '-' if prefix else ''}{head}-{label}-{original}"
+    """The attachment's own name, unchanged (the user's call). What the file is
+    — for the status rules — is recorded instead (mail_queue.saved_ref +
+    doc_type, doc_status.with_kinds)."""
+    return original
 
 
 # -- the poll -------------------------------------------------------------------------------------
@@ -605,9 +602,11 @@ def save_approved(db, gmail, drive, folder_resolver, check=None, notify=None) ->
                 continue
             else:
                 name = unique_name(name, {f["name"] for f in there})
-                drive.files().create(body={"name": name, "parents": [sub.id]},
-                                     media_body=MediaInMemoryUpload(data, mimetype=e["mime"] or None),
-                                     fields="id", supportsAllDrives=True).execute()
+                made = drive.files().create(body={"name": name, "parents": [sub.id]},
+                                            media_body=MediaInMemoryUpload(data, mimetype=e["mime"] or None),
+                                            fields="id", supportsAllDrives=True).execute()
+                db.execute("UPDATE mail_queue SET saved_ref=? WHERE id=?",
+                           (f"drive:{made['id']}", e["id"]))
                 status, note = "saved", f"{sub.name}/{name}"
                 saved.setdefault(s["id"], (s, []))[1].append(
                     (DOC_TYPES.get(e["doc_type"], DOC_TYPES["other"])[1], note))

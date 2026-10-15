@@ -207,7 +207,7 @@ def _do_candidates(files, booking) -> list:
 
 def _bls(files) -> list:
     """BLs in Dok kirim, newest first."""
-    return sorted((f for f in files if f.folder == "kirim" and doc_status.BL_FINAL.search(f.name)
+    return sorted((f for f in files if f.folder == "kirim" and doc_status._named(f, doc_status.BL_FINAL, "bl")
                    and f.name.lower().endswith(".pdf")), key=lambda f: f.created, reverse=True)
 
 
@@ -575,7 +575,7 @@ def content_checks(db, folder, fields, exporter: str, shipment: dict,
     OK, final) the check is cleared. Undecidable -> left as is."""
     from .action_items import ActionItems
 
-    files = doc_status.list_files(folder)
+    files = doc_status.with_kinds(db, doc_status.list_files(folder))
     if not files:
         return
     fetch = doc_status._fetcher(folder)
@@ -628,7 +628,7 @@ def compute(db, folder, fields, previous: dict, exporter: str = "") -> list[dict
     from .si_checks import SKIP_EXPORTERS
 
     ex = exporter.upper()
-    files = doc_status.list_files(folder)
+    files = doc_status.with_kinds(db, doc_status.list_files(folder))
     keys = ([] if ex in SKIP_EXPORTERS else ["do", "atd"]) + ([] if ex in PHOTO_SKIP else ["photos"])
     if not files:
         return [previous[k] for k in keys if previous.get(k)]

@@ -120,7 +120,7 @@ with tempfile.TemporaryDirectory() as tmp:
           and mi.unique_name("a.pdf", {"a.pdf", "a-Copy.pdf"}) == "a-Copy 2.pdf")
     check("each attachment from docexim is queued with its type, folder and name",
           [(r["doc_type"], r["dest"], r["proposed_name"]) for r in q]
-          == [("peb", "draft", "AMJ30-PEB-PEB 30.pdf"), ("coo", "draft", "AMJ30-COO-AMJ COO 30.pdf")])
+          == [("peb", "draft", "PEB 30.pdf"), ("coo", "draft", "AMJ COO 30.pdf")])
     mi.process(db, gmail, reply, ask=lambda data, mime: guesses[data])
     check("the same mail again adds nothing",
           len(db.query("SELECT 1 FROM mail_queue WHERE message_id='m2'")) == 2)
@@ -128,10 +128,8 @@ with tempfile.TemporaryDirectory() as tmp:
     check("no REV / NOTUL prefix from the bot — the team adds those by hand",
           all(not r["prefix"] for r in db.query("SELECT prefix FROM mail_queue")))
 
-    check("names: a BL draft is 'BL draft'; no shipment yet is marked",
-          mi.file_name({"exporter_code": "AMJ", "sequence_number": 30}, "bl", "draft", "", "x.pdf")
-          == "AMJ30-BL draft-x.pdf"
-          and mi.file_name(None, "fumi", "final", "REV", "f.pdf") == "REV-TANPA-PENGIRIMAN-Fumi-f.pdf")
+    check("an attachment keeps its own name (no prefix)",
+          mi.file_name({"exporter_code": "AMJ", "sequence_number": 30}, "bl", "draft", "", "x.pdf") == "x.pdf")
     check("finals go to Dok kirim, Fumi finals to Fumi, drafts to Draf",
           (mi.default_dest("peb", "final"), mi.default_dest("fumi", "final"),
            mi.default_dest("fumi", "draft")) == ("kirim", "fumi", "draft"))

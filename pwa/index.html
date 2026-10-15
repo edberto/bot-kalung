@@ -1075,9 +1075,8 @@ const MAIL_DOCS = {peb:"PEB",npe:"NPE",coo:"COO",phyto:"Phyto",fumi:"Fumi",bl:"B
 const MAIL_DEST = {draft:"Draf",kirim:"Dok kirim",fumi:"Fumi",peb:"PEB & NPE"};
 const MAIL_STATUS = {saved:"✅ tersimpan",rejected:"✕ ditolak",error:"⚠ gagal",approved:"⏳ disimpan…"};
 const GMAIL_USER = "edbertongko88@gmail.com";
-// Same as mail_inbox.file_name: "{prefix-}{EX}{seq}-{Doc}-{original}"
-function mailName(s,t,st,p,orig){ let l=(MAIL_DOCS[t]||"Dok").replace(" (lainnya)",""); if(t==="bl"&&st==="draft") l="BL draft";
-  return `${p?p+"-":""}${s?`${s.exporter_code}${s.sequence_number}`:"TANPA-PENGIRIMAN"}-${l}-${orig}`; }
+// Same as mail_inbox.file_name: the attachment keeps its own name
+function mailName(s,t,st,p,orig){ return orig; }
 const opts=(map,cur)=>Object.entries(map).map(([v,l])=>`<option value="${v}" ${v===cur?"selected":""}>${esc(l)}</option>`).join("");
 async function renderInbox(){
   const [{data:rows,error}, active] = await Promise.all([

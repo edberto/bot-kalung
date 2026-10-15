@@ -69,6 +69,7 @@ class DocFile:
     ref: str | None      # 'drive:{id}' or a filesystem path — for the PWA link
     created: str         # ISO timestamp the file was added (orders REV/NOTUL)
     modified: str = ""   # last change (a new red mark changes it) — the read cache key
+    kind: str | None = None  # the document type, when the email reader saved it (mail_queue)
 
     @property
     def is_rev(self) -> bool:
@@ -124,6 +125,24 @@ def _ref(node) -> str | None:
     return ref if ref is not None else str(node)
 
 
+def _named(f: DocFile, rx, *kinds: str) -> bool:
+    """`f` is that document: by its name, or — saved from an email under the
+    sender's own name ("PT. ABDUAL MANAN INDONESIA 0801CN.docx") — by the type
+    the email reader recorded for it."""
+    return bool(rx.search(f.name)) or f.kind in kinds
+
+
+def with_kinds(db, files: list[DocFile]) -> list[DocFile]:
+    """Attach the document type the email reader recorded for each file it saved."""
+    from dataclasses import replace
+
+    if db is None:
+        return files
+    kinds = {r["saved_ref"]: r["doc_type"] for r in db.query(
+        "SELECT saved_ref, doc_type FROM mail_queue WHERE saved_ref IS NOT NULL")}
+    return [replace(f, kind=kinds[f.ref]) if f.ref in kinds else f for f in files]
+
+
 def list_files(folder) -> list[DocFile]:
     """Files in the shipment folder (kind "root") and one level of subfolders."""
     out = []
@@ -166,7 +185,7 @@ def _si_vgm(files, exporter, content=None):
 
 def _peb(files, exporter, content=None):
     out = [("final", f) for f in files if f.folder == "peb" and PEB.search(f.name) and TTD.search(f.name)]
-    out += [("draft_received", f) for f in files if f.folder == "draft" and PEB.search(f.name)]
+    out += [("draft_received", f) for f in files if f.folder == "draft" and _named(f, PEB, "peb", "npe")]
     out += [("draft_received", f) for f in files                       # a NOTUL/REV PEB, unsigned
             if f.is_rev and f.folder == "peb" and PEB.search(f.name) and not TTD.search(f.name)]
     return out
@@ -178,37 +197,37 @@ def _title(content, f) -> str | None:
 
 
 def _fumi(files, exporter, content=None):
-    out = [("hardcopy_received", f) for f in files if f.folder == "kirim" and FUMI.search(f.name)]
+    out = [("hardcopy_received", f) for f in files if f.folder == "kirim" and _named(f, FUMI, "fumi")]
     out += [("waiting_hardcopy", f) for f in files if f.folder == "fumi"]
     # The fumigation company names drafts by its own ref ("...0742CN.pdf");
     # the title inside says FUMIGATION / TREATMENT CERTIFICATE.
     out += [("draft_received", f) for f in files if f.folder == "draft"
-            and (FUMI.search(f.name) or _title(content, f) == "fumi")]
+            and (_named(f, FUMI, "fumi") or _title(content, f) == "fumi")]
     return out
 
 
 def _phyto(files, exporter, content=None):
-    out = [("final", f) for f in files if f.folder == "kirim" and PHYTO.search(f.name)]
-    out += [("draft_received", f) for f in files if f.folder == "draft" and PHYTO.search(f.name)]
+    out = [("final", f) for f in files if f.folder == "kirim" and _named(f, PHYTO, "phyto")]
+    out += [("draft_received", f) for f in files if f.folder == "draft" and _named(f, PHYTO, "phyto")]
     return out
 
 
 def _coo(files, exporter, content=None):
-    out = [("hardcopy_received", f) for f in files if f.folder == "kirim" and COO.search(f.name)]
-    out += [("draft_received", f) for f in files if f.folder == "draft" and COO.search(f.name)]
+    out = [("hardcopy_received", f) for f in files if f.folder == "kirim" and _named(f, COO, "coo")]
+    out += [("draft_received", f) for f in files if f.folder == "draft" and _named(f, COO, "coo")]
     return out
 
 
 def _insurance(files, exporter, content=None):
-    out = [("hardcopy_received", f) for f in files if f.folder == "kirim" and INS.search(f.name)]
-    out += [("draft_received", f) for f in files if f.folder == "draft" and INS.search(f.name)]
+    out = [("hardcopy_received", f) for f in files if f.folder == "kirim" and _named(f, INS, "insurance")]
+    out += [("draft_received", f) for f in files if f.folder == "draft" and _named(f, INS, "insurance")]
     return out
 
 
 def _bl(files, exporter, content=None):
-    out = [("final", f) for f in files if f.folder == "kirim" and BL_FINAL.search(f.name)]
+    out = [("final", f) for f in files if f.folder == "kirim" and _named(f, BL_FINAL, "bl")]
     out += [("draft_received", f) for f in files if f.folder == "draft"
-            and (BL_DRAFT.search(f.name) or _title(content, f) == "bl")]
+            and (_named(f, BL_DRAFT, "bl") or _title(content, f) == "bl")]
     return out
 
 
@@ -338,7 +357,7 @@ def sync_shipment(items, shipment, folder, codes=None) -> list[str]:
     🔍 on one document)."""
     from ..core.constants import ACTION_STATUS_LABELS
 
-    files = list_files(folder)
+    files = with_kinds(items.db, list_files(folder))
     if not files:
         return []
     label = f"{shipment['exporter_code']}{shipment['sequence_number']}"
