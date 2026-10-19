@@ -130,8 +130,10 @@ with tempfile.TemporaryDirectory() as tmp:
 
     check("an attachment keeps its own name (no prefix)",
           mi.file_name({"exporter_code": "AMJ", "sequence_number": 30}, "bl", "draft", "", "x.pdf") == "x.pdf")
+    check("PEB and NPE finals go to the PEB & NPE folder",
+          (mi.default_dest("peb", "final"), mi.default_dest("npe", "final")) == ("peb", "peb"))
     check("finals go to Dok kirim, Fumi finals to Fumi, drafts to Draf",
-          (mi.default_dest("peb", "final"), mi.default_dest("fumi", "final"),
+          (mi.default_dest("coo", "final"), mi.default_dest("fumi", "final"),
            mi.default_dest("fumi", "draft")) == ("kirim", "fumi", "draft"))
     check("junk is not queued: signatures, forwarded mails, zips",
           [a["filename"] for a in mi._attachments({"parts": [

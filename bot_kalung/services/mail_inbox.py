@@ -332,7 +332,9 @@ def apply_reply(db, msg, shipment, kind: str, sender: str, sent_at: str, atts: l
 def default_dest(doc_type: str, stage: str) -> str:
     if stage == "draft":
         return "draft"
-    return "fumi" if doc_type == "fumi" else "kirim"
+    # finals: Fumi -> Fumi/, PEB & NPE -> "PEB & NPE" / "PEB&NPE" (folder kind "peb"),
+    # the rest -> Dok kirim
+    return {"fumi": "fumi", "peb": "peb", "npe": "peb"}.get(doc_type, "kirim")
 
 
 def file_name(shipment, doc_type: str, stage: str, prefix: str, original: str) -> str:
@@ -584,8 +586,9 @@ def save_approved(db, gmail, drive, folder_resolver, check=None, notify=None) ->
             if not s or not s["folder_path"]:
                 raise RuntimeError("pengiriman/folder tidak ditemukan")
             folder = folder_resolver(s["folder_path"])
-            sub = next((d for d in folder.iterdir()
-                        if d.is_dir() and doc_status.folder_kind(d.name) == e["dest"]), None)
+            subs = {doc_status.folder_kind(d.name): d for d in folder.iterdir() if d.is_dir()}
+            # a shipment without a "PEB & NPE" folder: its PEB/NPE goes to Dok kirim
+            sub = subs.get(e["dest"]) or (subs.get("kirim") if e["dest"] == "peb" else None)
             if sub is None:
                 raise RuntimeError(f"subfolder '{e['dest']}' tidak ada di folder pengiriman")
             data = _attachment_bytes(gmail, e["message_id"], e["part_id"])

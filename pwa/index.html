@@ -1114,7 +1114,7 @@ async function renderInbox(){
     const val=f=>c.querySelector(`[data-f="${f}"]`).value;
     const draw=()=>{ c.querySelector(".nm").textContent=mailName(byId[val("shipment_id")],val("doc_type"),val("stage"),"",r.filename); };
     c.querySelectorAll("select").forEach(s=>s.onchange=()=>{
-      if(s.dataset.f==="stage"||s.dataset.f==="doc_type") c.querySelector('[data-f="dest"]').value = val("stage")==="draft"?"draft":(val("doc_type")==="fumi"?"fumi":"kirim");
+      if(s.dataset.f==="stage"||s.dataset.f==="doc_type") c.querySelector('[data-f="dest"]').value = val("stage")==="draft"?"draft":({fumi:"fumi",peb:"peb",npe:"peb"}[val("doc_type")]||"kirim");
       draw(); });
     draw();
     const decide=async (status)=>{
