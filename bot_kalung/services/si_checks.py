@@ -255,7 +255,7 @@ def numbers_check(raw: dict, own_seqs: set[int]) -> dict:
         if own_seqs and seq not in own_seqs:
             notes.append(f"{name}: {value} — nomor urut {seq} bukan untuk pengiriman ini")
         if ref and kind != "vgm" and (seq, month, year) != ref[1:]:
-            notes.append(f"{name}: {value} — tidak sama dengan VGM ({vgm[2]})")
+            notes.append(f"{name}: {value} — tidak sama dengan {vgm[0]} ({vgm[2]})")
         if (kind in want and ref and ref[0] != "custom" and style != "custom"
                 and style != want[kind]):
             expected = (want[kind] + "-" if want[kind] else "") + f"{seq:02d}{month:02d}{year}"

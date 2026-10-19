@@ -17,7 +17,7 @@ from datetime import date, datetime, timedelta
 
 from ..core.constants import DEFAULT_QUARANTINE_COUNTRIES
 from ..core.db import Database, new_id
-from . import doc_checks, doc_status, excel, naming, scanner, workbook
+from . import buyer_docs, doc_checks, doc_status, excel, naming, scanner, workbook
 from .action_items import ActionItems
 from .containers import Containers
 from .shipments import Shipments
@@ -173,7 +173,8 @@ def _detect_vessel_voyage_changes(shipments: Shipments, vessels: MonitoredVessel
                         continue          # unchanged since last scan
                     mtime_cache[row["id"]] = mtime
         try:
-            fields = reread_fields(folder)
+            fields = buyer_docs.apply(shipments.db, folder, row["exporter_code"],
+                                      reread_fields(folder))
         except Exception:      # noqa: BLE001 - one bad workbook must not stop the scan
             continue
 
@@ -284,7 +285,7 @@ def check_items(db, shipment_id: str, codes: set, folder_resolver=None,
     folder = folder_resolver(row["folder_path"]) if folder_resolver else row["folder_path"]
     doc_checks.new_scan()
     doc_status.sync_shipment(ActionItems(db), row, folder, codes=codes)
-    fields = read_fields(folder)
+    fields = buyer_docs.apply(db, folder, row["exporter_code"], read_fields(folder))
     if "si_vgm" in codes:
         _store_si_checks(db, row["id"], row["exporter_code"], fields, row["sequence_number"],
                          getattr(folder, "name", None) or os.path.basename(str(folder)),
@@ -437,7 +438,8 @@ def run_scan(db: Database, drive_root, *, year: int | None = None, settings=None
             continue
 
         try:
-            fields = read_fields(candidate.folder)
+            fields = buyer_docs.apply(db, candidate.folder, candidate.code,
+                                      read_fields(candidate.folder))
         except Exception as exc:      # noqa: BLE001 - one bad workbook, keep going
             result.warnings.append(f"{candidate.label}: gagal membaca Excel ({exc})")
             fields = excel.ShipmentFields()

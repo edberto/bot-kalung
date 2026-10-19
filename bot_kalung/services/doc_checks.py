@@ -456,8 +456,10 @@ _FIELD_LABEL = {
 }
 
 _CONTENT_PROMPT = """You check an Indonesian exporter's shipping document against the
-exporter's workbook (the Shipping Instruction "SI" and invoice "Inv" sheets, given
-as text: "row | column:value | ...").
+exporter's reference: either its workbook (the Shipping Instruction "SI" and
+invoice "Inv" sheets, as text: "row | column:value | ..."), or the buyer's own
+SI / invoice / packing list documents, each headed by its file name and date
+(when one document is there in several versions, the newest or "Rev" counts).
 
 The document should be {doc}. Compare, where the document shows them:
 - shipper: name and details (address, contacts)
