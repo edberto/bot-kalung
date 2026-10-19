@@ -132,15 +132,40 @@ def _named(f: DocFile, rx, *kinds: str) -> bool:
     return bool(rx.search(f.name)) or f.kind in kinds
 
 
-def with_kinds(db, files: list[DocFile]) -> list[DocFile]:
-    """Attach the document type the email reader recorded for each file it saved."""
+def _says_what_it_is(name: str) -> bool:
+    return any(rx.search(name) for rx in (INV, PL, PEB, COO, PHYTO, FUMI, INS, BL_FINAL))
+
+
+def with_kinds(db, files: list[DocFile], fetch=None, read=None) -> list[DocFile]:
+    """Attach what each file is, where its name doesn't say:
+      - the type the email reader recorded for a file it saved;
+      - with `fetch`, a PDF in Dok kirim whose name names no document
+        ("OOLU2335371532.pdf", "AMI034-SAL1001PSP0523_….pdf" — the carrier's
+        BL number) is read by Claude (doc_checks.AiReader: once per file
+        version, scans too) and marked "bl" when it is a bill of lading.
+        Title text can't do it: those BLs are scans, and an LOI's text says
+        "bill of lading" too."""
     from dataclasses import replace
 
     if db is None:
         return files
     kinds = {r["saved_ref"]: r["doc_type"] for r in db.query(
         "SELECT saved_ref, doc_type FROM mail_queue WHERE saved_ref IS NOT NULL")}
-    return [replace(f, kind=kinds[f.ref]) if f.ref in kinds else f for f in files]
+    files = [replace(f, kind=kinds[f.ref]) if f.ref in kinds else f for f in files]
+    if fetch is None and read is None:
+        return files
+    if read is None:
+        from .doc_checks import AiReader
+        read = AiReader(db, fetch)
+    out = []
+    for f in files:
+        if (f.kind is None and f.folder == "kirim" and f.name.lower().endswith(".pdf")
+                and not _says_what_it_is(f.name)):
+            data = read(f)
+            if data and data.get("doc_type") == "bill_of_lading":
+                f = replace(f, kind="bl")
+        out.append(f)
+    return out
 
 
 def list_files(folder) -> list[DocFile]:
@@ -357,7 +382,7 @@ def sync_shipment(items, shipment, folder, codes=None) -> list[str]:
     🔍 on one document)."""
     from ..core.constants import ACTION_STATUS_LABELS
 
-    files = with_kinds(items.db, list_files(folder))
+    files = with_kinds(items.db, list_files(folder), _fetcher(folder))
     if not files:
         return []
     label = f"{shipment['exporter_code']}{shipment['sequence_number']}"

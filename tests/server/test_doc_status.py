@@ -82,6 +82,20 @@ check("a file the email reader saved under the sender's name is known by its rec
       and status("fumi", [F("draft", "PT. ABDUAL MANAN INDONESIA 0801CN.docx")]) is None
       and status("insurance", [_replace(F("kirim", "PT. HOPSON CERT. 7.pdf"), kind="insurance")], "HAI")
       == "hardcopy_received")
+kirim = [F("kirim", "OOLU2335371532.pdf"), F("kirim", "LOI523 10x40HC.pdf"),
+         F("kirim", "GGN02-Uzbe-INV.pdf")]
+asked = []
+fake_read = lambda f: asked.append(f.name) or (                                    # noqa: E731
+    {"doc_type": "bill_of_lading"} if f.name.startswith("OOLU") else {"doc_type": "other"})
+with tempfile.TemporaryDirectory() as _tmp:
+    _db = Database(db_path_for(Path(_tmp)))
+    _db.initialize()
+    kinded = ds.with_kinds(_db, kirim, read=fake_read)
+check("a BL in Dok kirim named only by its carrier number is recognised by reading it",
+      ds.infer("bl", kinded, "GGN").status == "final"
+      and ds.infer("bl", kinded, "GGN").file.name == "OOLU2335371532.pdf")
+check("...only files whose name names no document are read (not the INV)",
+      asked == ["OOLU2335371532.pdf", "LOI523 10x40HC.pdf"])
 check("Insurance: draft in Draf -> Draft diterima; in Dok kirim -> Hardcopy diterima "
       "(the insurer's invoice doesn't count)",
       status("insurance", [F("draft", "HAI35-Ins draft.pdf")], "HAI") == "draft_received"
