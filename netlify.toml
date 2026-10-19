@@ -9,6 +9,10 @@
 [build]
   publish = "pwa"
   command = ""
+  # Skip the build (no deploy, no credits) unless something under pwa/ changed
+  # since the last deploy — a safety net for backend-only pushes to master.
+  # Exit 0 = skip. A change to this file alone also skips; trigger by hand then.
+  ignore = "git diff --quiet $CACHED_COMMIT_REF $COMMIT_REF -- pwa/"
 
 # A service worker must revalidate every load so a new version (bumped SHELL
 # cache in sw.js) is picked up promptly rather than served stale from the CDN.
