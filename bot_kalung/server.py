@@ -397,7 +397,7 @@ def main() -> None:
 
 def _quick_lane(db, drive_client, cfg) -> None:
     """Every 20 s, independent of the scan: save approved queue entries, run
-    the 🔍 checks, and read mail — at the scan interval, or right away on
+    the 🔍 checks, and read mail — every minute, or right away on
     Kotak Masuk's "Periksa Email"."""
     settings = Settings(db)
     try:
@@ -412,8 +412,9 @@ def _quick_lane(db, drive_client, cfg) -> None:
             mail_req = settings.get("mail_requested_at") or ""
         except Exception:      # noqa: BLE001
             mail_req = last_mail_req
-        due = time.monotonic() - last_mail >= _interval(settings, "scan_interval_minutes",
-                                                         cfg["scan_interval"])
+        # its own cadence, not the folder scan's: a cheap Gmail search that only
+        # fetches new mail. Default every minute; settings.mail_interval_minutes.
+        due = time.monotonic() - last_mail >= _interval(settings, "mail_interval_minutes", 60)
         if due or mail_req != last_mail_req:
             if mail_req != last_mail_req:
                 log.info("mail: on-demand request (%s)", mail_req)
