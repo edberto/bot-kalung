@@ -85,6 +85,32 @@ check("a month/day before today rolls into next year",
 check("Evergreen lists no closing time", ev[0]["closing_at"] is None)
 check("'---' is no date", sailing_schedule._mmdd("---", date(2026, 9, 28)) is None)
 
+# ---- Maersk (maersklinelimited.com): any active shipment's vessel it lists ----
+from datetime import date as _date
+maersk = {"active-vessels": {"vessels": [{"vesselMaerskCode": "LM5", "vesselName": "HUA XIN 678"},
+                                         {"vesselMaerskCode": "GF0", "vesselName": "HONG DA XIN 718"}]},
+          "vessel-schedules": {"vesselSchedules": [
+              {"unLocationCode": "MYTPP", "departureVoyageNumber": "644S",
+               "arrivalTime": "2026-10-25T10:00:00+08:00", "departureTime": "2026-10-26T10:00:00+08:00"},
+              {"unLocationCode": "IDBLW", "arrivalVoyageNumber": "644S", "departureVoyageNumber": "644N",
+               "arrivalTime": "2026-10-27T20:00:00+07:00", "departureTime": "2026-10-29T20:00:00+07:00"}]}}
+asked = []
+get = lambda path, **p: asked.append((path, p.get("vesselMaerskCode"))) or maersk[path]   # noqa: E731
+with tempfile.TemporaryDirectory() as tmp:
+    db = Database(db_path_for(Path(tmp)))
+    db.initialize()
+    for i, (v, st) in enumerate((("HUA XIN 678", "active"), ("WAN HAI 101", "active"), ("HUA XIN 678", "completed"))):
+        db.execute("INSERT INTO shipments (id, exporter_code, sequence_number, vessel_name, status, created_at) "
+                   "VALUES (?, 'CKJ', ?, ?, ?, '2026-10-01')", (f"s{i}", i, v, st))
+    rows = sailing_schedule.maersk_rows(db, _date(2026, 10, 19), get=get)
+    check("Maersk: an active shipment's vessel is looked up by name and its Belawan call stored",
+          rows == [{"vessel_name": "HUA XIN 678", "voyage": "644N", "closing_at": None,
+                    "eta_belawan": "2026-10-27", "etd_belawan": "2026-10-29"}])
+    check("...vessels Maersk doesn't list are skipped; its vessel list is fetched once a day",
+          asked == [("active-vessels", None), ("vessel-schedules", "LM5")])
+    sailing_schedule.maersk_rows(db, _date(2026, 10, 19), get=get)
+    check("...not again the same day", [a for a in asked if a[0] == "active-vessels"] == [("active-vessels", None)])
+
 print()
 if failures:
     print(f"{len(failures)} FAILED: {failures}")

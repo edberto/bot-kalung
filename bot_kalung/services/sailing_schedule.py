@@ -4,6 +4,8 @@
   MAO GANG GUANG ZHOU (route 27): closing, ETA, ETD.
 * Evergreen ShipmentLink TMI page (HTML) — GREEN CELESTE / EVER CONCERT: ETA,
   ETD (no closing time; dates are MM/DD with no year).
+* Maersk / Maersk Line Limited schedules API — any active shipment's vessel that
+  Maersk lists (e.g. HUA XIN 678): ETA, ETD at Belawan.
 
 Both list voyages weeks before BNCT does. Dates go into `vessel_schedules` as
 reference only: nothing here touches `monitored_vessels`, so a voyage's status
@@ -121,6 +123,65 @@ def parse_evergreen_html(text: str, today: date) -> list[dict]:
     return out
 
 
+# Maersk / Maersk Line Limited (maersklinelimited.com/schedules/vesselSchedules):
+# the page is a JS app over this API; the key is the public one the page itself
+# sends. Covers e.g. HUA XIN 678 (code LM5).
+MAERSK_API = "https://api.maersk.com/synergy/schedules"
+MAERSK_KEY = "uXe7bxTHLY0yY0e8jnS6kotShkLuAAqG"
+_maersk_codes: dict = {"at": None, "codes": {}}
+_maersk_last: dict = {"at": None, "rows": []}   # asked at most hourly; scans run every few minutes
+
+
+def _norm(name) -> str:
+    return re.sub(r"[^A-Z0-9]", "", str(name or "").upper())
+
+
+def _maersk_get(path: str, **params):
+    import requests
+
+    resp = requests.get(f"{MAERSK_API}/{path}", params={**params, "carrierCodes": "MAEU,MCPU"},
+                        # the API silently drops a "bot" user agent — same as the page sends
+                        timeout=30, headers={"Consumer-Key": MAERSK_KEY, "User-Agent": "Mozilla/5.0"})
+    resp.raise_for_status()
+    return resp.json()
+
+
+def parse_maersk(data: dict, vessel_name: str) -> list[dict]:
+    """Belawan port calls (UN/LOCODE IDBLW) of one vessel's schedule."""
+    out = []
+    for call in data.get("vesselSchedules") or []:
+        if call.get("unLocationCode") != "IDBLW":
+            continue
+        voyage = call.get("departureVoyageNumber") or call.get("arrivalVoyageNumber")
+        if voyage:
+            out.append({"vessel_name": vessel_name.upper(), "voyage": voyage.upper(),
+                        "closing_at": None,
+                        "eta_belawan": (call.get("arrivalTime") or "")[:10] or None,
+                        "etd_belawan": (call.get("departureTime") or "")[:10] or None})
+    return out
+
+
+def maersk_rows(db, today: date, get=_maersk_get) -> list[dict]:
+    """The Belawan calls of every active shipment's vessel that Maersk lists
+    (its vessel list maps names to codes, refreshed daily), from today on."""
+    if _maersk_codes["at"] != today:
+        _maersk_codes["codes"] = {_norm(v.get("vesselName")): v["vesselMaerskCode"]
+                                  for v in get("active-vessels").get("vessels") or []
+                                  if v.get("vesselMaerskCode")}
+        _maersk_codes["at"] = today
+    names = {r["vessel_name"] for r in db.query(
+        "SELECT DISTINCT vessel_name FROM shipments WHERE status='active' AND vessel_name IS NOT NULL")}
+    rows = []
+    for name in sorted(names):
+        code = _maersk_codes["codes"].get(_norm(name))
+        if code:
+            rows += parse_maersk(get("vessel-schedules", vesselMaerskCode=code,
+                                     fromDate=today.isoformat(),
+                                     toDate=date.fromordinal(today.toordinal() + 60).isoformat()),
+                                 name)
+    return rows
+
+
 def store(db, rows: list[dict], now: str) -> None:
     """Upsert by (vessel, voyage). This table isn't realtime-subscribed, so
     rewriting unchanged rows each scan costs nothing in the PWA."""
@@ -164,5 +225,11 @@ def refresh(db) -> int:
             rows += parse(_get(url))
         except Exception:      # noqa: BLE001 - one carrier down must not block the other
             log.exception("schedule: %s failed", name)
+    try:
+        if _maersk_last["at"] is None or (now - _maersk_last["at"]).total_seconds() >= 3600:
+            _maersk_last["rows"], _maersk_last["at"] = maersk_rows(db, now.date()), now
+        rows += _maersk_last["rows"]
+    except Exception:      # noqa: BLE001
+        log.exception("schedule: maersk failed")
     store(db, rows, now.isoformat(timespec="seconds"))
     return len(rows)
