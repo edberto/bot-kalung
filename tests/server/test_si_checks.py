@@ -167,6 +167,14 @@ with tempfile.TemporaryDirectory() as tmp:
     check("...documents numbered 1 (our folder order) are flagged",
           not pma_numbers("VGM-001092026", "001/PMA/IX/26")[0]["done"])
 
+    for sid2, fname, want in (("h40", "40.CP26167B-1 iso-Nhava-TMEL-GAN-WH101-N388", 1),
+                              ("h41", "41.CP26200-Nhava-Isolasi-WH101", 0)):
+        db.execute("INSERT INTO shipments (id, exporter_code, sequence_number, status, created_at) "
+                   "VALUES (?, 'HAI', ?, 'active', '2026-10-01')", (sid2, int(sid2[1:])))
+        tracker._store_si_checks(db, sid2, "HAI", ShipmentFields(), int(sid2[1:]), fname)
+        check(f"HAI folder {fname[:24]!r}: ISO tag = {want} ('iso' as a word only)",
+              db.query_one("SELECT iso FROM shipments WHERE id=?", (sid2,))["iso"] == want)
+
 empty = openpyxl.Workbook()
 buf = io.BytesIO()
 empty.save(buf)

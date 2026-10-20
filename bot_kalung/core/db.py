@@ -39,7 +39,8 @@ CREATE TABLE IF NOT EXISTS shipments (
     status                TEXT NOT NULL DEFAULT 'active',
     created_at            TEXT NOT NULL,
     completed_at          TEXT,
-    doc_seq               INTEGER   -- AMI/PMA: the buyer's number on their documents/emails ("AMI035")
+    doc_seq               INTEGER,  -- AMI/PMA: the buyer's number on their documents/emails ("AMI035")
+    iso                   INTEGER   -- HAI/JMI: the folder name says "iso" (ISO tank) - an ISO tag in the PWA
 );
 
 CREATE TABLE IF NOT EXISTS workflow_steps (

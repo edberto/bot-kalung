@@ -189,6 +189,9 @@
   .kline span { color:var(--muted); } .kline b { text-align:right; overflow-wrap:anywhere; }
   .kstats { display:flex; gap:12px; margin-top:8px; font-size:12px; font-weight:700; color:var(--muted); }
   .kstats .on { color:var(--ok); }
+  .isotag { display:inline-block; margin-left:4px; padding:1px 5px; border-radius:5px; font-size:10px;
+    font-weight:800; letter-spacing:.04em; color:#0e7490; background:color-mix(in srgb, #0891b2 15%, transparent);
+    border:1px solid color-mix(in srgb, #0891b2 45%, transparent); vertical-align:middle; }
   .kalert { margin-top:6px; padding:4px 8px; font-size:12px; font-weight:600; color:var(--danger); background:color-mix(in srgb, var(--danger) 10%, transparent); border-radius:6px; }
   .knote { margin-top:8px; padding:6px 8px; font-size:12px; color:var(--text-2);
     background:var(--hover); border-left:3px solid var(--border); border-radius:6px;
@@ -338,7 +341,7 @@ function localDate(iso){ const p=(iso||"").slice(0,10).split("-"); return p.leng
 function relTime(iso){ if(!iso) return "belum pernah"; const t=new Date(asUTC(iso)); if(isNaN(t)) return iso; const s=Math.round((Date.now()-t)/1000); if(s<60) return "baru saja"; if(s<3600) return `${Math.floor(s/60)} menit lalu`; if(s<86400) return `${Math.floor(s/3600)} jam lalu`; return `${Math.floor(s/86400)} hari lalu`; }
 function toast(m){ const t=$("toast"); t.textContent=m; t.classList.add("show"); setTimeout(()=>t.classList.remove("show"),1900); }
 function badgeColor(code){ if(EXPORTER_COLORS[code]) return EXPORTER_COLORS[code]; let h=0; for(const c of (code||"")) h=(h*31+c.charCodeAt(0))%360; return `hsl(${h} 52% 40%)`; }
-function badge(code,seq){ return `<span class="badge" style="background:${badgeColor(code)}">${esc(code)}${seq??""}</span>`; }
+function badge(code,seq,iso){ return `<span class="badge" style="background:${badgeColor(code)}">${esc(code)}${seq??""}</span>${iso?'<span class="isotag" title="ISO tank">ISO</span>':""}`; }
 function fmtDate(iso){ const d=localDate(iso); if(!d||isNaN(d)) return iso||"—"; return `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`; }
 function fmtDT(iso){ if(!iso) return "—"; const d=new Date(asUTC(iso)); if(isNaN(d)) return iso; return `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`; }
 function daysUntil(iso){ const d=localDate(iso); if(!d||isNaN(d)) return null; const t=new Date(); t.setHours(0,0,0,0); return Math.round((d-t)/864e5); }
@@ -518,7 +521,7 @@ function showApp(){ $("splash").classList.add("hidden"); $("login").classList.ad
 async function getActive(){
   if(state.active) return state.active;
   const { data, error } = await sb.from("shipments")
-    .select("id,exporter_code,sequence_number,vessel_name,voyage,etd_belawan,etd_source,destination_port,destination_country,container_quantity,container_size_short,booking_number,quarantine_required,notes,folder_path,action_items(status,title,updated_at,checks,acks),containers(container_no,last_status_code)")
+    .select("id,exporter_code,sequence_number,vessel_name,voyage,etd_belawan,etd_source,destination_port,destination_country,container_quantity,container_size_short,booking_number,quarantine_required,notes,folder_path,iso,action_items(status,title,updated_at,checks,acks),containers(container_no,last_status_code)")
     .eq("status","active");
   if(error) throw error;
   state.active = data||[]; return state.active;
@@ -526,7 +529,7 @@ async function getActive(){
 async function getAllShipments(){
   if(state.all) return state.all;
   const { data, error } = await sb.from("shipments")
-    .select("id,exporter_code,sequence_number,vessel_name,voyage,etd_belawan,etd_source,destination_port,destination_country,booking_number,completed_at,status");
+    .select("id,exporter_code,sequence_number,vessel_name,voyage,etd_belawan,etd_source,destination_port,destination_country,booking_number,completed_at,status,iso");
   if(error) throw error;
   state.all = data||[]; return state.all;
 }
@@ -679,7 +682,7 @@ function kanbanCard(s){
   const [,phaseLabel,phaseColor]=phaseMeta(s._phase);
   const dest=[s.destination_port,s.destination_country].filter(Boolean).join(", ");
   const c=el(`<div class="kcard tap" style="border-top-color:${phaseColor}" title="${esc(phaseLabel)}">
-    <div class="rowtop">${badge(s.exporter_code,s.sequence_number)}<span class="vvlabel">${esc([s.vessel_name,s.voyage].filter(Boolean).join(" ")||"(tanpa kapal)")}</span></div>
+    <div class="rowtop">${badge(s.exporter_code,s.sequence_number,s.iso)}<span class="vvlabel">${esc([s.vessel_name,s.voyage].filter(Boolean).join(" ")||"(tanpa kapal)")}</span></div>
     <div class="kline"><span>Booking/DO</span><b>${esc(s.booking_number||"—")}</b></div>
     <div class="kline"><span>Party</span><b>${s.container_quantity||"?"} × ${esc(s.container_size_short||"?")}</b></div>
     <div class="kline"><span>Tujuan</span><b>${esc(dest||"—")}</b></div>
@@ -721,12 +724,12 @@ async function renderDetail(id){
     ? { color:"#7c3aed", status:"Sudah berangkat — tidak lagi di portal BNCT", detail:[] }
     : describeRecord(chkRow);
   const checkedAt = chkRow?chkRow.checked_at:null;
-  $("title").textContent = `${s.exporter_code}${s.sequence_number}`;
+  $("title").textContent = `${s.exporter_code}${s.sequence_number}${s.iso?" · ISO":""}`;
   const w=document.createElement("div");
 
   // header card
   w.appendChild(el(`<div class="card">
-    <div class="rowtop">${badge(s.exporter_code,s.sequence_number)}<span class="etd ${(daysUntil(s.etd_belawan)??9)<=3?"soon":""}">ETD ${fmtDate(s.etd_belawan)}</span></div>
+    <div class="rowtop">${badge(s.exporter_code,s.sequence_number,s.iso)}<span class="etd ${(daysUntil(s.etd_belawan)??9)<=3?"soon":""}">ETD ${fmtDate(s.etd_belawan)}</span></div>
     <div class="vessel" style="font-size:17px">${esc([s.vessel_name,s.voyage].filter(Boolean).join(" ")||"(tanpa kapal)")}</div>
     <div class="metaline">${done} dari ${total} item final</div>
     <div class="kv" style="margin-top:8px"><b>Tujuan</b><span>${esc(s.destination_port||"—")}${s.destination_country?", "+esc(s.destination_country):""}</span></div>
@@ -901,7 +904,7 @@ function shipMiniRow(s){
   const [done,total]=progressOf(s);
   const conts=s.containers||[]; const atStack=conts.filter(c=>isDoneCode(c.last_status_code)).length;
   const pctv=total?Math.round(done/total*100):0; const full=total&&done===total;
-  const row=el(`<div class="vrow tap">${badge(s.exporter_code,s.sequence_number)}
+  const row=el(`<div class="vrow tap">${badge(s.exporter_code,s.sequence_number,s.iso)}
     <div class="vbar"><span style="width:${pctv}%;background:${full?"var(--ok)":"var(--accent)"}"></span></div>
     <span class="vnum">${done}/${total}</span>
     <span class="vstack ${atStack?"on":""}">📦 ${conts.length?`${atStack}/${conts.length}`:"—"}</span>${
@@ -1248,7 +1251,7 @@ async function renderHistory(){
     });
     listWrap.innerHTML = rows.length?"":`<div class="empty">Tidak ada hasil.</div>`;
     for(const s of rows){
-      const c=el(`<div class="card tap"><div class="rowtop">${badge(s.exporter_code,s.sequence_number)}
+      const c=el(`<div class="card tap"><div class="rowtop">${badge(s.exporter_code,s.sequence_number,s.iso)}
         <span class="etd">Selesai ${fmtDate(s.completed_at)}</span></div>
         <div class="vessel">${esc([s.vessel_name,s.voyage].filter(Boolean).join(" ")||"(tanpa kapal)")}</div>
         <div class="metaline">${esc(s.destination_port||"—")} · Booking ${esc(s.booking_number||"—")} · ETD ${fmtDate(s.etd_belawan)}</div></div>`);
@@ -1286,7 +1289,7 @@ async function renderSearch(){
     for(const s of active){ const why=t.hit(s,q,raw); if(why) rows.push([s,why]); }
     res.innerHTML = rows.length?"":`<div class="empty">Tidak ada pengiriman ditemukan.</div>`;
     for(const [s,why] of rows){
-      const c=el(`<div class="card tap"><div class="rowtop">${badge(s.exporter_code,s.sequence_number)}<span class="metaline" style="margin-left:auto">${esc(why)}</span></div>
+      const c=el(`<div class="card tap"><div class="rowtop">${badge(s.exporter_code,s.sequence_number,s.iso)}<span class="metaline" style="margin-left:auto">${esc(why)}</span></div>
         <div class="metaline">${esc([s.vessel_name,s.voyage].filter(Boolean).join(" ")||"(tanpa kapal)")} · ${esc(s.destination_port||"—")} · ${s.container_quantity} × ${esc(s.container_size_short||"?")}</div></div>`);
       c.onclick=()=>openDetail(s.id); res.appendChild(c);
     }

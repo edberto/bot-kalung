@@ -24,6 +24,9 @@ from .shipments import Shipments
 from .vessel_monitor import MonitoredVessels
 
 
+ISO_EXPORTERS = {"HAI", "JMI"}   # their folder names say "iso" for ISO-tank shipments
+
+
 def _vessel_key(name) -> str:
     """A vessel name for comparing: "HUA XIN-678" == "Hua Xin 678"."""
     return re.sub(r"[^A-Z0-9]", "", str(name or "").upper())
@@ -246,6 +249,10 @@ def _store_si_checks(db, shipment_id: str, exporter_code: str | None, fields,
     from .si_checks import OWN_ORDER_EXPORTERS, SKIP_EXPORTERS, numbers_check
 
     ex = (exporter_code or "").upper()
+    if ex in ISO_EXPORTERS and folder_name:   # HAI/JMI: "40.CP26167B-1 iso-Nhava-…" -> ISO tag
+        iso = 1 if _re.search(r"(?i)(?<![a-z])iso(?![a-z])", folder_name) else 0
+        db.execute("UPDATE shipments SET iso=? WHERE id=? AND (iso IS NULL OR iso<>?)",
+                   (iso, shipment_id, iso))
     checks = [] if ex in SKIP_EXPORTERS else list(fields.si_checks or [])
     if fields.doc_numbers is not None:
         seq = folder_seq
