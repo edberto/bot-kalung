@@ -100,6 +100,14 @@ with tempfile.TemporaryDirectory() as tmp:
     mi.process(db, gmail, message("m5", "Doc Exim <docexim.sbm@gmail.com>", "ongkalung@gmail.com",
                                   "Re: AMJ30", ["TANK CERT.pdf"], when="1760000150000"),
                ask=lambda d, m: {"doc_type": "other", "stage": "final", "correction": False})
+    db.execute("UPDATE shipments SET autosave_paused=1 WHERE id=?", (amj,))
+    pdfs.update({"m6-0": b"%PDF coo paused"})
+    mi.process(db, gmail, message("m6", "Doc Exim <docexim.sbm@gmail.com>", "ongkalung@gmail.com",
+                                  "Re: AMJ30", ["AMJ COO 30 rev.pdf"], when="1760000160000"),
+               ask=lambda d, m: {"doc_type": "coo", "stage": "draft", "correction": False})
+    check("auto-saving paused on the shipment: even a known document waits in the queue",
+          db.query_one("SELECT status FROM mail_queue WHERE message_id='m6'")["status"] == "pending")
+    db.execute("UPDATE shipments SET autosave_paused=NULL WHERE id=?", (amj,))
     check("an unknown document waits in the queue",
           db.query_one("SELECT status FROM mail_queue WHERE message_id='m5'")["status"] == "pending")
     entry = {"sent_at": "2026-10-13T08:00:00", "filename": "PEB 30.pdf"}

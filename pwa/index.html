@@ -749,9 +749,21 @@ async function renderDetail(id){
   const doneBtn=el(`<button class="iconbtn" style="color:var(--ok)">✓ Tandai Selesai</button>`);
   doneBtn.onclick=()=>markComplete(s);
   acts.appendChild(doneBtn);
+  // Pause saving email attachments into this shipment's folder (e.g. folders swapped
+  // between two numbers): they wait in Kotak Masuk to be placed by hand.
+  const pauseBtn=el(`<button class="iconbtn">${s.autosave_paused?"▶ Lanjutkan simpan otomatis":"⏸ Jeda simpan otomatis"}</button>`);
+  pauseBtn.onclick=async ()=>{
+    const v=s.autosave_paused?null:1;
+    const {error}=await sb.from("shipments").update({autosave_paused:v}).eq("id",s.id);
+    if(error){ toast("Gagal: "+error.message); return; }
+    toast(v?"Simpan otomatis dijeda — lampiran email masuk ke Kotak Masuk":"Simpan otomatis dilanjutkan");
+    nav("detail",s.id,false,true);
+  };
+  acts.appendChild(pauseBtn);
   const delBtn=el(`<button class="iconbtn danger">🗑 Hapus</button>`);
   delBtn.onclick=()=>deleteShipment(s);
   acts.appendChild(delBtn);
+  if(s.autosave_paused) w.appendChild(el(`<div class="banner">⏸ Simpan otomatis dijeda — lampiran email untuk pengiriman ini masuk ke Kotak Masuk, tidak disimpan ke folder.</div>`));
   w.appendChild(acts);
 
   if(s.quarantine_required) w.appendChild(el(`<div class="banner">⚠ Karantina diperlukan — pastikan Fumi/Phyto/COO diproses.</div>`));

@@ -525,7 +525,9 @@ def process(db, gmail, msg, ask=_ask_classify, in_drive=None, reply_ask=_ask_rep
         doc_type, stage = guess["doc_type"], guess["stage"]
         code = DOC_TYPES[doc_type][0]
         prefix = ""                                # REV / NOTUL: the team adds those by hand
-        auto = bool(shipment_id) and doc_type != "other"
+        # paused on the shipment (e.g. folders swapped between two numbers):
+        # its attachments wait in Kotak Masuk for someone to place them
+        auto = bool(shipment_id) and doc_type != "other" and not (shipment and shipment["autosave_paused"])
         db.execute(
             "INSERT INTO mail_queue (id, created_at, message_id, thread_id, part_id, filename, mime, "
             "size, sha256, shipment_id, subject, sender, sent_at, doc_type, stage, prefix, dest, "
