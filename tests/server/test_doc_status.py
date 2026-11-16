@@ -94,8 +94,8 @@ with tempfile.TemporaryDirectory() as _tmp:
 check("a BL in Dok kirim named only by its carrier number is recognised by reading it",
       ds.infer("bl", kinded, "GGN").status == "final"
       and ds.infer("bl", kinded, "GGN").file.name == "OOLU2335371532.pdf")
-check("...only files whose name names no document are read (not the INV)",
-      asked == ["OOLU2335371532.pdf", "LOI523 10x40HC.pdf"])
+check("...only files whose name names no document are read (not the INV, not the LOI)",
+      asked == ["OOLU2335371532.pdf"])
 check("Insurance: draft in Draf -> Draft diterima; in Dok kirim -> Hardcopy diterima "
       "(the insurer's invoice doesn't count)",
       status("insurance", [F("draft", "HAI35-Ins draft.pdf")], "HAI") == "draft_received"

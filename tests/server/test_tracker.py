@@ -332,6 +332,29 @@ with tempfile.TemporaryDirectory() as tmp:
           and db.query_one("SELECT * FROM shipments WHERE id=?", (b,)) is not None)
 
 
+# ---- a shipment imported under a temporary workbook code takes the folder's code
+with tempfile.TemporaryDirectory() as tmp:
+    db = Database(db_path_for(Path(tmp)))
+    db.initialize()
+    sh = Shipments(db)
+    db.execute("INSERT INTO shipments (id, exporter_code, sequence_number, status, created_at, folder_path) "
+               "VALUES ('x35', 'AAAAAMJ', 35, 'active', '2026-11-13', 'drive:F35')")
+    db.execute("INSERT INTO scanned_shipments (id, exporter_code, sequence_number, folder_path, done, "
+               "shipment_id, imported_at) VALUES ('r1', 'AAAAAMJ', 35, 'drive:F35', 0, 'x35', '2026-11-13')")
+    db.execute("INSERT INTO scanned_shipments (id, exporter_code, sequence_number, folder_path, done, "
+               "shipment_id, imported_at) VALUES ('r2', 'AMJ', 35, 'drive:OLD', 0, NULL, '2026-10-01')")
+
+    class _C:
+        def __init__(self, ref): self.folder = type("N", (), {"ref": ref})()
+    res = tracker.ScanApplyResult(report=[])
+    tracker._recode_from_folder(sh, {("AMJ", 35): _C("drive:F35")}, res)
+    row = db.query_one("SELECT exporter_code, sequence_number FROM shipments WHERE id='x35'")
+    regs = {(r["exporter_code"], r["shipment_id"]) for r in db.query("SELECT * FROM scanned_shipments")}
+    check("AAAAAMJ35 whose folder's workbook is now AMJ35 becomes AMJ35 (a deleted AMJ35's leftover "
+          "registry entry doesn't block it)",
+          (row["exporter_code"], row["sequence_number"]) == ("AMJ", 35) and regs == {("AMJ", "x35")}
+          and any("AAAAAMJ35" in r and "AMJ35" in r for r in res.report))
+
 # ---- registry: a recent "done" verdict without an import is re-checked (NIT22)
 with tempfile.TemporaryDirectory() as tmp:
     db = Database(db_path_for(Path(tmp)))

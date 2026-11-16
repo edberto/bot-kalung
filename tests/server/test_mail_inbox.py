@@ -90,21 +90,22 @@ with tempfile.TemporaryDirectory() as tmp:
     pdfs.update({"m2-0": b"%PDF peb", "m2-1": b"%PDF coo"})
     reply = message("m2", "Doc Exim <docexim.sbm@gmail.com>", "ongkalung@gmail.com", "Re: AMJ30",
                     ["PEB 30.pdf", "AMJ COO 30.pdf"], when="1760000100000")
+    seen_body = []
     guesses = {b"%PDF peb": {"doc_type": "peb", "stage": "draft", "correction": False},
                b"%PDF coo": {"doc_type": "coo", "stage": "draft", "correction": False}}
-    mi.process(db, gmail, reply, ask=lambda data, mime: guesses[data])
+    mi.process(db, gmail, reply, ask=lambda data, mime, body='': guesses[data])
     q = db.query("SELECT * FROM mail_queue ORDER BY part_id")
     check("known documents of a known shipment are saved straight away (approved for the quick lane)",
           {r["status"] for r in q} == {"approved"})
     pdfs.update({"m5-0": b"%PDF tank"})
     mi.process(db, gmail, message("m5", "Doc Exim <docexim.sbm@gmail.com>", "ongkalung@gmail.com",
                                   "Re: AMJ30", ["TANK CERT.pdf"], when="1760000150000"),
-               ask=lambda d, m: {"doc_type": "other", "stage": "final", "correction": False})
+               ask=lambda d, m, b='': {"doc_type": "other", "stage": "final", "correction": False})
     db.execute("UPDATE shipments SET autosave_paused=1 WHERE id=?", (amj,))
     pdfs.update({"m6-0": b"%PDF coo paused"})
     mi.process(db, gmail, message("m6", "Doc Exim <docexim.sbm@gmail.com>", "ongkalung@gmail.com",
                                   "Re: AMJ30", ["AMJ COO 30 rev.pdf"], when="1760000160000"),
-               ask=lambda d, m: {"doc_type": "coo", "stage": "draft", "correction": False})
+               ask=lambda d, m, b='': {"doc_type": "coo", "stage": "draft", "correction": False})
     check("auto-saving paused on the shipment: even a known document waits in the queue",
           db.query_one("SELECT status FROM mail_queue WHERE message_id='m6'")["status"] == "pending")
     db.execute("UPDATE shipments SET autosave_paused=NULL WHERE id=?", (amj,))
@@ -129,7 +130,7 @@ with tempfile.TemporaryDirectory() as tmp:
     check("each attachment from docexim is queued with its type, folder and name",
           [(r["doc_type"], r["dest"], r["proposed_name"]) for r in q]
           == [("peb", "draft", "PEB 30.pdf"), ("coo", "draft", "AMJ COO 30.pdf")])
-    mi.process(db, gmail, reply, ask=lambda data, mime: guesses[data])
+    mi.process(db, gmail, reply, ask=lambda data, mime, body='': guesses[data])
     check("the same mail again adds nothing",
           len(db.query("SELECT 1 FROM mail_queue WHERE message_id='m2'")) == 2)
 
@@ -138,6 +139,17 @@ with tempfile.TemporaryDirectory() as tmp:
 
     check("an attachment keeps its own name (no prefix)",
           mi.file_name({"exporter_code": "AMJ", "sequence_number": 30}, "bl", "draft", "", "x.pdf") == "x.pdf")
+    bl_row = lambda st: db.execute("UPDATE action_items SET status=? WHERE shipment_id=? AND code='bl'", (st, amj))  # noqa: E731
+    bl_row("draft_revision")
+    check("a BL before it was OK'd is a draft, however final it looks",
+          mi.bl_stage(db, amj, "084600071032.pdf", "final") == "draft")
+    bl_row("draft_ok")
+    check("...after the OK (a final, or a correction to it) the read decides; 'draft' in the name "
+          "is always a draft",
+          mi.bl_stage(db, amj, "COPYNN HBL 084600071032.pdf", "final") == "final"
+          and mi.bl_stage(db, amj, "REVISI OHBL 084600071032.pdf", "final") == "final"
+          and mi.bl_stage(db, amj, "084600071032 DRAFT.pdf", "final") == "draft")
+    bl_row("pending")
     check("PEB and NPE finals go to the PEB & NPE folder",
           (mi.default_dest("peb", "final"), mi.default_dest("npe", "final")) == ("peb", "peb"))
     check("finals go to Dok kirim, Fumi finals to Fumi, drafts to Draf",
@@ -152,6 +164,15 @@ with tempfile.TemporaryDirectory() as tmp:
     check("a Word file in a Fumi thread is the Fumi draft",
           mi._guess_from_name("PT. NMEHMOOD 0788CN.docx", "fumi")
           == {"doc_type": "fumi", "stage": "draft", "correction": False})
+    got_body = []
+    mi.classify(db, b"%PDF bl x", {"mime": "application/pdf", "filename": "OOLU123.pdf"},
+                ask=lambda d, m, b: got_body.append(b) or {"doc_type": "bl", "stage": "draft",
+                                                         "correction": False},
+                body="Terlampir draft BL revisi, mohon dicek")
+    check("Claude reads the attachment together with the email's text",
+          got_body == ["Terlampir draft BL revisi, mohon dicek"])
+    check("an LOI is never a BL, even in a BL thread (INDO2's 'LOI TELEX SPM.docx')",
+          mi._guess_from_name("LOI TELEX SPM.docx", "bl")["doc_type"] == "other")
     check("a .docx falls back to the file name",
           mi._guess_from_name("TTJ DRAF PHYTO 08102026 KUALANAMU.docx")
           == {"doc_type": "phyto", "stage": "draft", "correction": False})
@@ -161,7 +182,7 @@ with tempfile.TemporaryDirectory() as tmp:
                     ["PEB 30 ttd.pdf"], when="1760000200000")
     import hashlib
     have = hashlib.md5(b"%PDF already").hexdigest()
-    mi.process(db, gmail, again, ask=lambda d, m: {"doc_type": "peb", "stage": "final", "correction": False},
+    mi.process(db, gmail, again, ask=lambda d, m, b='': {"doc_type": "peb", "stage": "final", "correction": False},
                in_drive=lambda s, md5: md5 == have)
     check("a file already in the shipment folder is not queued",
           not db.query("SELECT 1 FROM mail_queue WHERE message_id='m4'"))

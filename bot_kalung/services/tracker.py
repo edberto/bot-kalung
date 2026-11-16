@@ -53,6 +53,34 @@ def _now() -> str:
     return datetime.now().isoformat(timespec="seconds")
 
 
+def _recode_from_folder(shipments: Shipments, by_key: dict, result) -> None:
+    """A shipment whose own folder now carries a different exporter code — its
+    workbook was renamed, e.g. imported from a temporary "AAAAAMJ35-…" sheet,
+    now "AMJ35-…" — takes the folder's code, keeping its items and history.
+    Only the code: a renumbered folder is handled by the rescan's re-pointing.
+    Skipped when another shipment already has that code+number; a leftover
+    registry entry without a shipment (a deleted one) doesn't block it."""
+    db = shipments.db
+    by_ref = {_folder_ref(c.folder): key for key, c in by_key.items()}
+    for row in shipments.active():
+        key = by_ref.get(row["folder_path"] or "")
+        if not key or key[1] != row["sequence_number"] or key[0] == row["exporter_code"]:
+            continue
+        if db.query_one("SELECT 1 FROM shipments WHERE exporter_code=? AND sequence_number=?", key):
+            continue
+        reg = db.query_one("SELECT shipment_id FROM scanned_shipments WHERE exporter_code=? "
+                           "AND sequence_number=?", key)
+        if reg and reg["shipment_id"] and reg["shipment_id"] != row["id"]:
+            continue
+        old = f"{row['exporter_code']}{row['sequence_number']}"
+        db.execute("DELETE FROM scanned_shipments WHERE exporter_code=? AND sequence_number=? "
+                   "AND shipment_id IS NULL", key)
+        db.execute("UPDATE scanned_shipments SET exporter_code=? WHERE exporter_code=? "
+                   "AND sequence_number=?", (key[0], row["exporter_code"], row["sequence_number"]))
+        db.execute("UPDATE shipments SET exporter_code=? WHERE id=?", (key[0], row["id"]))
+        result.report.append(f"{old}: kode diganti → {key[0]}{key[1]} (nama workbook berubah)")
+
+
 def _folder_ref(folder) -> str:
     """The re-openable reference stored as shipments.folder_path: a filesystem
     path for a local scan, or 'drive:{id}' for a Drive-API scan (a Drive node
@@ -429,6 +457,7 @@ def run_scan(db: Database, drive_root, *, year: int | None = None, settings=None
 
     plan = scanner.scan(drive_root, year, registry.registered_keys(), settings)
     result = ScanApplyResult(report=plan.report)
+    _recode_from_folder(shipments, plan.by_key, result)
 
     # Every shipment already in the DB, keyed by (code, seq). If the registry
     # drifted (a folder rename, a DB reset), a folder we re-discover may already

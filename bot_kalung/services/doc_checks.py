@@ -42,7 +42,8 @@ Classify it and read its fields. doc_type:
 - "delivery_order": a carrier's release order / delivery order / D/O / booking
   confirmation / booking receipt notice / container release order / e-booking.
 - "bill_of_lading": a bill of lading or sea waybill (draft, original, copy or scan).
-- "other": anything else (invoice, permit, COPARN, receipt, ...).
+- "other": anything else (invoice, permit, COPARN, receipt, ...), including a
+  Letter of Indemnity (LOI): it is about the bill of lading but is not one.
 Fields (null when the document doesn't show it):
 - number: the DO / release / booking number; for a BL, the BL number.
 - booking_number: the booking number if shown separately.

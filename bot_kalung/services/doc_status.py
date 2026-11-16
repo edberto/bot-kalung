@@ -60,6 +60,7 @@ BL_DRAFT = re.compile(r"(?i)draft?\s?bl|bl\s?draft|_draft|^\d{9,11}-\d{14}")
 NOT_INV = re.compile(r"(?i)dhl|(?<![a-z])aca(?![a-z])")   # courier / insurance invoices
 BANK = _word(r"mandiri|bca|bni")
 INS = _word(r"ins|insurance|asuransi|polis")
+LOI = re.compile(r"(?i)(?<![a-z])loi(?![a-z])|letter of indemnity")   # about the BL, not a BL
 
 
 @dataclass(frozen=True)
@@ -133,7 +134,7 @@ def _named(f: DocFile, rx, *kinds: str) -> bool:
 
 
 def _says_what_it_is(name: str) -> bool:
-    return any(rx.search(name) for rx in (INV, PL, PEB, COO, PHYTO, FUMI, INS, BL_FINAL))
+    return any(rx.search(name) for rx in (INV, PL, PEB, COO, PHYTO, FUMI, INS, BL_FINAL, LOI))
 
 
 def with_kinds(db, files: list[DocFile], fetch=None, read=None) -> list[DocFile]:

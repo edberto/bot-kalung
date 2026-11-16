@@ -150,7 +150,8 @@ _CLASSIFY_PROMPT = """This file was emailed to an Indonesian exporter's shipping
 What is it? doc_type: "peb" (PEB, Pemberitahuan Ekspor Barang), "npe" (NPE,
 Nota Pelayanan Ekspor), "coo" (certificate of origin), "phyto" (phytosanitary
 certificate), "fumi" (fumigation certificate), "bl" (bill of lading / sea
-waybill), "insurance" (insurance policy / certificate), or "other".
+waybill), "insurance" (insurance policy / certificate), or "other" — including a
+Letter of Indemnity (LOI), which is not a bill of lading even though it is about one.
 stage: "draft" (a draft / proof for checking) or "final" (issued, signed,
 approved or original).
 correction: true if it says it is a revision, amendment or correction (e.g.
@@ -167,7 +168,9 @@ _CLASSIFY_SCHEMA = {
     "additionalProperties": False,
 }
 
-_NAME_TYPES = (("npe", r"(?<![a-z])npe(?![a-z])"), ("peb", r"(?<![a-z])peb(?![a-z])"),
+# A Letter of Indemnity talks about the BL but isn't one (INDO2's "LOI TELEX SPM.docx")
+_LOI = r"(?<![a-z])loi(?![a-z])|letter of indemnity"
+_NAME_TYPES = (("other", _LOI), ("npe", r"(?<![a-z])npe(?![a-z])"), ("peb", r"(?<![a-z])peb(?![a-z])"),
                ("phyto", r"phyto"), ("fumi", r"fumi"), ("coo", r"(?<![a-z])coo(?![a-z])"),
                ("insurance", r"(?<![a-z])(ins|insurance|polis)(?![a-z])"),
                ("bl", r"(?<![a-z])(o?bl|swb)(?![a-z])|bill of lading"))
@@ -181,7 +184,7 @@ def _guess_from_name(filename: str, kind: str | None = None) -> dict:
     return {"doc_type": doc, "stage": stage, "correction": bool(re.search(r"(?<![a-z])rev", name))}
 
 
-def _ask_classify(data: bytes, mime: str) -> dict:
+def _ask_classify(data: bytes, mime: str, body: str = "") -> dict:
     import anthropic
 
     if mime == "application/pdf":
@@ -194,21 +197,30 @@ def _ask_classify(data: bytes, mime: str) -> dict:
         model=doc_checks.MODEL, max_tokens=2000,
         betas=["server-side-fallback-2026-06-01"], fallbacks=[{"model": "claude-opus-4-8"}],
         output_config={"effort": "low", "format": {"type": "json_schema", "schema": _CLASSIFY_SCHEMA}},
-        messages=[{"role": "user", "content": [block, {"type": "text", "text": _CLASSIFY_PROMPT}]}],
+        messages=[{"role": "user", "content": [block, {"type": "text", "text": _CLASSIFY_PROMPT + (
+            f"\n\nThe email it came with says (use it to tell a draft for checking from "
+            f"an issued / final document):\n{body}" if body else "")}]}],
     )
     if resp.stop_reason != "end_turn":
         raise RuntimeError(f"AI read stopped: {resp.stop_reason}")
     return json.loads(next(b.text for b in resp.content if b.type == "text"))
 
 
-def classify(db, data: bytes, att: dict, ask=_ask_classify, kind: str | None = None) -> dict:
-    """Claude reads PDFs and images (cached per file content); anything else,
-    or an undecided read, falls back to the file name and the thread (a Word
-    file in a pestcindo thread is the Fumi draft)."""
+def classify(db, data: bytes, att: dict, ask=_ask_classify, kind: str | None = None,
+             body: str = "") -> dict:
+    """Claude reads PDFs and images together with the email's text — the sender
+    usually says whether it's a draft to check or the final (cached per file
+    content + text); anything else, or an undecided read, falls back to the
+    file name and the thread (a Word file in a pestcindo thread is the Fumi
+    draft). A file named LOI / Letter of Indemnity is never sent: it's "other"."""
+    if re.search(_LOI, att["filename"].lower()):
+        return _guess_from_name(att["filename"], kind)
     readable = att["mime"] == "application/pdf" or att["mime"].startswith("image/")
     if readable and len(data) <= doc_checks._MAX_PDF_BYTES:
         sha = hashlib.sha256(data).hexdigest()
-        got = doc_checks._cached(db, f"mail:{sha}", "1", lambda: ask(data, att["mime"]),
+        body = (body or "")[:1500]
+        ref = f"mail:{sha}" + (f":{hashlib.sha1(body.encode()).hexdigest()[:12]}" if body else "")
+        got = doc_checks._cached(db, ref, "1", lambda: ask(data, att["mime"], body),
                                  ask is _ask_classify)
         if got:
             return got          # Claude's "other" stands: BL threads carry tank certs, bills…
@@ -329,6 +341,20 @@ def apply_reply(db, msg, shipment, kind: str, sender: str, sent_at: str, atts: l
 
 
 # -- naming and placement --------------------------------------------------------------------
+def bl_stage(db, shipment_id, filename: str, guessed: str) -> str:
+    """A BL is a draft until it was OK'd (the cycle: draft -> revisions -> OK ->
+    final) — a draft often looks finished (a carrier's scan with no DRAFT
+    stamp), so before the OK it's always a draft. After the OK — the final, or
+    a correction to it — Claude's read of the file and the email decides."""
+    if re.search(r"(?i)dra(f|ft)", filename):
+        return "draft"
+    item = shipment_id and db.query_one(
+        "SELECT status FROM action_items WHERE shipment_id=? AND code='bl'", (shipment_id,))
+    if item and doc_status.RANK.get(item["status"], 0) < doc_status.RANK["draft_ok"]:
+        return "draft"
+    return guessed
+
+
 def default_dest(doc_type: str, stage: str) -> str:
     if stage == "draft":
         return "draft"
@@ -509,6 +535,7 @@ def process(db, gmail, msg, ask=_ask_classify, in_drive=None, reply_ask=_ask_rep
             report += apply_reply(db, msg, shipment, kind, sender, sent_at, atts, reply_ask)
         return report
 
+    body = _body_text(msg["payload"])                  # what the sender says about it
     for att in atts:
         if db.query_one("SELECT 1 FROM mail_queue WHERE message_id=? AND part_id=?",
                         (msg["id"], att["part"])):
@@ -521,9 +548,11 @@ def process(db, gmail, msg, ask=_ask_classify, in_drive=None, reply_ask=_ask_rep
             continue                               # the same file sent again
         if shipment and in_drive and in_drive(shipment, hashlib.md5(data).hexdigest()):
             continue                               # already saved in the shipment folder
-        guess = classify(db, data, att, ask, kind)
+        guess = classify(db, data, att, ask, kind, body)
         doc_type, stage = guess["doc_type"], guess["stage"]
         code = DOC_TYPES[doc_type][0]
+        if doc_type == "bl":
+            stage = bl_stage(db, shipment_id, att["filename"], stage)
         prefix = ""                                # REV / NOTUL: the team adds those by hand
         # paused on the shipment (e.g. folders swapped between two numbers):
         # its attachments wait in Kotak Masuk for someone to place them
