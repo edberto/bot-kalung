@@ -261,7 +261,7 @@ def _push_new_notifications(db, seen_ids: set) -> None:
     pushed = 0
     for row in db.query(
             "SELECT id, kind, title, body FROM notifications ORDER BY created_at"):
-        if row["id"] in seen_ids or row["kind"] == "file":   # 'file' is pushed when created
+        if row["id"] in seen_ids or row["kind"] in ("file", "done"):   # pushed when created
             continue
         if ntfy.publish(settings, row["title"], row["body"] or "", kind=row["kind"]):
             pushed += 1

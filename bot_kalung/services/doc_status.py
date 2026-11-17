@@ -183,6 +183,31 @@ def list_files(folder) -> list[DocFile]:
     return out
 
 
+_TANDA_TERIMA = re.compile(r"(?i)(?<![a-z])(tt|tanda\s*terima)(?![a-z])")
+_AWD_LC = re.compile(r"(?i)awd|(?<![a-z])lc(?![a-z])")
+_DHL_AWB = re.compile(r"(?i)^\s*dhl(?!\s*[-_.]?\s*inv)")     # "DHL-HAI39.pdf", not "DHL Inv-HAI39.pdf"
+
+
+def done_evidence(files: list[DocFile], since: str | None = None) -> DocFile | None:
+    """The file that shows the shipment is finished, or None (the user's rule):
+      - with a bank folder (Mandiri / BCA / BNI): the bank's tanda terima scan
+        there — a PDF named "… tt" / "Tanda Terima …", not the AWD / LC;
+      - without one: the DHL airway bill — a PDF named "DHL…", not DHL's own
+        invoice ("DHL Inv-…").
+    Only a file added after `since` (the shipment's import) counts: a folder
+    copied from a finished shipment can carry its old DHL / tanda terima."""
+    def fresh(f):
+        return not since or not f.created or _utc19(f.created) > _utc19(since)
+
+    pdfs = [f for f in files if f.name.lower().endswith(".pdf") and fresh(f)]
+    if has_bank_folder(files):
+        hits = [f for f in pdfs if f.folder == "bank" and _TANDA_TERIMA.search(f.name)
+                and not _AWD_LC.search(f.name)]
+    else:
+        hits = [f for f in pdfs if f.folder in ("kirim", "root") and _DHL_AWB.match(f.name)]
+    return max(hits, key=lambda f: f.created, default=None)
+
+
 def has_bank_folder(files: list[DocFile]) -> bool:
     return any(f.folder == "bank" for f in files)
 

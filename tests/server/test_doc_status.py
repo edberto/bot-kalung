@@ -96,6 +96,29 @@ check("a BL in Dok kirim named only by its carrier number is recognised by readi
       and ds.infer("bl", kinded, "GGN").file.name == "OOLU2335371532.pdf")
 check("...only files whose name names no document are read (not the INV, not the LOI)",
       asked == ["OOLU2335371532.pdf"])
+# ---- done: the bank's tanda terima, or the DHL airway bill
+T0 = "2026-10-01T00:00:00"
+late = lambda folder, name: F(folder, name, "2026-11-01T00:00:00")     # noqa: E731
+bank = [late("bank", "Dok ke BCA.xlsx"), late("bank", "NIT20-AWD&LC.pdf"), late("bank", "NIT22-EKI&FPDE.pdf")]
+check("bank shipment: AWD/LC, EKI and drafts don't finish it",
+      ds.done_evidence(bank, T0) is None)
+check("...the tanda terima scan does ('NIT19-BCA tt.pdf', 'NIT22-Tanda Terima Bank.pdf', 'TTJ10-tt mandiri.pdf')",
+      all(ds.done_evidence(bank + [late("bank", n)], T0).name == n
+          for n in ("NIT19-BCA tt.pdf", "NIT22-Tanda Terima Bank.pdf", "TTJ10-tt mandiri.pdf")))
+check("...a DHL file doesn't finish a bank shipment",
+      ds.done_evidence(bank + [late("kirim", "DHL-NIT20.pdf")], T0) is None)
+kirim = [late("kirim", "DHL Inv-HAI39.pdf"), late("kirim", "HAI39-OBL.pdf")]
+check("no bank folder: DHL's invoice doesn't finish it, the airway bill does",
+      ds.done_evidence(kirim, T0) is None
+      and ds.done_evidence(kirim + [late("kirim", "DHL-HAI39.pdf")], T0).name == "DHL-HAI39.pdf"
+      and ds.done_evidence([late("kirim", "DHL inv-HAI40.pdf")], T0) is None)
+check("a DHL / tanda terima older than the shipment (copied folder) doesn't count",
+      ds.done_evidence([F("kirim", "DHL-HAI39.pdf", "2026-09-01T00:00:00")], T0) is None)
+check("an image (jpg) doesn't count — PDFs only",
+      ds.done_evidence([late("kirim", "dhl.jpg")], T0) is None)
+from bot_kalung.services.tracker import _auto_complete
+_auto_complete(None, {"autocomplete_off": 1}, None, None)   # would crash on None if it went on
+check("a shipment re-opened by hand (Aktifkan lagi) is never auto-completed", True)
 check("Insurance: draft in Draf -> Draft diterima; in Dok kirim -> Hardcopy diterima "
       "(the insurer's invoice doesn't count)",
       status("insurance", [F("draft", "HAI35-Ins draft.pdf")], "HAI") == "draft_received"

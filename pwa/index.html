@@ -317,11 +317,12 @@ const STATUS = [
 const DONE_STATUSES = new Set(["final","hardcopy_received"]);   // waiting_hardcopy is still outstanding
 const STATUS_COLOR = Object.fromEntries(STATUS.map(([v,,c])=>[v,c]));
 const EXPORTER_COLORS = { AMJ:"#2563eb", TTJ:"#7c3aed", NIT:"#16a34a", THREESTAR:"#dc2626", AMI:"#0d9488", PMA:"#db2777" };
-const NOTIF_COLORS = { schedule:"#2563eb", alongside:"#16a34a", departing:"#dc2626", container:"#d97706", revision:"#9333ea", file:"#0891b2" };
+const NOTIF_COLORS = { schedule:"#2563eb", alongside:"#16a34a", departing:"#dc2626", container:"#d97706", revision:"#9333ea", file:"#0891b2", done:"#059669" };
 const AUDIT = {
   shipment_created:  { label:"Pengiriman dibuat", color:"#2563eb" },
   shipment_completed:{ label:"Pengiriman ditandai selesai", color:"#059669" },
   shipment_deleted:  { label:"Pengiriman dihapus", color:"#b91c1c" },
+  shipment_reopened: { label:"Pengiriman diaktifkan lagi", color:"#2563eb" },
 };
 const MONTHS = ["Jan","Feb","Mar","Apr","Mei","Jun","Jul","Agu","Sep","Okt","Nov","Des"];
 const MONTHS_FULL = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
@@ -746,8 +747,10 @@ async function renderDetail(id){
   acts.appendChild(etdBtn);
   const url=folderUrl(s.folder_path);
   if(url) acts.appendChild(el(`<a class="iconbtn" href="${url}" target="_blank" rel="noopener" style="text-decoration:none">📁 Buka Folder</a>`));
-  const doneBtn=el(`<button class="iconbtn" style="color:var(--ok)">✓ Tandai Selesai</button>`);
-  doneBtn.onclick=()=>markComplete(s);
+  const doneBtn = s.status==="completed"
+    ? el(`<button class="iconbtn" style="color:var(--accent)">↩ Aktifkan lagi</button>`)
+    : el(`<button class="iconbtn" style="color:var(--ok)">✓ Tandai Selesai</button>`);
+  doneBtn.onclick=()=> s.status==="completed" ? reopenShipment(s) : markComplete(s);
   acts.appendChild(doneBtn);
   // Pause saving email attachments into this shipment's folder (e.g. folders swapped
   // between two numbers): they wait in Kotak Masuk to be placed by hand.
@@ -871,6 +874,16 @@ async function markComplete(s){
   const vessel=[s.vessel_name,s.voyage].filter(Boolean).join(" ");
   await sb.from("audit_log").insert({id:uuid(),created_at:nowIso(),actor:state.email,action:"shipment_completed",shipment_id:s.id,label:`${s.exporter_code}${s.sequence_number}`,detail:vessel});
   state.active=state.all=null; toast("Ditandai selesai"); nav("list");
+}
+// Back to active (e.g. completed automatically too early). The scan then leaves
+// completing it to a person — its DHL / tanda terima is still in the folder.
+async function reopenShipment(s){
+  if(!confirm(`Aktifkan lagi ${s.exporter_code}${s.sequence_number}? Pengiriman ini tidak akan ditandai selesai otomatis lagi — tandai selesai secara manual nanti.`)) return;
+  const {error}=await sb.from("shipments").update({status:"active",completed_at:null,autocomplete_off:1}).eq("id",s.id);
+  if(error){toast("Gagal: "+error.message);return;}
+  const vessel=[s.vessel_name,s.voyage].filter(Boolean).join(" ");
+  await sb.from("audit_log").insert({id:uuid(),created_at:nowIso(),actor:state.email,action:"shipment_reopened",shipment_id:s.id,label:`${s.exporter_code}${s.sequence_number}`,detail:vessel});
+  state.active=state.all=null; toast("Diaktifkan lagi"); nav("detail",s.id,false,true);
 }
 async function deleteShipment(s){
   if(!confirm(`Hapus pengiriman ${s.exporter_code}${s.sequence_number}? Baris database + item/kontainer terkait ikut terhapus. Folder Google Drive TIDAK tersentuh.`)) return;

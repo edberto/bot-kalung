@@ -391,10 +391,34 @@ def _sync_doc_statuses(shipments: Shipments, action_items: ActionItems, by_key: 
             continue
         try:
             result.report += doc_status.sync_shipment(action_items, row, folder)
+            _auto_complete(shipments, row, folder, result)
         except Exception as exc:      # noqa: BLE001 - a bad folder must not stop the scan
             result.warnings.append(
                 f"{row['exporter_code']}{row['sequence_number']}: "
                 f"status dokumen gagal ({exc})")
+
+
+def _auto_complete(shipments: Shipments, row, folder, result: ScanApplyResult) -> None:
+    """Mark the shipment done when its folder shows it finished (doc_status.
+    done_evidence: the bank's tanda terima, or the DHL airway bill) — the same
+    as "Tandai Selesai" (audit log), plus an in-app notification naming the file."""
+    from ..core.settings import Settings
+    from . import ntfy
+    from .notifications import NotificationStore
+
+    if row["autocomplete_off"]:          # re-opened by hand: only a person completes it now
+        return
+    f = doc_status.done_evidence(doc_status.list_files(folder), row["created_at"])
+    if f is None:
+        return
+    shipments.mark_complete(row["id"])
+    label = f"{row['exporter_code']}{row['sequence_number']}"
+    title, body = f"{label}: selesai otomatis", f"Bukti: {f.name}"
+    NotificationStore(shipments.db).add("done", row["id"], title, body,
+                                        created_at=datetime.now().isoformat(timespec="seconds"))
+    ntfy.publish(Settings(shipments.db), title, body, kind="done")   # never raises
+    result.completed.append(label)
+    result.report.append(f"{label}: selesai otomatis ({f.name})")
 
 
 def _dedupe_shared_folders(shipments: Shipments, by_key: dict,
