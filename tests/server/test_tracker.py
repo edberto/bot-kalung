@@ -48,7 +48,7 @@ def fake_fields(folder):
     f.etd = date(2026, 1, 27)
     f.vessel_name = "INTEGRA"
     f.voyage = "162E"
-    f.booking_number = "2318229000"
+    f.booking_number = "2318229000" if folder.name == "1.k" else f"BK-{folder.parent.parent.name}-{folder.name}"
     f.container_quantity = 5
     f.container_size_short = "40'HC"
     f.containers = ["TRHU5986693"]
@@ -330,6 +330,29 @@ with tempfile.TemporaryDirectory() as tmp:
     check("twins on an undiscovered folder are both left in place",
           db.query_one("SELECT * FROM shipments WHERE id=?", (a,)) is not None
           and db.query_one("SELECT * FROM shipments WHERE id=?", (b,)) is not None)
+
+
+# ---- a pending folder with a copied workbook (same DO) waits for its own DO (MFK03)
+with tempfile.TemporaryDirectory() as tmp:
+    root = Path(tmp) / "Drive"
+    mfk = root / "MFK" / "2026"
+    make_shipment(mfk, "2.prev", "MFK02")
+    make_shipment(mfk, "3.next", "MFK03")
+    db = Database(db_path_for(root))
+    db.initialize()
+    own_do = {"2.prev": "WHL-1", "3.next": "WHL-1"}
+
+    def copied(folder):
+        f = fake_fields(folder)
+        f.booking_number = own_do[folder.name]
+        return f
+
+    first = tracker.run_scan(db, root, year=2026, read_fields=copied)
+    check("a folder whose DO copies another shipment's is not imported",
+          first.imported == ["MFK2"] and any("MFK3" in r and "menunggu" in r for r in first.report))
+    own_do["3.next"] = "CUL-265"
+    check("...and is imported once it has its own DO",
+          tracker.run_scan(db, root, year=2026, read_fields=copied).imported == ["MFK3"])
 
 
 # ---- a shipment imported under a temporary workbook code takes the folder's code

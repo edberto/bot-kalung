@@ -503,6 +503,15 @@ def run_scan(db: Database, drive_root, *, year: int | None = None, settings=None
         except Exception as exc:      # noqa: BLE001 - one bad workbook, keep going
             result.warnings.append(f"{candidate.label}: gagal membaca Excel ({exc})")
             fields = excel.ShipmentFields()
+        # A pending folder still holds a workbook copied from the previous shipment
+        # (MFK03 carried MFK02's DO). Wait — unregistered, so a later scan retries —
+        # until it has its own DO, instead of importing a copy someone then deletes.
+        if fields.booking_number and db.query(
+                "SELECT 1 FROM shipments WHERE exporter_code=? AND booking_number=?",
+                (candidate.code, fields.booking_number)):
+            result.report.append(f"{candidate.label}: DO {fields.booking_number} sama dengan "
+                                 f"pengiriman lain, menunggu DO sendiri")
+            continue
         result.warnings += [f"{candidate.label}: {w}" for w in fields.warnings]
 
         shipment_id = shipments.create({
