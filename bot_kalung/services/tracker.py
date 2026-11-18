@@ -107,6 +107,13 @@ class ScannedRegistry:
             "WHERE NOT (done=1 AND shipment_id IS NULL AND imported_at >= ?)", (cutoff,))
         return {(r["exporter_code"], r["sequence_number"]) for r in rows}
 
+    def orphans(self) -> dict[tuple[str, int], str]:
+        """Not-done entries whose shipment was deleted -> the folder they were for."""
+        return {(r["exporter_code"], r["sequence_number"]): r["folder_path"] or ""
+                for r in self.db.query(
+                    "SELECT exporter_code, sequence_number, folder_path FROM scanned_shipments "
+                    "WHERE shipment_id IS NULL AND done=0")}
+
     def record(self, code: str, sequence: int, folder_path: str | None,
                *, done: bool, shipment_id: str | None = None) -> None:
         # Upsert on the (code, seq) unique key: a re-checked "done" folder that
@@ -479,7 +486,8 @@ def run_scan(db: Database, drive_root, *, year: int | None = None, settings=None
     quarantine = (settings.get("quarantine_countries") if settings else None) \
         or DEFAULT_QUARANTINE_COUNTRIES
 
-    plan = scanner.scan(drive_root, year, registry.registered_keys(), settings)
+    plan = scanner.scan(drive_root, year, registry.registered_keys(), settings,
+                        registry.orphans())
     result = ScanApplyResult(report=plan.report)
     _recode_from_folder(shipments, plan.by_key, result)
 

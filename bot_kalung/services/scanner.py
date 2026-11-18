@@ -121,12 +121,15 @@ def contiguous_run(present: set[int]) -> set[int]:
 # -- the scan ------------------------------------------------------------
 
 def scan(drive_root, year: int, registered: set[tuple[str, int]],
-         settings=None) -> ScanResult:
+         settings=None, orphans: dict | None = None) -> ScanResult:
     """Plan a scan of the Drive: which folders to import, which are done.
 
     `registered` is the set of `(code, seq)` the tracker already knows; those are
-    skipped so a scan only adds newly-eligible folders.
+    skipped so a scan only adds newly-eligible folders. `orphans` maps a key
+    whose shipment is gone to the folder it was recorded for: it blocks only that
+    folder, not a different one renumbered into the slot (AMJ37/38).
     """
+    orphans = orphans or {}
     result = ScanResult()
 
     # Identify every numbered folder that has a main workbook, grouped by code.
@@ -156,9 +159,10 @@ def scan(drive_root, year: int, registered: set[tuple[str, int]],
     # within it, split already-complete folders from ones to import.
     for code, slot in sorted(by_code.items()):
         for seq in sorted(contiguous_run(set(slot))):
-            if (code, seq) in registered:
-                continue
             candidate = slot[seq]
+            ref = getattr(candidate.folder, "ref", None) or str(candidate.folder)
+            if (code, seq) in registered and orphans.get((code, seq), ref) == ref:
+                continue
             if is_done(candidate.folder):
                 result.done.append(candidate)
             else:

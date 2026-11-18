@@ -355,6 +355,28 @@ with tempfile.TemporaryDirectory() as tmp:
           tracker.run_scan(db, root, year=2026, read_fields=copied).imported == ["MFK3"])
 
 
+# ---- a deleted shipment's registry entry blocks only its own folder (AMJ37/38)
+with tempfile.TemporaryDirectory() as tmp:
+    import shutil
+
+    root = Path(tmp) / "Drive"
+    amj = root / "AMJ" / "2026"
+    make_shipment(amj, "1.a", "AMJ01")
+    old2 = make_shipment(amj, "2.old", "AMJ02")
+    db = Database(db_path_for(root))
+    db.initialize()
+    sh = Shipments(db)
+    tracker.run_scan(db, root, year=2026, read_fields=fake_fields)
+    sh.delete(db.query_one("SELECT id FROM shipments WHERE sequence_number=2")["id"])
+    db.execute("UPDATE scanned_shipments SET shipment_id=NULL WHERE sequence_number=2")  # FK SET NULL
+    check("a shipment deleted by hand stays gone while its folder is unchanged",
+          tracker.run_scan(db, root, year=2026, read_fields=fake_fields).imported == [])
+    shutil.rmtree(old2)
+    make_shipment(amj, "2.new", "AMJ02")          # folders renumbered: a new folder is now 2
+    check("a different folder renumbered into the slot is imported",
+          tracker.run_scan(db, root, year=2026, read_fields=fake_fields).imported == ["AMJ2"])
+
+
 # ---- a shipment imported under a temporary workbook code takes the folder's code
 with tempfile.TemporaryDirectory() as tmp:
     db = Database(db_path_for(Path(tmp)))
